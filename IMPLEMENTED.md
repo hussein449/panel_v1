@@ -1,0 +1,336 @@
+# Implemented
+
+What has actually been built, in the order it was built. Planned work lives in
+[`STEPS.md`](STEPS.md); this file only records what exists and works.
+
+---
+
+## 2026-08-09 — Stage 0 and Stage 1 complete
+
+**Delivered:** the engine core. A plain Python library that takes a panel and returns a
+complete, reproducible, self-describing assessment. No geospatial dependencies, no
+network, no database.
+
+**Verified:** 113 tests pass, `ruff check` clean, both CLI paths exercised end to end.
+
+```bash
+pytest          # 113 passed
+ruff check .    # All checks passed
+roadrisk demo   # Mode A, A-full, 7 factors, sign guard clean
+roadrisk demo --crash-rows-only   # Mode A refused, Mode B refused on unsourced weights
+```
+
+---
+
+### 0.1 · Repo skeleton
+
+`pyproject.toml` · `.gitignore` · `README.md`
+
+Hatchling build, `src/` layout, `roadrisk` console script, ruff and pytest configured.
+Python floor is 3.11 (for `StrEnum` and `datetime.UTC`); the venv is pinned to 3.12
+because 3.14 is ahead of the scientific stack.
+
+---
+
+### 0.2 · Factor registry
+
+`core/registry/schema.py` · `core/registry/loader.py` · `core/registry/factors.yaml`
+
+Pydantic v2 models for `Factor`, `Adapter` and `Registry`. Twenty factors declared,
+each with `transform`, `expected_sign`, `drop_priority`, `missing_behaviour`, and an
+ordered adapter chain carrying tier and licence.
+
+The registry validates itself and refuses to load if:
+
+- two factors share a `name` or a `column`
+- two factors share a `drop_priority` — ties would make descent arbitrary rather than declared
+- a `default_weight` is set without a `weight_source`
+- a `default_weight` contradicts the factor's own `expected_sign`
+
+Load errors name the offending factor (`factor 'ramp_density' → expected_sign`) rather
+than its list index, because a registry is edited by hand.
+
+**Decision — every weight ships unsourced.** `default_weight` is `null` for all twenty
+factors and Mode B refuses to score. This is deliberate: the brief's rule is that an
+uncited weight is a liability, so the engine enforces it rather than documenting it.
+Populating the weights is literature work (HSM CMFs, iRAP tables) and is tracked as an
+open decision in `STEPS.md`. Mode A is unaffected — it estimates its own coefficients.
+
+**Decision — no weather term.** Rainfall and temperature are absent, not merely
+unweighted. The M51 weather term was withdrawn as a season artefact, and a factor that
+correlates with an omitted seasonal cycle is not measuring what its name claims. It
+returns only alongside an explicit seasonal control. The reasoning is recorded in the
+YAML header so it does not get re-added by accident.
+
+**Recorded in the registry, not just in the brief:** the `ramp_density` inversion
+(+0.316 alone, −0.327 alongside roadside activity) is written into that factor's `notes`
+along with why it is not diagnosable on M51 — both terms are region-constant across
+7 units, so the effective sample size is 7, not 1,085.
+
+---
+
+### 0.3 · Input contract and transforms
+
+`core/contract.py` · `core/transforms.py`
+
+Six required columns. Exposure is derived as `length_km × duration_hours` and
+`ln(exposure)` becomes the model offset. Rejections are HARD — the job is refused, never
+downgraded to Mode B, because a panel that breaks the contract cannot be ranked either.
+
+Rejects, each naming the offending column and row indices: missing columns, null
+identifiers, null crash counts (*"a missing crash count is not the same as zero"*),
+negative or fractional counts, non-positive length or duration, non-finite values,
+caller-supplied reserved columns, and **duplicate `(unit_id, period, time_slot)` keys**.
+
+The duplicate-key check is an addition, not in the brief. A repeated panel cell
+double-counts exposure and inflates significance, and it is the kind of thing a
+malformed join produces silently. It caught a real bug within an hour of being written —
+see *Bugs found* below.
+
+Transforms are guarded per factor: `ln` rejects non-positive values and suggests `ln1p`;
+`ln1p` rejects negatives; `zscore` rejects constants; all reject nulls and infinities.
+The infinity message names the case it exists for — curve radius on a tangent section
+must be capped by the adapter, and the cap recorded.
+
+---
+
+### 1.1 · Diagnostics
+
+`core/diagnostics.py`
+
+VIF (computed with an intercept present, `inf` on a singular design rather than an
+exception), correlation matrix, correlated-partner lookup, variance-to-mean dispersion
+with the implied count family, and constant-column detection.
+
+---
+
+### 1.2 · Validation gates
+
+`core/gates.py`
+
+All nine checks, each returning a `CheckResult` carrying its threshold, what was
+observed, and a message written to be printed verbatim in the report.
+
+| | Check | Type |
+|---|---|---|
+| 1 | Zero-crash rows present | HARD |
+| 2 | Required columns present and typed | HARD |
+| 3 | Exposure strictly positive | HARD |
+| 4 | Crash count versus estimated parameters | SOFT |
+| 5 | Temporal resolution | SOFT |
+| 6 | Crash snap rate | SOFT |
+| 7 | Collinearity (VIF) | SOFT |
+| 8 | Variance-to-mean → count family | INFO |
+| 9 | Model convergence | SOFT, at fit time |
+
+Check 6 is **skipped, never passed**, when the panel was supplied pre-built rather than
+snapped by the pipeline. Snap quality is then unknown and is not assumed to be good.
+
+Checks 2 and 3 are enforced by the contract before the gates run, but still appear in
+the report as passed — all nine are visible, none is implied.
+
+---
+
+### 1.3 · Mode ladder
+
+`core/ladder.py`
+
+`A-full` (≥700 crashes, ≤7 factors) → `A-reduced` (≥400, ≤5) → `A-minimal` (≥100, ≤3) →
+`B`. The engine takes the highest rung passing every gate.
+
+- Terms are shed in the registry's declared `drop_priority` order, never at random.
+- The highest-VIF term is dropped first when collinearity is the trigger, in a loop
+  until VIF is below threshold.
+- The exposure offset is never a candidate for dropping — it is structural.
+- Every descent produces a receipt naming the rung attempted, the check that failed, and
+  what was shed.
+
+**There is no mode override.** `assess()` exposes no `mode`, `force_mode` or `rung`
+parameter, and a test asserts that it never grows one.
+
+**Decision — Poisson can ship in exactly one case.** NB2 is the shipped Mode A baseline
+and Poisson is a reference fit. The single exception: NB2 fails to converge *and* the
+Poisson reference shows no overdispersion, which means the dispersion parameter NB2 was
+estimating is genuinely near zero. That substitution is logged with its reason, never
+silent.
+
+---
+
+### 1.4 · Mode B index
+
+`core/models/index.py`
+
+Weighted index over the transformed columns, ranked per unit, worst first.
+
+**Mode B structurally cannot produce a count.** `IndexResult` has no field for a
+predicted count, a confidence interval or a p-value — not by convention but by type. A
+test asserts the ranking frame carries exactly `unit_id`, `score`, `rank`, `percentile`.
+
+**Decision — weights are on the Mode A coefficient scale.** The score is
+`Σ(w_j · x_j)` over transformed columns with no additional standardisation. The brief's
+unifying idea is that Mode B weights are priors and Mode A is those priors updated by
+data; standardising here would break that correspondence and make the two modes
+incomparable. Documented at the top of the module so it does not get "tidied" later.
+
+**Decision — the score ranks rate, not burden.** It deliberately does not multiply by
+exposure, so a long busy segment does not outrank a short lethal one. Ranking total
+burden is a different question needing a different column.
+
+---
+
+### 1.5 · Mode A, rungs 0–1
+
+`core/models/glm.py` · `core/models/base.py`
+
+Poisson GLM (reference) and NB2 via `NegativeBinomialP` with jointly estimated
+dispersion (shipped). Both take `ln(exposure)` as an offset. Results are captured in
+plain dataclasses — coefficients, standard errors, z, p, 95% CI, α, log-likelihood, AIC,
+BIC, Pearson dispersion — so a result serialises and reproduces without a statsmodels
+object.
+
+A failed fit returns `converged=False` with a reason rather than raising, so the ladder
+can record why a rung was abandoned instead of crashing the job.
+
+BIC is taken from `bic_llf` where available. Plain `bic` on a statsmodels GLM is the
+deviance form, which is on a different scale and not comparable across families.
+
+**Verified against known truth.** The synthetic generator plants coefficients; the
+engine recovers them:
+
+| Factor | Planted | Recovered |
+|---|---|---|
+| `speed_limit` | +0.90 | +0.897 |
+| `lanes` | +0.35 | +0.443 |
+| `junction_density` | +0.30 | +0.406 |
+| `curve_density` | +0.25 | +0.289 |
+| `access_density` | +0.20 | +0.160 |
+| `poi_density` | +0.18 | +0.152 |
+| `grade_pct` | +0.15 | +0.084 |
+| dispersion α | 0.60 | 0.637 |
+
+Every sign is correct and α is close. The point estimates sit further from truth than
+the reported standard errors suggest they should — which is the Rung 2 problem exactly:
+the panel measures 120 units repeatedly across 48 cells each, plain NB2 treats those
+5,760 rows as independent, and the standard errors are consequently too small. The model
+looks more certain than it is. This is visible in the demo output today and is the
+argument for Step 3.1.
+
+---
+
+### 1.6 · Sign guard
+
+`core/signguard.py`
+
+Every fitted coefficient is compared to its declared `expected_sign`. On contradiction
+the guard automatically runs the diagnostics that found the original M51 problem:
+
+- the factor fitted alone
+- the factor fitted alongside each correlated partner (|r| ≥ 0.3), one at a time
+- the full correlation matrix
+- leave-one-unit-out, capped and with the cap reported
+
+The written verdict states plainly that the term is not interpretable as causal and must
+not justify a countermeasure, and distinguishes a significant contradiction (a
+specification problem) from an insignificant one (noise cannot be excluded).
+
+**Verified against a planted reversal.** A synthetic panel is generated with
+`curve_density` genuinely *reducing* crashes while the registry declares `+`. The guard
+catches it, flags it in the log, and runs all four diagnostics unprompted.
+
+Note that leave-one-unit-out is weak by construction on a corridor with thousands of
+segments — dropping 1 of 3,800 moves nothing. The cap and the unit count are both
+reported so the weakness is visible rather than implied.
+
+---
+
+### 1.7 · Run log and manifest
+
+`core/runlog.py`
+
+Append-only event log with five levels — `info`, `warning`, `descent`, `refusal`,
+`flag` — each event carrying a stage, a stable code, a human message and structured
+data. Every gate result, descent, dropped term, absent column and sign flag lands here
+and travels to the report.
+
+The manifest fingerprints engine version, Python version, package versions, registry
+version and SHA-256, and a content hash of the panel including column names. `created_at`
+is recorded but excluded from the fingerprint, so two runs over identical inputs
+fingerprint identically — tested both ways.
+
+---
+
+### 1.8 · Engine orchestrator
+
+`core/engine.py`
+
+One call: `assess(panel, registry=..., snap=...)` → `Assessment`. Contains the mode, the
+rung, the banner, every check, the fit or the index, the sign guard report, both
+receipts, the factor provenance, the manifest and the log. `as_dict()` produces the
+JSON-serialisable shape the API and the report template will consume.
+
+Absent columns are logged individually with that factor's `missing_behaviour`, so the
+report can say what was lost rather than that something was.
+
+---
+
+### 1.9 · CLI
+
+`cli.py` · `demo.py`
+
+`roadrisk assess` · `roadrisk registry` · `roadrisk demo` · `roadrisk version`
+
+The brief's user-facing rules are implemented here first, because the CLI is where their
+shape gets decided before the web panel inherits it:
+
+- **Mode banner** — green `🟢 MODE A — FITTED FROM YOUR DATA · 7 factors · 4,571 crashes`
+  or yellow `🟡 MODE B — PUBLISHED WEIGHTS · RANKING ONLY · not a crash prediction`
+- **Refusal receipt** — printed whenever Mode A was refused, saying what to supply
+- **Descent receipt** — printed whenever the ladder stepped down
+- **Sign contradictions** in red panels with the full diagnostic trail, impossible to
+  scroll past
+- Coefficients coloured against their expected sign, with an `Exp.` column
+
+Gate results render as two tables — before fitting, and at fit once the specification
+was known — so that check 4 appearing twice with different parameter counts reads as
+two genuine evaluations rather than a duplicate row.
+
+`demo.py` sits outside `core/` on purpose: it fabricates data, and nothing that
+fabricates data belongs in the assessment path.
+
+---
+
+## Bugs found while building
+
+Both were caught by guards written earlier the same day, which is the argument for
+writing the guards first.
+
+**1 · Duplicate panel cells in the synthetic generator.** Period labels were built as
+`2024-{month % 12 + 1}`, so a 24-month panel repeated every label and
+`MultiIndex.from_product` produced two rows per cell. The contract's duplicate-key check
+rejected it immediately, naming the colliding keys. Fixed by carrying the year.
+
+**2 · Constant-column detection never fired.** `zero_variance_columns` tested
+`std == 0`, but pandas returns ~1.8e-15 for a genuinely constant column because of
+floating-point summation. A corridor with one posted speed limit end to end — ordinary,
+and precisely the `maxspeed` case the brief flags — would have reached the fit with a
+singular design. Now compared against a relative tolerance scaled to the column's own
+magnitude, in both `diagnostics.zero_variance_columns` and the `zscore` transform.
+Regression tests cover exact-zero, floating-point-zero and genuinely-varying columns.
+
+---
+
+## What is not built
+
+Stated plainly so nothing here is mistaken for more than it is.
+
+- **No geospatial pipeline.** The engine consumes a panel; it cannot yet build one from
+  two coordinates. Corridor resolution, segmentation, crash snapping and every Tier A/B
+  adapter are Stage 2.
+- **No GLMM, GAM or Bayesian rung.** Mode A is NB2 today. The standard errors are
+  understated for panel data, as shown above.
+- **No out-of-sample validation.** No spatial CV, no CURE plots, no held-out calibration.
+- **No report or PDF.** `as_dict()` is the seam that will feed it.
+- **No web layer, no hosting.** Nothing is deployed and there is no public URL yet.
+- **Mode B cannot score** until weights are sourced and cited.
+- **Still validated on one corridor.** Nothing here changes that. The second corridor
+  remains the critical path, and no amount of engine work substitutes for it.

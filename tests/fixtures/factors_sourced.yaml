@@ -1,0 +1,79 @@
+# TEST FIXTURE ONLY — DO NOT USE FOR AN ASSESSMENT.
+#
+# The weights below are invented so that Mode B can be exercised in tests. They carry
+# a `weight_source` that says exactly that, which is the point: the engine's rule is
+# "no weight without a citation", not "no weight without a *good* citation". Sourcing
+# the real weights from HSM CMFs and iRAP tables is open work — see STEPS.md.
+
+version: "test-sourced-0.1.0"
+
+factors:
+  - name: curve_density
+    label: Curve density (curves per km)
+    column: curve_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 85
+    default_weight: 0.25
+    weight_source: "SYNTHETIC — test fixture, not a real citation"
+    missing_behaviour: Horizontal alignment leaves the model.
+    adapters:
+      - name: osm_geometry
+        tier: A
+        licence: ODbL
+
+  - name: junction_density
+    label: Junction density (per km)
+    column: junction_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 95
+    default_weight: 0.30
+    weight_source: "SYNTHETIC — test fixture, not a real citation"
+    missing_behaviour: Conflict-point exposure is lost.
+    adapters:
+      - name: osm_graph_nodes
+        tier: A
+        licence: ODbL
+
+  - name: access_density
+    label: Access and driveway density (per km)
+    column: access_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 90
+    default_weight: 0.20
+    weight_source: "SYNTHETIC — test fixture, not a real citation"
+    missing_behaviour: Access conflict is lost.
+    adapters:
+      - name: osm_service_driveway
+        tier: A
+        licence: ODbL
+
+  - name: speed_limit
+    label: Posted speed limit (km/h)
+    column: speed_limit
+    transform: ln
+    expected_sign: "+"
+    drop_priority: 80
+    default_weight: 0.90
+    weight_source: "SYNTHETIC — test fixture, not a real citation"
+    missing_behaviour: The speed suppressor is lost.
+    adapters:
+      - name: osm_maxspeed
+        tier: A
+        licence: ODbL
+
+  - name: lit
+    label: Lit proportion of segment
+    column: lit
+    transform: identity
+    expected_sign: "-"
+    drop_priority: 45
+    default_weight: -0.25
+    weight_source: "SYNTHETIC — test fixture, not a real citation"
+    missing_behaviour: Night risk carried by night_ratio alone.
+    adapters:
+      - name: osm_lit
+        tier: A
+        licence: ODbL

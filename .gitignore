@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Runs and data
+runs/
+data/
+*.gpkg
+*.tif
+*.pbf
+*.osm
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Design briefs — held back deliberately, not by accident.
+# This repository is PUBLIC. Both documents contain pricing, commercial strategy,
+# competitor positioning and a candid assessment of what is not yet defensible about
+# the method. Remove these two lines to publish them.
+PIPELINE_AND_DATA_BRIEF.md
+ROAD_RISK_PANEL_BRIEF.pdf

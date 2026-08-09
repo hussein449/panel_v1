@@ -1,0 +1,483 @@
+# Factor registry
+#
+# A factor is a declaration, not code. Adding one here is the only step required to
+# make it available to both modes. The engine reads this file and builds the model
+# specification from it.
+#
+# ---------------------------------------------------------------------------------
+# ON default_weight
+#
+# Every factor below ships with `default_weight: null`. That is deliberate, not an
+# oversight. Mode B applies published weights and must cite each one; an uncited
+# weight is the exact liability the brief warns about. The engine REFUSES to run
+# Mode B until a weight and its `weight_source` are both present.
+#
+# Populating these is literature work — HSM Crash Modification Factors, iRAP tables,
+# or a named peer-reviewed source per factor. Until then Mode B is correct but not
+# yet useful, and Mode A is unaffected because it estimates its own coefficients.
+# ---------------------------------------------------------------------------------
+#
+# ON expected_sign
+#
+# The guard rail. A fitted coefficient that contradicts its declared sign is flagged
+# prominently and never quietly reported. Signs here are derived from mechanism, not
+# from a fit, so they are defensible independently of any dataset.
+# ---------------------------------------------------------------------------------
+#
+# DELIBERATELY ABSENT: rainfall and other weather terms. Withdrawn from the M51 model
+# as a season artefact. A variable that correlates with an omitted seasonal cycle is
+# not measuring what its name claims. It returns only alongside an explicit seasonal
+# control.
+# ---------------------------------------------------------------------------------
+#
+# drop_priority: lower is shed first when the ladder must reduce the specification.
+# Values are unique so descent is deterministic.
+
+version: "0.1.0"
+
+factors:
+  - name: traffic_proxy
+    label: Traffic proxy (graph centrality)
+    column: traffic_proxy
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 100
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Exposure reverts to length x duration alone. The model can no longer separate
+      "busy" from "long", and every other coefficient absorbs some volume signal.
+      The single most damaging absence in the registry.
+    notes: >
+      NEVER relabel this as `aadt`. No global open AADT source exists. This is a
+      relative ranking quantity built from road class, population accessibility,
+      graph centrality and night lights. Where the client supplies real counts the
+      client adapter wins and the value becomes a measured AADT — at which point the
+      column, and the report, say so.
+    adapters:
+      - name: client_aadt
+        tier: D
+        licence: client
+        notes: Real counts. Also usable to calibrate the proxy on other corridors.
+      - name: national_count_programme
+        tier: A
+        licence: public-domain
+        notes: US HPMS, UK DfT count points, NL, DK, AU. Country-specific, free where it exists.
+      - name: osm_graph_centrality
+        tier: B
+        licence: ODbL
+        notes: Betweenness on the routable graph. Use graph-tool or networkit, not networkx.
+
+  - name: junction_density
+    label: Junction density (per km)
+    column: junction_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 95
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Conflict-point exposure is lost. Intersections dominate non-exposure risk on
+      most corridors, so the geometry terms will absorb part of this effect.
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: osm_graph_nodes
+        tier: A
+        licence: ODbL
+        notes: Nodes of degree >= 3 per km of centreline. Pure graph computation.
+
+  - name: access_density
+    label: Access and driveway density (per km)
+    column: access_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 90
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Frequently the strongest non-exposure term, and frequently omitted by
+      competitors because it is expensive to survey. Free here. Losing it inflates
+      junction_density and the roadside activity terms.
+    notes: >
+      Known collinearity with ramp_density on the M51 (r = 0.365) — both measure
+      access. The VIF gate exists partly for this pair.
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: osm_service_driveway
+        tier: A
+        licence: ODbL
+        notes: service=driveway plus minor-road joins per km.
+
+  - name: curve_density
+    label: Curve density (curves per km)
+    column: curve_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 85
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Horizontal alignment leaves the model entirely. Grade alone does not stand in
+      for it.
+    notes: >
+      Fits +0.228 (p = 0.050) on M51 v6 once the composite geometry factor is split
+      into components and measured speed enters. The historical negative sign lived
+      in the ramp component, never here. Keep this raw — do not re-fuse it into a
+      composite.
+    adapters:
+      - name: client_alignment
+        tier: D
+        licence: client
+      - name: osm_geometry
+        tier: A
+        licence: ODbL
+        notes: Computed from centreline vertices. No external call.
+
+  - name: speed_limit
+    label: Posted speed limit (km/h)
+    column: speed_limit
+    transform: ln
+    expected_sign: "+"
+    drop_priority: 80
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      The suppressor is lost. On M51, adding speed doubled the curvature coefficient
+      rather than shrinking it — without speed, curvature reads weaker than it is.
+    notes: >
+      This is POSTED, not operating speed. Posted is often constant along a corridor
+      and will not capture "drivers slow on this curve". Operating (85th percentile)
+      speed is a separate factor and a paid Tier C input. Do not conflate them in the
+      report.
+    adapters:
+      - name: client_speed_survey
+        tier: D
+        licence: client
+      - name: osm_maxspeed
+        tier: A
+        licence: ODbL
+        notes: Coverage is patchy and varies sharply by country. Degrade loudly.
+
+  - name: grade_pct
+    label: Gradient (absolute %)
+    column: grade_pct
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 75
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Vertical alignment leaves the model.
+    adapters:
+      - name: client_survey
+        tier: D
+        licence: client
+      - name: copernicus_dem_glo30
+        tier: A
+        licence: public-domain
+        notes: 30 m resolution. Read as COG over /vsicurl/, never download whole tiles.
+
+  - name: lanes
+    label: Lane count
+    column: lanes
+    transform: ln
+    expected_sign: "+"
+    drop_priority: 70
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Cross-section capacity signal is lost.
+    notes: >
+      Sign is "+" because exposure here is length x duration, NOT vehicle-kilometres.
+      Under that definition lane count acts as a volume proxy, and more lanes carry
+      more vehicles past the same point. If exposure ever becomes AADT-weighted this
+      sign must be revisited — it would likely invert. Flagged so the reversal is
+      not mistaken for a finding.
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: osm_lanes
+        tier: A
+        licence: ODbL
+
+  - name: poi_density
+    label: Roadside POI density (per km)
+    column: poi_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 65
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Roadside activity is under-measured; building_density partially substitutes but
+      misses markets, schools and informal stops.
+    adapters:
+      - name: osm_poi
+        tier: A
+        licence: ODbL
+      - name: overture_places
+        tier: A
+        licence: ODbL
+        notes: Better coverage than OSM in some countries. Use for cross-validation.
+
+  - name: roadside_hazard_score
+    label: Roadside hazard score
+    column: roadside_hazard_score
+    transform: identity
+    expected_sign: "+"
+    drop_priority: 60
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Run-off-road severity drivers are unrepresented. This is the factor iRAP
+      charges 50-200 USD/km of survey vehicle to obtain.
+    notes: >
+      Derived from street-level imagery. Mapillary is CC-BY-SA — share-alike applies
+      to a redistributed derived database, not to a report with attribution. Never
+      use Google Street View for this; the Maps Platform ToS forbids deriving a
+      dataset from it, and that is a real liability on a paid deliverable.
+    adapters:
+      - name: client_survey
+        tier: D
+        licence: client
+      - name: mapillary_detections
+        tier: B
+        licence: CC-BY-SA
+        notes: Already-extracted detections. Try these before running any inference.
+      - name: mapillary_vision
+        tier: B
+        licence: CC-BY-SA
+        notes: >
+          Own inference on sampled frames only. VLM-per-image on a full corridor is
+          50-150 USD and is the main cost trap in the pipeline.
+
+  - name: curve_radius_min
+    label: Minimum curve radius (m)
+    column: curve_radius_min
+    transform: ln
+    expected_sign: "-"
+    drop_priority: 55
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Curve severity is lost; curve_density still carries frequency.
+    notes: >
+      Adapter must cap radius on tangent sections — a straight has infinite radius
+      and ln() will reject it. Cap at the corridor design maximum, and record the cap
+      in the run log so the ceiling is visible in the report.
+      Expect collinearity with curve_density; the VIF gate resolves which survives.
+    adapters:
+      - name: client_alignment
+        tier: D
+        licence: client
+      - name: osm_geometry
+        tier: A
+        licence: ODbL
+
+  - name: ramp_density
+    label: Ramp and interchange density (per km)
+    column: ramp_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 50
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Merge and diverge conflict is unrepresented.
+    notes: >
+      OPEN BLOCKER. On M51 this term inverts: +0.316 alone, -0.327 alongside the
+      roadside activity factor (p = 0.012, r = 0.365). Both measure access. It is not
+      diagnosable on M51 — both are region-constant across 7 units, so the effective
+      sample size is 7, not 1,085. Resolving it requires a second corridor where
+      access density and ramp density separate. Until then, treat any fitted value
+      for this term as unresolved and say so in the report.
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: osm_link_ways
+        tier: A
+        licence: ODbL
+        notes: highway=*_link per km.
+
+  - name: lit
+    label: Lit proportion of segment
+    column: lit
+    transform: identity
+    expected_sign: "-"
+    drop_priority: 45
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Night risk is carried entirely by night_ratio, which cannot distinguish a lit
+      corridor from an unlit one.
+    notes: >
+      OSM `lit` is badly under-tagged in most of the target market. Cross-validate
+      against VIIRS night lights and report the disagreement rather than assuming the
+      absent tag means unlit.
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: osm_lit
+        tier: A
+        licence: ODbL
+      - name: viirs_night_lights
+        tier: A
+        licence: public-domain
+        notes: NOAA. A proxy for lighting presence, and the cross-check on OSM `lit`.
+
+  - name: population_density
+    label: Population density (persons per km2)
+    column: population_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 40
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Urban/rural context is weakened; land use must carry it alone.
+    adapters:
+      - name: ghsl
+        tier: A
+        licence: public-domain
+        notes: EU JRC Global Human Settlement Layer.
+      - name: worldpop
+        tier: A
+        licence: public-domain
+
+  - name: roadside_object_density
+    label: Roadside fixed-object density (per km)
+    column: roadside_object_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 35
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Fixed-object strike risk is folded into roadside_hazard_score, losing the
+      distinction between "many poles" and "steep side slope".
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: mapillary_detections
+        tier: B
+        licence: CC-BY-SA
+        notes: Poles, trees, walls. Pre-extracted — no inference cost.
+
+  - name: building_density
+    label: Building density (per km)
+    column: building_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 30
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Roadside development intensity is lost.
+    adapters:
+      - name: ms_global_buildings
+        tier: A
+        licence: ODbL
+        notes: Microsoft Global ML Building Footprints.
+
+  - name: sight_distance_proxy
+    label: Sight distance proxy (m)
+    column: sight_distance_proxy
+    transform: ln
+    expected_sign: "-"
+    drop_priority: 25
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Visibility constraint is unrepresented.
+    notes: >
+      DEM viewshed along the alignment. Crude — it sees terrain, not vegetation,
+      walls or parked vehicles. Report it as a proxy and never as measured sight
+      distance.
+    adapters:
+      - name: client_survey
+        tier: D
+        licence: client
+      - name: dem_viewshed
+        tier: B
+        licence: public-domain
+
+  - name: median_present
+    label: Median present (0/1)
+    column: median_present
+    transform: identity
+    expected_sign: "-"
+    drop_priority: 20
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Head-on separation is unrepresented.
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: osm_divided
+        tier: A
+        licence: ODbL
+        notes: Dual carriageway pairs and `divider` tags. Partial coverage.
+
+  - name: night_ratio
+    label: Night share of exposure
+    column: night_ratio
+    transform: identity
+    expected_sign: "+"
+    drop_priority: 15
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Temporal risk variation is lost. Only matters when the panel resolves time
+      slots; on a period-only panel this factor is constant and will be dropped by
+      the variance check regardless.
+    adapters:
+      - name: panel_construction
+        tier: A
+        licence: client
+        notes: Derived from the time-slot definition. Never fetched.
+
+  - name: surface_paved
+    label: Paved proportion of segment
+    column: surface_paved
+    transform: identity
+    expected_sign: "-"
+    drop_priority: 10
+    default_weight: null
+    weight_source: null
+    missing_behaviour: Surface quality is unrepresented.
+    notes: >
+      Paved/unpaved only — this is not a condition index. Skid resistance, IRI and
+      rutting are all Tier D and priced per km. OSM `surface` suffers tag rot; the
+      Mapillary cross-check disagrees often enough to be worth reporting.
+    adapters:
+      - name: client_survey
+        tier: D
+        licence: client
+      - name: osm_surface
+        tier: A
+        licence: ODbL
+      - name: mapillary_vision
+        tier: B
+        licence: CC-BY-SA
+        notes: Cross-validation on OSM `surface`. Disagreement means tag rot.
+
+  - name: sidewalk_present
+    label: Footway present (0/1)
+    column: sidewalk_present
+    transform: identity
+    expected_sign: "-"
+    drop_priority: 5
+    default_weight: null
+    weight_source: null
+    missing_behaviour: >
+      Pedestrian protection is unrepresented. Material where vulnerable road users
+      are a large share of casualties, which is most of the target market.
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: osm_sidewalk
+        tier: A
+        licence: ODbL
