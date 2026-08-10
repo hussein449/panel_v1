@@ -5,7 +5,76 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Region drives source selection
+## 2026-08-10 (latest) — iRAP Reference Guide sourced; global coverage triples
+
+**Delivered:** the iRAP Methodology Reference Guide v3.10 was obtained and worked
+through. Four new weights, and the region-transfer flag largely disappears outside
+North America.
+
+**Verified:** 178 tests pass, `ruff check` clean.
+
+| | Before | After |
+|---|---|---|
+| Weights | 10 | **13** |
+| Sourced factors | 7 | **8** |
+| **Global** weights | 4 | **8** |
+
+New: `curve_radius_min` (iRAP, −0.7232), `surface_paved` (iRAP, −1.0986, previously
+uncited entirely), `lit` (iRAP, −0.1398). `grade_pct`'s citation upgraded from a
+second-hand fact sheet to the Guide itself.
+
+### The effect on a non-US corridor
+
+| Factor | Europe — before | Europe — after |
+|---|---|---|
+| `grade_pct` | +0.4863 iRAP | +0.4863 iRAP |
+| `lit` | −0.0817 HSM ⚠ | **−0.1398 iRAP** |
+| `access_density` | +0.1658 HSM ⚠ | +0.1658 HSM ⚠ |
+| `speed_limit` | +1.6 Elvik | +1.6 Elvik |
+
+Three ⚠ down to one. `access_density` is the only factor in this panel still reaching
+for American evidence.
+
+### Curvature was the prize
+
+The Guide publishes curvature as four categories — 1.0 / 1.8 / 3.5 / 6.0 — **and gives
+the radius range each corresponds to** (>900 m, 500–900, 200–500, 0–200). That is what
+makes a categorical attribute convertible to a continuous weight at all. It also fits
+better than the HSM equivalent: R² 0.938 against 0.878, and unlike the HSM weight it
+does not depend on segment length, so it is not tied to the segmentation.
+
+### Four attributes examined and deliberately not used
+
+Recorded in `docs/WEIGHTS.md` so nobody re-treads it:
+
+- **Sight distance** — binary adequate/poor at intersections; our factor is continuous
+  metres. No published threshold to map between them, so any mapping would be invented.
+- **Number of lanes** — head-on-overtaking only, where more lanes means *less* risk
+  (1 lane 1.00 → 2 lanes 0.02). Our `lanes` is a volume proxy for total crashes and
+  expects the opposite sign. The `expected_sign` validator would have rejected it, and
+  correctly.
+- **Median type** — 0–100 traversability values, one multiplicand of the Star Rating
+  Score rather than a CMF. Needs the surrounding SRS normalisation. Best remaining
+  candidate.
+- **Intersection type** — per-intersection factors, not per-km density. Confirms why
+  `junction_density` has been hard to source all along.
+
+### One finding for the report
+
+The Guide states iRAP uses the **same** risk factors for posted speed limit and
+85th-percentile operating speed, defaulting to `max()` of the two. That does not remove
+our posted-speed caveat — the Elvik exponent is still an operating-speed quantity, and
+taking a maximum is not substitution — but it shows a respected global methodology
+treating posted limit as a legitimate input to a speed risk curve.
+
+### Housekeeping
+
+`references/` is gitignored. The Guide is a licensed document: read it, derive from it,
+cite it — never redistribute it, least of all from a public repository.
+
+---
+
+## 2026-08-10 — Region drives source selection
 
 **Delivered:** the corridor's region now picks which body of evidence is used, instead
 of merely annotating the choice after the fact.

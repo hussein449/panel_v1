@@ -307,15 +307,18 @@ factors:
         scope: run_off_head_on
         fit_r2: 0.7954
         source: >
-          iRAP Road Attribute Risk Factors: Grade — risk factors 1.0 / 1.2 / 1.7 for
-          <7.5%, 7.5-10%, >10%. Log-linearised against ln1p at band midpoints
-          3.75 / 8.75 / 11.25 percent.
+          iRAP Methodology Reference Guide v3.10, Grade — risk factors 1.0 / 1.2 / 1.7
+          for 0-7.5%, 7.5-10%, >=10%, vehicle occupant run-off and
+          head-on/loss-of-control crashes. Log-linearised against ln1p at band
+          midpoints 3.75 / 8.75 / 11.25 percent. The Guide notes these derive
+          primarily from Harwood et al. (2000) for grades up to 8%.
         caveat: >
-          iRAP notes the factors were selected from limited data relating crash rates
-          to grade. Applies to run-off, head-on and loss-of-control crashes only, not
-          to total crashes — which is why the engine will not score a like-for-like
-          agreement against the HSM weight. Bands are far wider than the HSM's and the
-          resulting weight is four times larger; they are not measuring the same thing.
+          The Guide states the >=10% factor reflects extreme gradients and may
+          overstate risk at the lower end of that band. Applies to run-off and head-on
+          crashes only, not total crashes — which is why the engine will not score a
+          like-for-like agreement against the HSM weight. Bands are far wider than the
+          HSM's and the resulting weight is four times larger; they are not measuring
+          the same thing.
     missing_behaviour: Vertical alignment leaves the model.
     notes: >
       UNITS: ABSOLUTE grade in percent. Neither source distinguishes upgrade from
@@ -450,6 +453,24 @@ factors:
           only roughly log-linear, so this under-weights very tight curves. The weight
           is also tied to the segmentation length, which the engine checks against the
           actual run.
+      - value: -0.7232
+        family: irap
+        facility_type: any
+        region: global
+        severity: all
+        scope: run_off_head_on
+        fit_r2: 0.9378
+        source: >
+          iRAP Methodology Reference Guide v3.10, Curvature — risk factors
+          1.0 / 1.8 / 3.5 / 6.0 for the categories straight-or-gently-curving,
+          moderate, sharp and very sharp, which the Guide maps to radius ranges
+          >900 m, 500-900 m, 200-500 m and 0-200 m. Vehicle occupant run-off and
+          head-on/loss-of-control crashes. Log-linearised against ln at band midpoints
+          1100 / 700 / 350 / 100 m.
+        caveat: >
+          Motorcyclist factors are ~10% higher than the vehicle-occupant values used
+          here, so a corridor with a large motorcycle share is under-weighted. Scope is
+          run-off and head-on, not total crashes.
     missing_behaviour: Curve severity is lost; curve_density still carries frequency.
     notes: >
       UNITS: minimum radius in METRES. The HSM equation is in feet; the conversion is
@@ -515,6 +536,22 @@ factors:
           Table 10-12 night-crash proportions are Washington State HSIS data 2002-2006.
           Night-crash share varies enormously by country; replacing these with local
           proportions is a cheap, high-value calibration.
+      - value: -0.1398
+        family: irap
+        facility_type: any
+        region: global
+        severity: all
+        scope: intersection
+        source: >
+          iRAP Methodology Reference Guide v3.10, Street lighting — present 1.00 versus
+          not-present 1.15 for vehicle occupants at intersections. Risk factors updated
+          in the v3.10 model. Weight is ln(1.00) - ln(1.15) over a proportion moving
+          0 to 1, exact.
+        caveat: >
+          Scope is INTERSECTION crashes for vehicle occupants, not total segment
+          crashes, so this is much narrower than the HSM lighting weight and the two
+          are not comparable. Pedestrian and bicyclist factors are higher (1.25); a
+          corridor with heavy pedestrian activity is under-weighted by this term.
     missing_behaviour: >
       Night risk is carried entirely by night_ratio, which cannot distinguish a lit
       corridor from an unlit one.
@@ -652,13 +689,34 @@ factors:
     transform: identity
     expected_sign: "-"
     drop_priority: 10
+    weights:
+      - value: -1.0986
+        family: irap
+        facility_type: any
+        region: global
+        severity: all
+        scope: total
+        source: >
+          iRAP Methodology Reference Guide v3.10, Skid resistance —
+          sealed-adequate 1.0 versus unsealed-adequate 3.0 for vehicle occupants,
+          across run-off, head-on/loss-of-control, head-on/overtaking and intersection
+          crashes. Weight is ln(1.0) - ln(3.0) over a proportion moving 0 to 1, exact.
+        caveat: >
+          The largest weight in the registry after speed, and it should be: iRAP prices
+          an unsealed road at three times the risk of a sealed one. Covers vehicle
+          occupants only, not pedestrian crashes. Motorcyclist factors are higher again
+          (4.0 unsealed), so a high-motorcycle corridor is under-weighted.
     missing_behaviour: Surface quality is unrepresented.
     notes: >
-      Paved/unpaved only — this is not a condition index. Skid resistance, IRI and
-      rutting are all Tier D and priced per km.
-      UNCITED. iRAP's road condition attribute is the closest published equivalent but
-      grades condition rather than surface type. OSM `surface` also suffers tag rot;
-      the Mapillary cross-check disagrees often enough to be worth reporting.
+      UNITS: proportion of the segment that is sealed, 0 to 1.
+      Paved/unpaved only — this is NOT a condition index. The weight holds surface
+      quality at "adequate" on both sides to isolate the sealed/unsealed effect from
+      the condition effect, which this registry does not model separately. iRAP prices
+      condition (good/medium/poor, 1.0/1.2/1.4) as a distinct attribute; adding it
+      would need a new factor and a column to feed it.
+      Skid resistance, IRI and rutting remain Tier D and priced per km.
+      OSM `surface` suffers tag rot; the Mapillary cross-check disagrees often enough
+      to be worth reporting.
     adapters:
       - name: client_survey
         tier: D

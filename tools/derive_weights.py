@@ -315,20 +315,23 @@ def hsm_access_density() -> Derivation:
 # iRAP — global, cross-sectional by construction
 # =============================================================================
 
+IRAP_GUIDE = "iRAP Methodology Reference Guide v3.10"
+
 GRADE_IRAP_MIDPOINTS = np.array([3.75, 8.75, 11.25])
 GRADE_IRAP_FACTORS = np.array([1.0, 1.2, 1.7])
 
 
 def irap_grade() -> Derivation:
-    """iRAP Road Attribute Risk Factors: Grade.
+    """iRAP grade risk factors, vehicle occupants.
 
-        <7.5%    risk factor 1.0
-        7.5-10%  risk factor 1.2
-        >10%     risk factor 1.7
+        0% to <7.5%   1.0
+        7.5% to <10%  1.2
+        >=10%         1.7
 
-    Selection of these factors was based on limited data from US and Australian
-    studies, and they apply to run-off, head-on and loss-of-control crashes for
-    vehicle occupants, motorcyclists, pedestrians and bicyclists.
+    Crash types VO — RO DS/PS (L), HO-LOC (L). The Guide notes these are based
+    primarily on Harwood et al. (2000) for grades up to 8%, with the >=10% factor
+    "reflecting extreme gradients although this may overstate risk at the lower end
+    of the band".
     """
     coefficient, r_squared = _fit_log_linear(
         np.log1p(GRADE_IRAP_MIDPOINTS), np.log(GRADE_IRAP_FACTORS)
@@ -343,20 +346,155 @@ def irap_grade() -> Derivation:
         scope="run_off_head_on",
         fit_r2=r_squared,
         source=(
-            "iRAP Road Attribute Risk Factors: Grade — risk factors 1.0 / 1.2 / 1.7 "
-            "for <7.5%, 7.5-10%, >10%. Log-linearised against ln1p at band midpoints "
-            "3.75 / 8.75 / 11.25 percent."
+            f"{IRAP_GUIDE}, Grade — risk factors 1.0 / 1.2 / 1.7 for 0-7.5%, "
+            "7.5-10%, >=10%, vehicle occupant run-off and head-on/loss-of-control "
+            "crashes. Log-linearised against ln1p at band midpoints 3.75 / 8.75 / "
+            "11.25 percent."
         ),
         assumptions=(
-            "Column must be ABSOLUTE grade in percent. iRAP states these factors apply "
-            "to run-off, head-on and loss-of-control crashes, not to total crashes — "
-            "the declared scope reflects that, and the engine will not compute a "
-            "like-for-like agreement score against a total-crash weight."
+            "Column must be ABSOLUTE grade in percent — the Guide states the attribute "
+            "refers to both upward and downward grades. Scope is run-off and head-on, "
+            "not total crashes, so the engine will not score a like-for-like agreement "
+            "against a total-crash weight."
         ),
         caveat=(
-            "iRAP notes the factors were selected from limited data relating crash "
-            "rates to grade. Bands are much wider than the HSM's and the resulting "
-            "weight is several times larger; the two are not measuring the same thing."
+            "The Guide states the >=10% factor reflects extreme gradients and may "
+            "overstate risk at the lower end of that band. Bands are far wider than "
+            "the HSM's and the resulting weight is four times larger; the two are not "
+            "measuring the same thing."
+        ),
+    )
+
+
+# Radius bands the Guide gives for each curvature category.
+CURVE_IRAP_RADII_M = np.array([1100.0, 700.0, 350.0, 100.0])
+CURVE_IRAP_FACTORS = np.array([1.0, 1.8, 3.5, 6.0])
+
+
+def irap_curve_radius() -> Derivation:
+    """iRAP curvature risk factors, vehicle occupants.
+
+        Straight or gently curving  (>900 m)     1.0
+        Moderate curvature          (500-900 m)  1.8
+        Sharp curve                 (200-500 m)  3.5
+        Very sharp                  (0-200 m)    6.0
+
+    Crash types VO — RO (L), HO-LOC (L). Unusually for a categorical attribute, the
+    Guide publishes the radius range each category corresponds to, which is what makes
+    this convertible to a continuous weight at all.
+    """
+    coefficient, r_squared = _fit_log_linear(
+        np.log(CURVE_IRAP_RADII_M), np.log(CURVE_IRAP_FACTORS)
+    )
+    return Derivation(
+        factor="curve_radius_min",
+        transform="ln",
+        value=coefficient,
+        family="irap",
+        facility_type="any",
+        region="global",
+        scope="run_off_head_on",
+        fit_r2=r_squared,
+        source=(
+            f"{IRAP_GUIDE}, Curvature — risk factors 1.0 / 1.8 / 3.5 / 6.0 for the "
+            "categories straight-or-gently-curving, moderate, sharp and very sharp, "
+            "which the Guide maps to radius ranges >900 m, 500-900 m, 200-500 m and "
+            "0-200 m. Vehicle occupant run-off and head-on/loss-of-control crashes. "
+            "Log-linearised against ln at band midpoints 1100 / 700 / 350 / 100 m."
+        ),
+        assumptions=(
+            "Column must be minimum radius in METRES. Unlike the HSM weight this one "
+            "does NOT depend on segment length, so it is not tied to the segmentation."
+        ),
+        caveat=(
+            "Motorcyclist factors are ~10% higher than the vehicle-occupant values "
+            "used here, so a corridor with a large motorcycle share is under-weighted "
+            "by this term. Scope is run-off and head-on, not total crashes."
+        ),
+    )
+
+
+def irap_surface_paved() -> Derivation:
+    """iRAP skid resistance risk factors, vehicle occupants — sealed versus unsealed.
+
+        Sealed - adequate     1.0
+        Unsealed - adequate   3.0
+
+    Crash types VO — RO DS/PS (L), HO-LOC (L), HO-OT (L), INT (L): every vehicle
+    occupant crash type, which is why the scope is total rather than a subset.
+
+    Holding surface quality at "adequate" on both sides isolates the sealed/unsealed
+    effect from the condition effect, which the registry does not currently model.
+    """
+    sealed, unsealed = 1.0, 3.0
+    # Column is the PROPORTION paved, 0 to 1, so the weight is the whole-range change.
+    coefficient = math.log(sealed) - math.log(unsealed)
+
+    return Derivation(
+        factor="surface_paved",
+        transform="identity",
+        value=coefficient,
+        family="irap",
+        facility_type="any",
+        region="global",
+        scope="total",
+        source=(
+            f"{IRAP_GUIDE}, Skid resistance — sealed-adequate 1.0 versus "
+            "unsealed-adequate 3.0 for vehicle occupants, across run-off, "
+            "head-on/loss-of-control, head-on/overtaking and intersection crashes. "
+            "Weight is ln(1.0) - ln(3.0) over a proportion moving 0 to 1, exact."
+        ),
+        assumptions=(
+            "Column is the PROPORTION of the segment that is sealed, 0 to 1. Both "
+            "sides held at 'adequate' quality to isolate the sealed/unsealed effect "
+            "from surface condition, which the registry does not model separately."
+        ),
+        caveat=(
+            "The largest weight in the registry after speed, and it should be: iRAP "
+            "prices an unsealed road at three times the risk of a sealed one. It "
+            "covers vehicle occupants only, not pedestrian crashes. Motorcyclist "
+            "factors are higher again (4.0 unsealed), so a high-motorcycle corridor "
+            "is under-weighted."
+        ),
+    )
+
+
+def irap_lighting() -> Derivation:
+    """iRAP street lighting risk factors, vehicle occupants.
+
+        Present      1.00
+        Not present  1.15
+
+    Crash types VO — INT (L) only. That narrow scope is the point: iRAP prices street
+    lighting for vehicle occupants at *intersections*, whereas the HSM prices it for
+    total segment crashes. The two are not measuring the same thing, and the engine
+    will refuse to score an agreement between them.
+    """
+    lit, unlit = 1.00, 1.15
+    coefficient = math.log(lit) - math.log(unlit)
+
+    return Derivation(
+        factor="lit",
+        transform="identity",
+        value=coefficient,
+        family="irap",
+        facility_type="any",
+        region="global",
+        scope="intersection",
+        source=(
+            f"{IRAP_GUIDE}, Street lighting — present 1.00 versus not-present 1.15 "
+            "for vehicle occupants at intersections. Risk factors updated in the "
+            "v3.10 model. Weight is ln(1.00) - ln(1.15) over a proportion moving "
+            "0 to 1, exact."
+        ),
+        assumptions=(
+            "Column is the PROPORTION of the segment that is lit, 0 to 1."
+        ),
+        caveat=(
+            "Scope is INTERSECTION crashes for vehicle occupants, not total segment "
+            "crashes, so this is much narrower than the HSM lighting weight and the "
+            "two are not comparable. Pedestrian and bicyclist factors are higher "
+            "(1.25); a corridor with heavy pedestrian activity is under-weighted."
         ),
     )
 
@@ -428,6 +566,9 @@ DERIVATIONS = (
     hsm_curve_radius,
     hsm_access_density,
     irap_grade,
+    irap_curve_radius,
+    irap_surface_paved,
+    irap_lighting,
     speed_limit_injury,
     speed_limit_fatal,
     operating_speed_injury,

@@ -88,16 +88,22 @@ becomes 11.25. A rule beats a preference, and it must be the same rule for both.
 
 ## The weights
 
+Thirteen weights across eight factors. **Eight are global**, which is what makes the
+tool usable outside North America.
+
 | Factor | Family | Weight | Fit | Facility | Region | Severity | Scope |
 |---|---|---|---|---|---|---|---|
 | `speed_limit` | elvik | **+1.6000** | exact | any | global | injury | total |
 | `speed_limit` | elvik | **+4.1000** | exact | any | global | fatal | total |
 | `operating_speed_85` | elvik | **+1.6000** | exact | any | global | injury | total |
 | `operating_speed_85` | elvik | **+4.1000** | exact | any | global | fatal | total |
+| `surface_paved` | irap | **−1.0986** | exact | any | global | all | total |
+| `curve_radius_min` | irap | **−0.7232** | R² 0.938 | any | global | all | run-off/head-on |
+| `curve_radius_min` | hsm | **−0.1855** | R² 0.878 | rural 2-lane | N. America | all | total |
 | `grade_pct` | irap | **+0.4863** | R² 0.795 | any | global | all | run-off/head-on |
 | `grade_pct` | hsm | **+0.1212** | R² 1.000 † | rural 2-lane | N. America | all | total |
 | `access_density` | hsm | **+0.1658** | R² 0.965 | rural 2-lane | N. America | all | total |
-| `curve_radius_min` | hsm | **−0.1855** | R² 0.878 | rural 2-lane | N. America | all | total |
+| `lit` | irap | **−0.1398** | exact | any | global | all | intersection |
 | `lit` | hsm | **−0.0817** | exact | rural 2-lane | N. America | all | total |
 | `roadside_hazard_score` | hsm | **+0.0668** | exact | rural 2-lane | N. America | all | total |
 
@@ -146,14 +152,17 @@ Cyprus corridor than a US rural two-lane weight that names one exactly.
 | Factor | Europe | North America | Middle East |
 |---|---|---|---|
 | `grade_pct` | **+0.4863** iRAP (global) | **+0.1212** HSM (local) | **+0.4863** iRAP (global) |
-| `access_density` | +0.1658 HSM ⚠ reached | +0.1658 HSM | +0.1658 HSM ⚠ reached |
-| `lit` | −0.0817 HSM ⚠ reached | −0.0817 HSM | −0.0817 HSM ⚠ reached |
+| `lit` | **−0.1398** iRAP (global) | **−0.0817** HSM (local) | **−0.1398** iRAP (global) |
 | `speed_limit` | +1.6 Elvik (global) | +1.6 Elvik (global) | +1.6 Elvik (global) |
+| `access_density` | +0.1658 HSM ⚠ reached | +0.1658 HSM | +0.1658 HSM ⚠ reached |
 
-A Cyprus corridor takes the global grade weight rather than the American one. Where no
-local or global source exists, the American weight is still used — dropping the term
-would be worse — but every such reach is flagged. **This is the strongest argument for
-completing the iRAP set:** each global weight added removes one ⚠ from every non-US run.
+A Cyprus corridor takes the global weights. Where no local or global source exists the
+American weight is still used — dropping the term would be worse — but every such reach
+is flagged.
+
+`access_density` is now the only remaining ⚠ on a non-US corridor among the factors this
+panel carries, down from three before the iRAP Reference Guide was sourced. Each global
+weight added removes one more.
 
 **Consequence worth knowing:** an undeclared run admits only unrestricted weights. On
 the shipped registry that is one factor. Declaring `--facility-type rural_two_lane
@@ -279,20 +288,36 @@ Each factor's `notes` in `factors.yaml` records its own reason. Summary:
 | `lanes` | Both sources price lane *width*, not *count*. |
 | `median_present` | **Best next candidate.** HSM Chapter 11 divided/undivided SPFs, and iRAP prices median type directly. |
 | `sidewalk_present` | FHWA and iRAP both price this for *pedestrian* crashes. Enters with scope `pedestrian`, which needs a severity-aware index first. |
-| `surface_paved` | iRAP's road condition attribute grades condition, not surface type. |
-| `roadside_object_density`, `sight_distance_proxy` | iRAP prices both, but the numeric factors need the Methodology Reference Guide. |
+| `roadside_object_density` | iRAP prices roadside severity as *nearest object* and *distance to it*, not object density per km. A mapping decision, not a lookup. |
+| `sight_distance_proxy` | iRAP prices it binary (adequate/poor) at intersections; our factor is continuous metres along a segment, with no published threshold to map between them. |
 | `poi_density`, `population_density`, `building_density`, `night_ratio` | No standard published weight on a comparable scale. |
 
-**The iRAP coverage gap.** iRAP publishes Road Attribute Risk Factor fact sheets per
-attribute, and the consolidated **Methodology Reference Guide v3.10** describes all of
-them. The Guide sits behind free SSO registration at
-`resources.irap.org`, and individual fact sheets were not reliably retrievable.
-Only **grade** could be verified from a retrieved fact sheet, so only grade was sourced.
+### What the iRAP Reference Guide could and could not source
 
-Completing the iRAP set is the highest-value next step for Mode B — it would plausibly
-source `median_present`, `surface_paved`, `sight_distance_proxy` and
-`roadside_object_density`, and add a global cross-check to every HSM weight. It needs one
-free registration and the Guide.
+The Guide was obtained and worked through. It publishes numeric risk factor tables per
+attribute, per crash type, per road user. Four weights came out of it — grade, curvature,
+skid resistance and street lighting. Several attributes were examined and **deliberately
+not used**, which is worth recording so nobody re-treads it:
+
+| Attribute | Published values | Why not used |
+|---|---|---|
+| **Sight distance** | Adequate 1.0, Poor 1.42 | Binary adequate/poor, and for vehicle occupants it prices *intersection* crashes. Our factor is continuous metres along a segment. The Guide gives no metre threshold, so any mapping would be invented. |
+| **Number of lanes** | 1 lane 1.00, 2 lanes 0.02, 3 lanes 0.01 | Head-on-overtaking crashes only, where more lanes means less overtaking into oncoming traffic — a 50× drop. Our `lanes` factor is a volume proxy for *total* crashes under a length×duration exposure, expecting the opposite sign. Different mechanism, different scope; sourcing it would be wrong and the `expected_sign` validator would reject it. |
+| **Median type** | 0 – 100 across 14 categories | These are median *traversability* values on a 0–100 scale, one multiplicand of the Star Rating Score, not a CMF. Using them as log-scale weights needs the surrounding SRS normalisation, which is a bigger piece of work. Best remaining candidate. |
+| **Intersection type** | 6 – 30 per intersection | Per-intersection likelihood factors, not per-km density. Our `junction_density` is per km. Not transferable without replicating how iRAP aggregates intersections into a segment score. |
+| **Road condition** | Good 1.0, Medium 1.2, Poor 1.4 | A genuine attribute we do not have a column for. `surface_paved` is sealed/unsealed, a different question. Adding it needs a new factor and an adapter to feed it. |
+| **Speed** | Published as *curves*, not tables | The Guide plots five risk curves rather than tabulating them. Speed already has global coverage via Elvik, so nothing is lost. |
+
+**One finding worth carrying into the report.** The Guide states that iRAP uses the
+*same* risk factors for posted speed limit and 85th-percentile operating speed, and by
+default takes `max(operating speed, speed limit)`. That does not remove the caveat on our
+posted-speed weight — the Elvik exponent is still an operating-speed quantity, and taking
+a maximum is not the same as substituting one for the other — but it does show a
+respected global methodology treating posted limit as a legitimate input to a speed risk
+curve.
+
+**Best remaining candidate:** `median_type`, which needs the SRS traversability
+normalisation understood first.
 
 ---
 
@@ -301,5 +326,5 @@ free registration and the Guide.
 - [NCHRP draft text for the second edition of the Highway Safety Manual](https://onlinepubs.trb.org/onlinepubs/nchrp/nchrp_wod_297Draft.pdf) — Chapter 10. Equations 10-13, 10-17, 10-20, 10-21 and Tables 10-11, 10-12 verified verbatim and checked against the worked examples in the same document.
 - [FHWA-HRT-17-098, *Self-Enforcing Roadways: A Guidance Report*, Chapter 2](https://www.fhwa.dot.gov/publications/research/safety/17098/003.cfm) — reproduces the Elvik (2009) Power Model exponents (Table 1): 1.6 injury, 4.1 fatal, 4.6 fatalities, 2.2 injured road users, for rural roads and freeways.
 - Elvik, R. (2009), *The Power Model of the relationship between speed and road safety: update and new analyses*, TØI Report 1034/2009, Institute of Transport Economics, Oslo. Cited via FHWA above; the report itself was not retrieved.
-- [iRAP methodology and Road Attribute Risk Factor fact sheets](https://irap.org/methodology/) — grade risk factors 1.0 / 1.2 / 1.7. The consolidated Methodology Reference Guide v3.10 requires free registration at [resources.irap.org](https://resources.irap.org/Key-documents/).
+- **iRAP Methodology Reference Guide v3.10** — the source for grade, curvature, skid resistance and street lighting risk factors, each read from its published attribute table with crash types and road-user groups stated. Available free after registration at [resources.irap.org](https://resources.irap.org/Key-documents/); attribute fact sheets are also linked from [irap.org/methodology](https://irap.org/methodology/). The Guide is a licensed document — `references/` is gitignored so it can be kept locally and never redistributed.
 - [FHWA CMF Clearinghouse — HSM resources](https://cmfclearinghouse.fhwa.dot.gov/resources_hsm.php) — for cross-checking CMF provenance.

@@ -116,11 +116,13 @@ Things that need a human call, not a code change.
      `tests/test_published_equations.py`, but HSM2 (2024) changed Parts C and D and
      nothing here is edition-pinned to a verifiable artefact. One afternoon with the
      book closes it.
-   - **The iRAP Methodology Reference Guide v3.10** — free, but behind SSO registration
-     at `resources.irap.org`. Only `grade` could be verified from a retrievable fact
-     sheet. The Guide would plausibly source `median_present`, `surface_paved`,
-     `sight_distance_proxy` and `roadside_object_density`, and add a global cross-check
-     to every HSM weight. Highest-value next step for Mode B.
+   - ~~**The iRAP Methodology Reference Guide v3.10.**~~ **DONE.** Sourced grade,
+     curvature, skid resistance and street lighting. Global weights went 4 → 8, and a
+     European or MENA corridor now reaches for American evidence on one factor instead
+     of three. `median_type` is the best remaining candidate but needs the Star Rating
+     Score traversability normalisation understood first — its values are 0-100
+     traversability scores, not CMFs. See `docs/WEIGHTS.md` for the four attributes
+     examined and deliberately not used.
 2. **Measure operating speed on one corridor.** `speed_limit` carries a permanent
    caveat because the Power Model exponent applies to operating speed, not posted
    limit; `operating_speed_85` exists and is uncaveated but has no data. A single

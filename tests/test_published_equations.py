@@ -82,11 +82,57 @@ class TestPowerModel:
         assert math.log(crash_ratio) == pytest.approx(exponent * math.log(speed_ratio))
 
 
-class TestIRAPFactSheet:
+class TestIRAPReferenceGuide:
+    """Values transcribed from the iRAP Methodology Reference Guide v3.10."""
+
     def test_grade_risk_factors_are_as_published(self) -> None:
-        """iRAP Road Attribute Risk Factors: Grade — 1.0 / 1.2 / 1.7."""
+        """Grade — 1.0 / 1.2 / 1.7 for 0-7.5%, 7.5-10%, >=10%."""
         derivations = _load_derivation_module()
         assert list(derivations.GRADE_IRAP_FACTORS) == [1.0, 1.2, 1.7]
+
+    def test_curvature_risk_factors_are_as_published(self) -> None:
+        """Curvature — 1.0 / 1.8 / 3.5 / 6.0, vehicle occupants."""
+        derivations = _load_derivation_module()
+        assert list(derivations.CURVE_IRAP_FACTORS) == [1.0, 1.8, 3.5, 6.0]
+
+    def test_curvature_radius_bands_match_the_guide(self) -> None:
+        """>900 / 500-900 / 200-500 / 0-200 m, with the same midpoint rule.
+
+        The Guide publishing radius ranges for a categorical attribute is what makes
+        this convertible to a continuous weight at all.
+        """
+        derivations = _load_derivation_module()
+        radii = list(derivations.CURVE_IRAP_RADII_M)
+
+        assert radii[1] == pytest.approx((500 + 900) / 2)
+        assert radii[2] == pytest.approx((200 + 500) / 2)
+        assert radii[3] == pytest.approx((0 + 200) / 2)
+        assert radii[0] == pytest.approx(900 + (900 - 500) / 2), "unbounded top band"
+
+    def test_sealed_versus_unsealed_is_a_factor_of_three(self) -> None:
+        """Skid resistance — sealed-adequate 1.0, unsealed-adequate 3.0."""
+        derivations = _load_derivation_module()
+        weight = derivations.irap_surface_paved().value
+
+        assert math.exp(-weight) == pytest.approx(3.0)
+
+    def test_lighting_is_priced_at_intersections_only(self) -> None:
+        """The narrow scope is the point — HSM prices lighting for total crashes."""
+        derivations = _load_derivation_module()
+        lighting = derivations.irap_lighting()
+
+        assert lighting.scope == "intersection"
+        assert math.exp(-lighting.value) == pytest.approx(1.15)
+
+    def test_irap_weights_are_global_and_facility_agnostic(self) -> None:
+        """Which is exactly why they clear the region-transfer flag."""
+        derivations = _load_derivation_module()
+        for derive in derivations.DERIVATIONS:
+            result = derive()
+            if result.family != "irap":
+                continue
+            assert result.region == "global", result.factor
+            assert result.facility_type == "any", result.factor
 
     def test_band_midpoint_rule_is_applied_consistently(self) -> None:
         """Unbounded top band = threshold + half the width of the band below.
@@ -109,10 +155,13 @@ class TestDerivedValuesAreStable:
     EXPECTED = {
         ("roadside_hazard_score", "hsm", "all"): 0.0668,
         ("lit", "hsm", "all"): -0.0817,
+        ("lit", "irap", "all"): -0.1398,
         ("grade_pct", "hsm", "all"): 0.1212,
         ("grade_pct", "irap", "all"): 0.4863,
         ("curve_radius_min", "hsm", "all"): -0.1855,
+        ("curve_radius_min", "irap", "all"): -0.7232,
         ("access_density", "hsm", "all"): 0.1658,
+        ("surface_paved", "irap", "all"): -1.0986,
         ("speed_limit", "elvik", "injury"): 1.6,
         ("speed_limit", "elvik", "fatal"): 4.1,
         ("operating_speed_85", "elvik", "injury"): 1.6,
