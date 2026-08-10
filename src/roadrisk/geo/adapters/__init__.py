@@ -37,9 +37,10 @@ Range and GHSL ships deflated zip tiles, so either costs a whole-file download p
 corridor. The registry records that under the factor, and it belongs behind the
 content-addressed cache in step 2.9.
 
-Choosing between two adapters that both resolve the same factor, and scoring their
-agreement where they overlap, is step 2.7. Until it exists, :func:`.base.unit_frame`
-refuses a collision rather than silently preferring one.
+Client data enters through :mod:`.client` — the same code path, the same contract, and
+first place in every chain because the registry declares it first. :mod:`.fusion` then
+resolves each factor to one source, scores agreement where two of them overlap, and
+emits a confidence tier per factor per unit.
 """
 
 from __future__ import annotations
@@ -49,14 +50,21 @@ from roadrisk.geo.adapters.base import (
     FactorValues,
     SkippedFactor,
     collect_notes,
-    provenance_frame,
     resolve,
-    unit_frame,
 )
+from roadrisk.geo.adapters.client import client_slot, read_client_values
 from roadrisk.geo.adapters.curvature import (
     CLIENT_ALIGNMENT_ADAPTER,
     OSM_GEOMETRY_ADAPTER,
     curvature_adapter,
+)
+from roadrisk.geo.adapters.fusion import (
+    Confidence,
+    FusedFactor,
+    FusionResult,
+    SourceAgreement,
+    fuse,
+    provenance_frame,
 )
 from roadrisk.geo.adapters.grade import compute_grade
 from roadrisk.geo.adapters.landcover import compute_landcover
@@ -88,15 +96,20 @@ __all__ = [
     "AdapterResult",
     "CarrierMatch",
     "CogSampler",
+    "Confidence",
     "FactorValues",
+    "FusedFactor",
+    "FusionResult",
     "OsmExtract",
     "OsmNode",
     "OsmWay",
     "PointSampler",
     "RasterProduct",
     "SkippedFactor",
+    "SourceAgreement",
     "Stations",
     "build_extract_query",
+    "client_slot",
     "collect_notes",
     "compute_grade",
     "compute_landcover",
@@ -105,12 +118,13 @@ __all__ = [
     "curvature_adapter",
     "elevation_sampler",
     "fetch_extract",
+    "fuse",
     "landcover_sampler",
     "match_carriers",
     "provenance_frame",
+    "read_client_values",
     "read_tags",
     "resolve",
     "stations_along",
     "to_latlon",
-    "unit_frame",
 ]

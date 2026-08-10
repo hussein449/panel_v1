@@ -14,7 +14,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 | Stage | State |
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
-| **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, and all twelve Tier A factors behind one adapter contract. Fusion, Tier B and persistence outstanding. |
+| **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, and fusion — client data outranks open data, disagreements are named, and every factor carries a confidence tier per unit. Tier B and persistence outstanding. |
 | Stage 3 — model depth (GLMM, GAM, Bayesian) | Not started |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
@@ -95,6 +95,26 @@ GDAL, which is quarantined in its own extra:
 
 ```bash
 pip install "roadrisk-panel[raster]"
+```
+
+### Supplying your own data
+
+Anything you have already measured goes in as a CSV keyed by `unit_id`, one row per unit:
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --osm --client inventory.csv
+```
+
+It wins every factor it covers, because the registry declares the client slot first in
+the chain — there is no branch in the code that prefers it. And it does not silently
+overwrite the open source it beat: where the two disagree, the run names the units.
+
+```
+⚠  Sources disagree — speed_limit
+   'client_speed_survey' won on registry priority; 'osm_maxspeed' disagrees.
+   Compared on 16 unit(s) both measured, agreeing on 13 (81%).
+   Units that differ: …-0006, …-0007, …-0008
+   One of the two sources is wrong about them, and nothing here can say which.
 ```
 
 ### Getting a centreline
@@ -192,6 +212,16 @@ it fills; the tier and licence attached to its values come from *that declaratio
 adapter can promote itself to Tier A or attach a licence the registry never agreed to —
 and those are exactly the claims a client relies on.
 
+**Client data outranks open data because the registry says so, not because the code
+does.** A factor declares an ordered chain of adapters and the first one that resolves
+wins. There is no branch anywhere that prefers client input; reordering the YAML
+reorders the outcome.
+
+**Agreement between sources is weaker evidence than disagreement.** Open datasets copy
+from each other, so two of them matching can be an echo rather than a corroboration —
+it is reported and never raises confidence. Two of them differing means one is
+definitely wrong, so it lowers confidence and the units are named.
+
 **A missing tag is not a zero.** OSM `lit` is absent on most of the target market's
 roads. Reading absence as "unlit" would manufacture a lighting effect out of mapper
 attention, pointing the direction the registry expects. So a factor needs half the
@@ -242,7 +272,9 @@ src/roadrisk/
 │   │   ├── rasters.py       COG windows over HTTPS — the only GDAL in the package
 │   │   ├── sampling.py      stations along the corridor, and beside it
 │   │   ├── grade.py         gradient from the DEM, over an error-budget baseline
-│   │   └── landcover.py     built-up share of the roadside, sampled off the line
+│   │   ├── landcover.py     built-up share of the roadside, sampled off the line
+│   │   ├── client.py        whatever the client measured — first link in every chain
+│   │   └── fusion.py        one value per factor, agreement, confidence per unit
 │   └── pipeline.py          the orchestrator
 ├── demo.py                  synthetic panels for tests and demonstration
 └── cli.py                   mode banner, refusal receipt, descent receipt

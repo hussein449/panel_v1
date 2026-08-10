@@ -23,11 +23,11 @@ from roadrisk.geo.adapters import (
     count_densities,
     curvature_adapter,
     fetch_extract,
+    fuse,
     match_carriers,
     provenance_frame,
     read_tags,
     resolve,
-    unit_frame,
 )
 from roadrisk.geo.adapters.base import (
     AdapterResult,
@@ -221,27 +221,6 @@ class TestAdapterContract:
                 values=pd.Series([1.0, 0.0], index=["u-0", "u-0"]),
             )
 
-    def test_two_adapters_resolving_one_factor_is_refused_until_fusion_exists(
-        self, shipped_registry: Registry
-    ) -> None:
-        """Picking a winner is step 2.7. Guessing here would hide the disagreement."""
-        def one(adapter: str) -> AdapterResult:
-            return AdapterResult(
-                name=adapter,
-                resolved=[
-                    resolve(
-                        shipped_registry,
-                        "lit",
-                        adapter,
-                        source="a source",
-                        values=pd.Series([1.0], index=["u-0"]),
-                    )
-                ],
-            )
-
-        with pytest.raises(GeoError, match="step 2.7"):
-            unit_frame([one("osm_lit"), one("viirs_night_lights")])
-
     def test_provenance_carries_all_four_things_the_brief_asks_for(
         self, shipped_registry: Registry
     ) -> None:
@@ -259,7 +238,7 @@ class TestAdapterContract:
             ],
         )
 
-        frame = provenance_frame([result])
+        frame = provenance_frame(fuse([result], shipped_registry))
         row = frame.iloc[0]
 
         assert row["column"] == "lanes"
@@ -811,7 +790,7 @@ class TestPipelineIntegration:
             name="B9",
         )
 
-        assert built.factor_columns == ["curve_radius_min", "curve_density"]
+        assert sorted(built.factor_columns) == ["curve_density", "curve_radius_min"]
         assert built.provenance["adapter"].unique().tolist() == ["osm_geometry"]
 
     def test_a_failed_fetch_loses_the_osm_factors_and_nothing_else(self) -> None:

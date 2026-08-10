@@ -5,7 +5,100 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Step 2.6 finished: the two rasters
+## 2026-08-10 (latest) — Step 2.7: fusion, agreement, and a confidence tier
+
+**Delivered:** `roadrisk.geo.adapters.fusion` and `.client`. One value per factor per
+unit, the losing source kept and compared, and a confidence tier with a reason for every
+factor on every unit.
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --osm --client inventory.csv
+```
+
+**Verified:** 401 tests pass (33 new), `ruff check` clean.
+
+### Priority is the registry's, not the code's
+
+`factor.adapters` is an ordered chain — `client_data → Tier A/B → drop` — and the winner
+is simply the earliest declared adapter that produced a value. Client data wins because
+the registry declares it first, not because anything special-cases it. A test passes the
+client source *second* on purpose: if call order mattered, OSM would win.
+
+That is the brief's line "client-supplied data is simply the highest-priority adapter,
+same code path, no special case" made literal. `unit_frame`, which raised on a collision
+as a placeholder for this step, is gone.
+
+### Client data is authoritative, not infallible
+
+Supplying an inventory does not silently overwrite OSM. It wins, and where the two
+disagree the run names the units:
+
+```
+⚠  Sources disagree — speed_limit
+   'client_speed_survey' won on registry priority; 'osm_maxspeed' disagrees.
+   Compared on 16 unit(s) both measured, agreeing on 13 (81%).
+   Mean absolute difference 5.62, worst 30.
+   Units that differ: …-0006, …-0007, …-0008
+   One of the two sources is wrong about them, and nothing here can say which.
+```
+
+The client slot is found by **Tier D**, not by matching adapter names. The slots are
+named for what is being supplied — `client_survey`, `client_alignment`,
+`client_speed_survey` — so name-matching would be fragile, and matching on the `client`
+*licence* would wrongly pick up `night_ratio`'s `panel_construction` adapter, which is
+Tier A and derived from the panel rather than supplied. A test pins that case.
+
+### Agreement is asymmetric evidence
+
+Two sources matching is **weak** evidence. OSM, Overture and a client inventory can all
+descend from the same survey, so agreement may be an echo rather than a corroboration —
+the note says so in as many words. Two sources differing is **strong** evidence: at
+least one of them is definitely wrong about that unit.
+
+So disagreement pulls a unit's confidence to low, and agreement never promotes one. The
+asymmetry is deliberate and tested in both directions.
+
+### A confidence tier per factor per unit
+
+The literal deliverable of 2.7, emitted as a long frame — one row per factor per unit —
+and written to `confidence.csv` alongside the panel.
+
+| Tier | Reason | Meaning |
+|---|---|---|
+| `low` | `carried` | imputed from a neighbouring unit, not measured here |
+| `low` | `contradicted` | a second source materially disagrees about this unit |
+| `medium` | `thin_coverage` | rests on under half the unit's length |
+| `medium` | `inferred` | derived by us rather than stated by anyone (Tier B) |
+| `high` | `measured` | measured for this unit by the winning source |
+
+Worst reason wins, with one deliberate ordering choice: `carried` outranks
+`contradicted`. A carried value is an imputation, so a second source disagreeing with it
+is expected and uninformative — the imputation is the thing to fix. For the same reason
+**carried units are excluded from the agreement comparison entirely**: comparing an
+imputation measures the imputation, not the sources.
+
+### Two details that only show up on real data
+
+**The disagreement threshold needs a floor.** A relative difference blows up near zero:
+0.0 versus 0.1 accesses per km reads as total disagreement when the denominator
+collapses. The denominator is floored at a tenth of the factor's own spread across the
+corridor, which makes the test scale-free without making it meaningless for factors
+that legitimately sit near zero.
+
+**Fusion output is ordered by registry `drop_priority`, not alphabetically.** A
+provenance table is read top-down, so it should lead with the factors that matter most —
+the same order `roadrisk registry` prints and the ladder retains terms in.
+
+### Registry changes
+
+`client_inventory` declared on `poi_density` and `building_density`. Both are plainly
+things a client can supply and neither had a Tier D slot, so a client column for them
+had nowhere to go. `population_density` deliberately still has none: census data is open
+data the client does not measure, and its blocker is delivery format, not availability.
+
+---
+
+## 2026-08-10 — Step 2.6 finished: the two rasters
 
 **Delivered:** `grade_pct` from the Copernicus DEM, `landuse_urban` from ESA WorldCover,
 `building_density` from OSM. Step 2.6 is complete at **12 factors** from three sources.

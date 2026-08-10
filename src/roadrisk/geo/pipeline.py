@@ -25,6 +25,7 @@ from roadrisk.core.registry import Registry, load_registry
 from roadrisk.geo.adapters import (
     OSM_GEOMETRY_ADAPTER,
     AdapterResult,
+    FusionResult,
     OsmExtract,
     PointSampler,
     collect_notes,
@@ -33,9 +34,10 @@ from roadrisk.geo.adapters import (
     count_densities,
     curvature_adapter,
     fetch_extract,
+    fuse,
     provenance_frame,
+    read_client_values,
     read_tags,
-    unit_frame,
 )
 from roadrisk.geo.corridor import Corridor
 from roadrisk.geo.errors import CorridorError
@@ -66,6 +68,7 @@ class CorridorPanel:
     snap_detail: pd.DataFrame | None = None
     curvature: CurvatureResult | None = None
     adapters: list[AdapterResult] = field(default_factory=list)
+    fusion: FusionResult = field(default_factory=FusionResult)
     factor_columns: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -87,8 +90,18 @@ class CorridorPanel:
 
     @property
     def provenance(self) -> pd.DataFrame:
-        """One row per factor: value, source, tier and licence, as the brief asks."""
-        return provenance_frame(self.adapters)
+        """One row per factor: value, source, tier, licence, confidence, agreement."""
+        return provenance_frame(self.fusion)
+
+    @property
+    def confidence(self) -> pd.DataFrame:
+        """One row per factor per unit — the deliverable of step 2.7."""
+        return self.fusion.confidence_frame()
+
+    @property
+    def contested(self) -> list[str]:
+        """Factors more than one source resolved, so fusion had to choose."""
+        return [fused.column for fused in self.fusion.contested]
 
     @property
     def skipped(self) -> list[tuple[str, str, str]]:
@@ -125,6 +138,8 @@ def build_corridor_panel(
     ref: str | None = None,
     elevation: PointSampler | None = None,
     landcover: PointSampler | None = None,
+    client_values: pd.DataFrame | None = None,
+    client_source: str | None = None,
     latitude_column: str = "latitude",
     longitude_column: str = "longitude",
     period_column: str = "period",
@@ -157,6 +172,11 @@ def build_corridor_panel(
             GLO-30 over the network, or any callable for a surface of your own.
         landcover: Land-cover sampler for ``landuse_urban``. Supply
             :func:`~roadrisk.geo.adapters.rasters.landcover_sampler` for ESA WorldCover.
+        client_values: Anything the client already measured, one row per unit keyed by
+            ``unit_id``. It wins every factor it covers, because the registry declares
+            the client slot first — and where an open source covered the same factor,
+            the two are compared and the units they differ on are named.
+        client_source: Provenance text for that table, e.g. "2024 asset inventory".
         latitude_column, longitude_column, period_column, time_slot_column: Column
             names in ``crashes``.
 
@@ -227,12 +247,25 @@ def build_corridor_panel(
             compute_landcover(segmentation, landcover, registry=active_registry)
         )
 
-    values = unit_frame(results)
+    if client_values is not None:
+        results.append(
+            read_client_values(
+                client_values,
+                segmentation,
+                registry=active_registry,
+                source=client_source,
+            )
+        )
+
+    fusion = fuse(results, active_registry)
+    values = fusion.values_frame()
     if values is not None:
         panel = attach_factor_values(panel, values)
+
     # Skip reasons are not repeated here: they are first-class on the result, as
     # `CorridorPanel.skipped`, and a reason worth reading is worth reading once.
     warnings.extend(collect_notes(results, include_skipped=False))
+    warnings.extend(fusion.notes)
 
     return CorridorPanel(
         panel=panel,
@@ -242,7 +275,8 @@ def build_corridor_panel(
         snap_detail=outcome.detail if outcome else None,
         curvature=curvature,
         adapters=results,
-        factor_columns=[column for result in results for column in result.columns],
+        fusion=fusion,
+        factor_columns=fusion.columns,
         warnings=warnings,
     )
 

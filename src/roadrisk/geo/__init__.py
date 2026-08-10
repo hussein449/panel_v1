@@ -24,14 +24,18 @@ except ModuleNotFoundError as exc:  # pragma: no cover - import-time guard
 
 from roadrisk.geo.adapters import (
     AdapterResult,
+    Confidence,
     FactorValues,
+    FusionResult,
     OsmExtract,
     PointSampler,
     SkippedFactor,
     elevation_sampler,
     fetch_extract,
+    fuse,
     landcover_sampler,
     provenance_frame,
+    read_client_values,
 )
 from roadrisk.geo.corridor import Corridor
 from roadrisk.geo.crs import Projector, utm_epsg_for
@@ -49,11 +53,13 @@ from roadrisk.geo.snapping import SnapOutcome, apply_counts, snap_crashes
 
 __all__ = [
     "AdapterResult",
+    "Confidence",
     "Corridor",
     "CorridorError",
     "CorridorPanel",
     "CurvatureResult",
     "FactorValues",
+    "FusionResult",
     "GeoError",
     "OsmExtract",
     "PointSampler",
@@ -71,8 +77,10 @@ __all__ = [
     "compute_curvature",
     "elevation_sampler",
     "fetch_extract",
+    "fuse",
     "landcover_sampler",
     "provenance_frame",
+    "read_client_values",
     "segment",
     "snap_crashes",
     "utm_epsg_for",

@@ -420,7 +420,7 @@ class TestPipelineEndToEnd:
         assert report.zero_crash_rows > 0, "zero rows must survive to the contract"
 
     def test_carries_the_geometry_factors(self, built) -> None:
-        assert built.factor_columns == ["curve_radius_min", "curve_density"]
+        assert sorted(built.factor_columns) == ["curve_density", "curve_radius_min"]
         for column in built.factor_columns:
             assert column in built.panel.columns
 

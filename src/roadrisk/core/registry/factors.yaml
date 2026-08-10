@@ -386,6 +386,9 @@ factors:
       misses markets, schools and informal stops.
     notes: UNCITED. No standard published weight exists on a comparable scale.
     adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
       - name: osm_poi
         tier: A
         licence: ODbL
@@ -651,6 +654,9 @@ factors:
       UNCITED. No standard published weight exists on a comparable scale.
       UNITS: buildings within 50 m of the centreline, per kilometre, both sides.
     adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
       - name: ms_global_buildings
         tier: A
         licence: ODbL

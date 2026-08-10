@@ -209,61 +209,6 @@ def require_slots(registry: Registry, slots: Iterable[tuple[str, str]]) -> None:
             )
 
 
-def unit_frame(results: Iterable[AdapterResult]) -> pd.DataFrame | None:
-    """Merge every resolved factor into one unit-keyed frame.
-
-    Raises:
-        GeoError: Two adapters resolved the same factor. Choosing between them is
-            fusion — step 2.7 — and guessing here would hide the disagreement that
-            step exists to measure.
-    """
-    frames: list[pd.DataFrame] = []
-    seen: dict[str, str] = {}
-
-    for result in results:
-        for value in result.resolved:
-            if value.column in seen:
-                raise GeoError(
-                    f"'{value.column}' was resolved by both '{seen[value.column]}' and "
-                    f"'{value.adapter}'. Picking a winner and scoring their agreement "
-                    "is step 2.7 (fusion); until it lands, run one adapter per factor."
-                )
-            seen[value.column] = value.adapter
-            frames.append(value.as_frame())
-
-    if not frames:
-        return None
-
-    merged = frames[0]
-    for frame in frames[1:]:
-        merged = merged.merge(frame, on=UNIT_COLUMN, how="outer", validate="one_to_one")
-    return merged
-
-
-def provenance_frame(results: Iterable[AdapterResult]) -> pd.DataFrame:
-    """One row per resolved factor: value, source, tier and licence, as the brief asks.
-
-    This is what the report renders and what a client auditing a number reads.
-    """
-    rows = [
-        {
-            "factor": value.factor,
-            "column": value.column,
-            "adapter": value.adapter,
-            "tier": value.tier.value,
-            "licence": value.licence.value,
-            "coverage": round(value.coverage, 4),
-            "source": " ".join(value.source.split()),
-        }
-        for result in results
-        for value in result.resolved
-    ]
-    return pd.DataFrame(
-        rows,
-        columns=["factor", "column", "adapter", "tier", "licence", "coverage", "source"],
-    )
-
-
 def collect_notes(
     results: Iterable[AdapterResult],
     *,
@@ -304,8 +249,6 @@ __all__ = [
     "FactorValues",
     "SkippedFactor",
     "collect_notes",
-    "provenance_frame",
     "require_slots",
     "resolve",
-    "unit_frame",
 ]

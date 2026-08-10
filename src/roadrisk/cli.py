@@ -261,6 +261,17 @@ def corridor(
             ),
         ),
     ] = False,
+    client_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--client",
+            help=(
+                "CSV of anything you already measured, one row per unit keyed by "
+                "unit_id. It outranks every open source, and where both cover a factor "
+                "the units they disagree on are named."
+            ),
+        ),
+    ] = None,
     unit_length_m: Annotated[
         float, typer.Option("--unit-length", help="Target segment length in metres.")
     ] = 500.0,
@@ -340,6 +351,14 @@ def corridor(
         points, crashes = _read_corridor_inputs(centreline_path, crashes_path)
         corridor_name = centreline_path.stem
 
+    client_values = None
+    if client_path is not None:
+        try:
+            client_values = pd.read_csv(client_path)
+        except OSError as exc:
+            console.print(f"[red]Cannot read {client_path}: {exc}[/red]")
+            raise typer.Exit(EXIT_REJECTED) from exc
+
     if with_osm:
         console.print("[dim]Fetching OSM road attributes along the corridor…[/dim]")
     if with_rasters:
@@ -359,6 +378,12 @@ def corridor(
             osm_client=HttpOverpassClient() if with_osm else None,
             elevation=elevation_sampler() if with_rasters else None,
             landcover=landcover_sampler() if with_rasters else None,
+            client_values=client_values,
+            client_source=(
+                f"Supplied by the client in {client_path.name}, one value per unit."
+                if client_path is not None
+                else None
+            ),
             ref=ref,
         )
     except RoadRiskError as exc:
@@ -379,6 +404,8 @@ def corridor(
     if out_dir is not None:
         _write_run(assessment, out_dir)
         built.panel.to_csv(out_dir / "panel.csv", index=False)
+        built.provenance.to_csv(out_dir / "provenance.csv", index=False)
+        built.confidence.to_csv(out_dir / "confidence.csv", index=False)
         if built.snap_detail is not None:
             built.snap_detail.to_csv(out_dir / "snap_detail.csv", index=False)
         console.print(f"\n[dim]Run record and panel written to {out_dir}[/dim]")
@@ -545,21 +572,31 @@ def _render_provenance(built) -> None:
         table.add_column("Adapter")
         table.add_column("Tier", justify="center")
         table.add_column("Licence")
-        table.add_column("Cover", justify="right")
+        table.add_column("Conf.", justify="right")
+        table.add_column("Vs")
+        table.add_column("Agree", justify="right")
         table.add_column("Source")
 
         for row in provenance.itertuples():
-            coverage = f"{row.coverage:.0%}"
             table.add_row(
                 row.column,
                 row.adapter,
                 row.tier,
                 row.licence,
-                Text(coverage, style="yellow" if row.coverage < 0.9 else None),
-                _cite(row.source, limit=52),
+                _confidence_cell(row.confidence_high, row.confidence_low),
+                row.contested_by or Text("—", style="dim"),
+                _agreement_cell_geo(row.agreement),
+                _cite(row.source, limit=40),
             )
         console.print(table)
+        console.print(
+            "[dim]Conf. is the share of units at high confidence; per-unit tiers and "
+            "coverage are in the run record. 'Vs' names a source that resolved the same "
+            "factor and lost on registry priority.[/dim]"
+        )
         console.print()
+
+    _render_disagreements(built)
 
     skipped = built.skipped
     if skipped:
@@ -571,6 +608,56 @@ def _render_provenance(built) -> None:
                 ),
                 title="Looked for, not found — these factors are absent, not zero",
                 border_style="yellow",
+            )
+        )
+        console.print()
+
+
+def _confidence_cell(high: float, low: float) -> Text:
+    """High-confidence share, coloured by how much of the column is not."""
+    style = "green" if high >= 0.9 else "yellow" if low < 0.25 else "red"
+    return Text(f"{high:.0%}", style=style)
+
+
+def _agreement_cell_geo(score: float | None) -> Text:
+    # pandas turns a None into NaN as soon as the column holds one float, so an
+    # uncontested factor arrives here as nan rather than None.
+    if score is None or pd.isna(score):
+        return Text("—", style="dim")
+    style = "green" if score >= 0.9 else "yellow" if score >= 0.6 else "bold red"
+    return Text(f"{score:.0%}", style=style)
+
+
+def _render_disagreements(built) -> None:
+    """Where two sources cover the same factor and do not match.
+
+    The most useful output in the run: agreement between open sources can be an echo,
+    but a disagreement means one of them is definitely wrong about those units.
+    """
+    disagreements = built.fusion.disagreements
+    if not disagreements:
+        return
+
+    for agreement in disagreements:
+        units = ", ".join(agreement.disagreeing_units)
+        console.print(
+            Panel(
+                f"'{agreement.chosen}' won on registry priority; "
+                f"'{agreement.challenger}' disagrees.\n\n"
+                f"Compared on {agreement.n_compared} unit(s) both measured, agreeing on "
+                f"{agreement.n_agreeing} ({agreement.score:.0%}).\n"
+                f"Mean absolute difference {agreement.mean_absolute_difference:.3g}, "
+                f"worst {agreement.max_absolute_difference:.3g}"
+                + (
+                    f", correlation {agreement.correlation:+.2f}"
+                    if agreement.correlation is not None
+                    else ""
+                )
+                + f".\n\nUnits that differ: {units}\n\n"
+                "These are marked low confidence. One of the two sources is wrong "
+                "about them, and nothing here can say which.",
+                title=f"⚠  Sources disagree — {agreement.column}",
+                border_style="red",
             )
         )
         console.print()

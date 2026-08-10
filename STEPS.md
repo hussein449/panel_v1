@@ -58,7 +58,7 @@ being worked around — it is the shape of the product.
 | `[x]` | **2.4** Panel skeleton | `unit_id × period × time_slot`, `n_crashes` initialised to 0 | Zero rows exist by construction; skeleton passes the input contract |
 | `[x]` | **2.5** Crash snapping | Project to centreline within tolerance, chainage → unit, period → cell | Every drop counted with a reason; `SnapReport` activates gate check 6 |
 | `[x]` | **2.6** Tier A adapters | 12 factors behind one adapter contract, from three sources: centreline geometry, one OSM call, two COG rasters | Each returns value + source + tier + licence |
-| `[ ]` | **2.7** Fusion + agreement | Highest-priority adapter wins; agreement where two sources overlap | Confidence tier emitted per factor per unit |
+| `[x]` | **2.7** Fusion + agreement | Registry chain decides the winner; agreement scored where two sources overlap; client data enters as the first link | Confidence tier emitted per factor per unit |
 | `[ ]` | **2.8** Tier B adapters | Mapillary detections, graph centrality traffic proxy | Never labelled `aadt` |
 | `[ ]` | **2.9** PostGIS + geographic cache | Persistence, and content-addressed caching by adapter + quantised bbox | Second corridor in the same country hits cache |
 
@@ -76,6 +76,47 @@ network.
 69 OSM fragments → one 25.01 km centreline → 50 units → 1,200 panel rows → 99.8% snap
 rate → Mode A. Details and the two defects it exposed in
 [`IMPLEMENTED.md`](IMPLEMENTED.md).
+
+### 2.7 — done
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --osm --client inventory.csv
+```
+
+**Priority is the registry's, not the code's.** `factor.adapters` is an ordered chain,
+and the winner is the earliest declared adapter that produced a value. Client data wins
+because it is declared first — there is no branch anywhere that says so. Reordering the
+YAML reorders the outcome.
+
+**Client data is authoritative, not infallible.** Supplying an inventory does not
+silently overwrite OSM: it wins, and where the two disagree the run names the units.
+
+```
+⚠  Sources disagree — speed_limit
+   'client_speed_survey' won on registry priority; 'osm_maxspeed' disagrees.
+   Compared on 16 unit(s) both measured, agreeing on 13 (81%).
+   Units that differ: …-0006, …-0007, …-0008
+   One of the two sources is wrong about them, and nothing here can say which.
+```
+
+**Agreement is asymmetric evidence, and the confidence tier treats it that way.** Two
+sources matching is weak evidence — open datasets copy from each other, so agreement can
+be an echo. Two sources differing is strong evidence that one of them is wrong. So
+disagreement pulls a unit to low confidence; agreement is reported but never promotes
+one.
+
+**A confidence tier per factor per unit**, with a one-word reason:
+
+| Tier | Reason | Meaning |
+|---|---|---|
+| `low` | `carried` | imputed from a neighbouring unit, not measured here |
+| `low` | `contradicted` | a second source materially disagrees about this unit |
+| `medium` | `thin_coverage` | rests on under half the unit's length |
+| `medium` | `inferred` | derived by us rather than stated by anyone (Tier B) |
+| `high` | `measured` | measured for this unit by the winning source |
+
+Carried units are excluded from the agreement comparison — comparing an imputation
+measures the imputation, not the sources.
 
 ### 2.6 — done
 
