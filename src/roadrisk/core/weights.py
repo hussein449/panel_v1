@@ -204,18 +204,53 @@ def _is_admissible(weight: Weight, context: RunContext) -> bool:
     return facility_ok and severity_ok
 
 
+def region_distance(weight_region: Region, run_region: Region) -> int:
+    """How far a weight's evidence base sits from where the corridor actually is.
+
+    Three tiers, and the middle one is the point:
+
+    * ``0`` — estimated in this region. Best available.
+    * ``1`` — estimated globally. Built to travel, so a fair second.
+    * ``2`` — estimated in a *different* named region. Usable, but it is someone
+      else's road system and that must never outrank a global source.
+
+    Collapsing 1 and 2 into "not exact" was a real bug: on a Cyprus corridor a global
+    iRAP weight and a North American HSM weight tied, and the family preference order
+    broke the tie arbitrarily. European roads were one coin-flip away from being
+    scored on US rural two-lane evidence when a global alternative was sitting there.
+    """
+    if weight_region is run_region:
+        return 0
+    if weight_region is Region.GLOBAL:
+        return 1
+    return 2
+
+
 def _rank(weight: Weight, context: RunContext) -> tuple[int, int, int, int, str]:
-    """Sort key, ascending. More specific context wins, then family preference."""
+    """Sort key, ascending. Closest evidence wins.
+
+    **Region is the first dimension**, ahead of facility specificity and family
+    preference. That is a deliberate ordering, not an accident of tuple order:
+
+    Facility mismatch is already handled by admissibility — a weight restricted to
+    one facility type cannot be selected for another at all. So among the weights
+    that survive, this dimension only separates "exact facility" from "unrestricted",
+    and unrestricted is not *wrong*, merely less specific.
+
+    Region transfer is different. It is the largest single error source in Mode B:
+    different vehicle fleet, enforcement, roadside activity and crash reporting. A
+    global weight that happens not to name a facility type is a better bet for a
+    Cyprus corridor than a US rural two-lane weight that names one exactly.
+    """
     facility_exact = weight.facility_type is context.facility_type
-    region_exact = weight.region is context.region
     severity_exact = weight.severity is context.severity
     try:
         family_rank = FAMILY_PREFERENCE.index(weight.family)
     except ValueError:  # pragma: no cover - a family with no declared preference
         family_rank = len(FAMILY_PREFERENCE)
     return (
+        region_distance(weight.region, context.region),
         0 if facility_exact else 1,
-        0 if region_exact else 1,
         0 if severity_exact else 1,
         family_rank,
         weight.source,
@@ -228,17 +263,21 @@ def _concerns(weight: Weight, context: RunContext) -> list[Concern]:
     if weight.caveat:
         concerns.append(Concern(code="weight_caveat", message=weight.caveat))
 
-    if weight.region is not Region.GLOBAL and weight.region is not context.region:
+    if region_distance(weight.region, context.region) == 2:
         concerns.append(
             Concern(
                 code="region_transfer",
                 message=(
-                    f"Weight was estimated in {weight.region.value} and this run is "
-                    f"{context.region.value}. Vehicle fleet, enforcement, roadside "
-                    "activity and crash reporting all differ. This is the largest "
-                    "error source in Mode B and is tolerable only because the output "
-                    "is an ordinal ranking, where a common scaling error leaves the "
-                    "order intact."
+                    f"Weight was estimated in {weight.region.value} and this corridor "
+                    f"is in {context.region.value}. No {context.region.value} source "
+                    "and no global source was available for this factor, so the engine "
+                    "reached for another region's evidence rather than dropping the "
+                    "term. Vehicle fleet, enforcement, roadside activity and crash "
+                    "reporting all differ. This is the largest error source in Mode B, "
+                    "tolerable only because the output is an ordinal ranking where a "
+                    "common scaling error leaves the order intact. Sourcing a "
+                    f"{context.region.value} or global weight for this factor would "
+                    "remove the reach entirely."
                 ),
             )
         )
@@ -306,5 +345,6 @@ __all__ = [
     "Concern",
     "WeightSelection",
     "assess_agreement",
+    "region_distance",
     "select_weight",
 ]

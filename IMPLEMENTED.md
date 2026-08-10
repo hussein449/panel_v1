@@ -5,7 +5,60 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (later) — Weights become context-aware; the caveats close
+## 2026-08-10 (latest) — Region drives source selection
+
+**Delivered:** the corridor's region now picks which body of evidence is used, instead
+of merely annotating the choice after the fact.
+
+**Verified:** 173 tests pass, `ruff check` clean.
+
+### The bug this fixed
+
+Region was recorded and ranked, but as a flat exact/not-exact test. On a European
+corridor a **global** weight and a **North American** weight therefore tied, and the
+family preference order broke the tie arbitrarily. European roads were one coin-flip
+away from being scored on US rural two-lane evidence while a global source sat unused.
+
+`region_distance()` replaces it with three tiers — local (0), global (1), another named
+region (2) — so global evidence always beats foreign evidence, and local always wins.
+
+### And a reordering
+
+Region is now the **first** ranking dimension, ahead of facility specificity. Facility
+mismatch is already handled by admissibility, so that dimension only separates "exact"
+from "unrestricted", and unrestricted is not wrong — merely less specific. Region
+transfer is the largest error source in Mode B, so it wins.
+
+The effect, same panel assessed as a rural two-lane road in three places:
+
+| Factor | Europe | North America | Middle East |
+|---|---|---|---|
+| `grade_pct` | **+0.4863** iRAP | **+0.1212** HSM | **+0.4863** iRAP |
+| `access_density` | +0.1658 HSM ⚠ | +0.1658 HSM | +0.1658 HSM ⚠ |
+| `lit` | −0.0817 HSM ⚠ | −0.0817 HSM | −0.0817 HSM ⚠ |
+| `speed_limit` | +1.6 Elvik | +1.6 Elvik | +1.6 Elvik |
+
+A Cyprus corridor now takes the global grade weight, not the American one. Where no
+local or global source exists the American weight is still used — dropping the term
+would be worse — but every reach carries a `region_transfer` concern naming both
+regions and saying what would remove it.
+
+Region granularity, not country: published weights are estimated on regional datasets,
+never on "Cyprus". Stage 2 will derive the region from the corridor's admin boundary
+automatically — the GADM and OSM-relation adapters are already declared for it.
+
+Four regions added for the target market: `asia`, `africa`, `middle_east`,
+`latin_america`.
+
+### Why this makes the iRAP set worth more
+
+Every ⚠ above is a factor with no local *or* global source. Each global weight added
+removes one from every non-US run. That is now the clearest argument for completing the
+iRAP sourcing.
+
+---
+
+## 2026-08-10 (earlier) — Weights become context-aware; the caveats close
 
 **Delivered:** the three caveats flagged in the previous entry, fixed at their shared
 root cause rather than individually. A weight is no longer a bare number with a

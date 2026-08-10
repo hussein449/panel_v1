@@ -30,6 +30,11 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Source manuals. Licensed third-party documents (AASHTO HSM, iRAP Methodology
+# Reference Guide). Read them, derive from them, cite them — never redistribute them,
+# least of all from a public repository.
+references/
+
 # Design briefs — held back deliberately, not by accident.
 # This repository is PUBLIC. Both documents contain pricing, commercial strategy,
 # competitor positioning and a candid assessment of what is not yet defensible about

@@ -93,11 +93,25 @@ class FacilityType(StrEnum):
 
 
 class Region(StrEnum):
-    """Where a weight was estimated, or where a corridor is."""
+    """Where a weight was estimated, or where a corridor is.
+
+    Region granularity, not country, because published weights are estimated on
+    regional or national datasets and never on "Cyprus" specifically. A Cyprus
+    corridor declares ``europe`` and gets European evidence where it exists, global
+    evidence otherwise, and North American evidence only as a last resort — with the
+    reach reported.
+
+    Stage 2 will resolve this from the corridor's admin boundary automatically; the
+    GADM and OSM-relation adapters are already declared for that.
+    """
 
     NORTH_AMERICA = "north_america"
     EUROPE = "europe"
     AUSTRALASIA = "australasia"
+    ASIA = "asia"
+    AFRICA = "africa"
+    MIDDLE_EAST = "middle_east"
+    LATIN_AMERICA = "latin_america"
     GLOBAL = "global"
 
 

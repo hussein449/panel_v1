@@ -123,12 +123,37 @@ Given several weights for one factor, the engine picks one. It never averages.
   factor-of-two error, not a nuance.
 
 **Region is deliberately not a filter.** Filtering on it would leave almost nothing
-admissible outside North America, which helps nobody. A regional mismatch is recorded as
-a concern and surfaced instead — the transfer problem stated out loud rather than hidden
-or used as an excuse to refuse.
+admissible outside North America, which helps nobody. Instead it is the *first* ranking
+dimension, with three tiers:
 
-**Ranking** among admissible weights: exact facility beats `any`, exact region beats
-`global`, exact severity beats `all`, then family preference (iRAP → HSM → Elvik).
+| Distance | Meaning |
+|---|---|
+| **0** | Estimated in this region. Best available. |
+| **1** | Estimated globally. Built to travel, so a fair second. |
+| **2** | Estimated in a *different* named region. Usable, but it is someone else's road system — and it is reported as a concern every time. |
+
+**Ranking order:** region distance → exact facility beats `any` → exact severity beats
+`all` → family preference (iRAP → HSM → Elvik) → source, for determinism.
+
+**Region is first on purpose.** Facility mismatch is already handled by admissibility, so
+that dimension only separates "exact facility" from "unrestricted" — and unrestricted is
+not *wrong*, merely less specific. Region transfer is the largest single error source in
+Mode B. A global weight that happens not to name a facility type is a better bet for a
+Cyprus corridor than a US rural two-lane weight that names one exactly.
+
+**Worked example.** The same panel, assessed as a rural two-lane road in three places:
+
+| Factor | Europe | North America | Middle East |
+|---|---|---|---|
+| `grade_pct` | **+0.4863** iRAP (global) | **+0.1212** HSM (local) | **+0.4863** iRAP (global) |
+| `access_density` | +0.1658 HSM ⚠ reached | +0.1658 HSM | +0.1658 HSM ⚠ reached |
+| `lit` | −0.0817 HSM ⚠ reached | −0.0817 HSM | −0.0817 HSM ⚠ reached |
+| `speed_limit` | +1.6 Elvik (global) | +1.6 Elvik (global) | +1.6 Elvik (global) |
+
+A Cyprus corridor takes the global grade weight rather than the American one. Where no
+local or global source exists, the American weight is still used — dropping the term
+would be worse — but every such reach is flagged. **This is the strongest argument for
+completing the iRAP set:** each global weight added removes one ⚠ from every non-US run.
 
 **Consequence worth knowing:** an undeclared run admits only unrestricted weights. On
 the shipped registry that is one factor. Declaring `--facility-type rural_two_lane

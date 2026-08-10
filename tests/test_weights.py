@@ -21,7 +21,12 @@ from roadrisk.core.registry import (
     Weight,
     WeightFamily,
 )
-from roadrisk.core.weights import WeightSelection, assess_agreement, select_weight
+from roadrisk.core.weights import (
+    WeightSelection,
+    assess_agreement,
+    region_distance,
+    select_weight,
+)
 
 ADAPTER = Adapter(name="osm", tier=Tier.A, licence=Licence.ODBL)
 
@@ -101,10 +106,119 @@ class TestAdmissibility:
     def test_region_is_not_a_filter(self) -> None:
         """Filtering on region would leave nothing usable outside North America."""
         factor = make_factor(make_weight(0.2, region=Region.NORTH_AMERICA))
-        selection = select_weight(factor, RunContext(region=Region.GLOBAL))
+        selection = select_weight(factor, RunContext(region=Region.EUROPE))
 
         assert selection is not None
         assert any(c.code == "region_transfer" for c in selection.concerns)
+
+
+class TestRegionPreference:
+    """Where the corridor is beats which body of evidence we would otherwise prefer."""
+
+    def test_local_evidence_beats_global(self) -> None:
+        factor = make_factor(
+            make_weight(0.1, family=WeightFamily.IRAP, region=Region.GLOBAL),
+            make_weight(0.9, family=WeightFamily.HSM, region=Region.EUROPE),
+        )
+        selection = select_weight(factor, RunContext(region=Region.EUROPE))
+
+        assert selection is not None
+        assert selection.selected.value == 0.9
+
+    def test_global_beats_another_regions_evidence(self) -> None:
+        """A Cyprus road must not be scored on US evidence when a global one exists.
+
+        This was a real bug: region ranked as a flat exact/not-exact, so global and
+        North American tied on a European run and the family preference broke the tie.
+        """
+        factor = make_factor(
+            make_weight(0.1, family=WeightFamily.HSM, region=Region.NORTH_AMERICA),
+            make_weight(0.9, family=WeightFamily.ELVIK, region=Region.GLOBAL),
+        )
+        selection = select_weight(factor, RunContext(region=Region.EUROPE))
+
+        assert selection is not None
+        assert selection.selected.region is Region.GLOBAL
+        assert not any(c.code == "region_transfer" for c in selection.concerns)
+
+    def test_foreign_evidence_is_used_only_as_a_last_resort(self) -> None:
+        factor = make_factor(make_weight(0.2, region=Region.NORTH_AMERICA))
+        selection = select_weight(factor, RunContext(region=Region.MIDDLE_EAST))
+
+        assert selection is not None
+        concern = next(c for c in selection.concerns if c.code == "region_transfer")
+        assert "middle_east" in concern.message
+        assert "reached for another region's evidence" in concern.message
+
+    def test_region_outranks_family_preference(self) -> None:
+        """iRAP is the default family, but not at the cost of using foreign evidence."""
+        factor = make_factor(
+            make_weight(0.1, family=WeightFamily.IRAP, region=Region.NORTH_AMERICA),
+            make_weight(0.9, family=WeightFamily.HSM, region=Region.EUROPE),
+        )
+        selection = select_weight(factor, RunContext(region=Region.EUROPE))
+
+        assert selection is not None
+        assert selection.selected.family is WeightFamily.HSM
+
+    def test_distance_ordering(self) -> None:
+        assert region_distance(Region.EUROPE, Region.EUROPE) == 0
+        assert region_distance(Region.GLOBAL, Region.EUROPE) == 1
+        assert region_distance(Region.NORTH_AMERICA, Region.EUROPE) == 2
+
+    def test_region_outranks_facility_specificity(self) -> None:
+        """A global unrestricted weight beats a foreign facility-exact one.
+
+        Facility mismatch is already caught by admissibility, so this dimension only
+        separates "exact" from "unrestricted" — and unrestricted is not wrong, just
+        less specific. Region transfer is a real error, so it wins.
+        """
+        factor = make_factor(
+            make_weight(
+                0.1,
+                family=WeightFamily.HSM,
+                facility=FacilityType.RURAL_TWO_LANE,
+                region=Region.NORTH_AMERICA,
+            ),
+            make_weight(
+                0.9,
+                family=WeightFamily.IRAP,
+                facility=FacilityType.ANY,
+                region=Region.GLOBAL,
+            ),
+        )
+        selection = select_weight(
+            factor,
+            RunContext(
+                facility_type=FacilityType.RURAL_TWO_LANE, region=Region.EUROPE
+            ),
+        )
+
+        assert selection is not None
+        assert selection.selected.family is WeightFamily.IRAP
+        assert not any(c.code == "region_transfer" for c in selection.concerns)
+
+    def test_a_us_run_still_gets_the_us_weight(self) -> None:
+        """The mirror case — region preference must cut both ways."""
+        factor = make_factor(
+            make_weight(
+                0.1,
+                family=WeightFamily.HSM,
+                facility=FacilityType.RURAL_TWO_LANE,
+                region=Region.NORTH_AMERICA,
+            ),
+            make_weight(0.9, family=WeightFamily.IRAP, region=Region.GLOBAL),
+        )
+        selection = select_weight(
+            factor,
+            RunContext(
+                facility_type=FacilityType.RURAL_TWO_LANE,
+                region=Region.NORTH_AMERICA,
+            ),
+        )
+
+        assert selection is not None
+        assert selection.selected.family is WeightFamily.HSM
 
     def test_uncited_factor_selects_nothing(self) -> None:
         assert select_weight(make_factor(), RunContext()) is None
