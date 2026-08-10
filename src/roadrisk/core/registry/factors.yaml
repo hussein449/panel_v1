@@ -329,8 +329,12 @@ factors:
           the same thing.
     missing_behaviour: Vertical alignment leaves the model.
     notes: >
-      UNITS: ABSOLUTE grade in percent. Neither source distinguishes upgrade from
-      downgrade, so neither does the weight.
+      UNITS: ABSOLUTE grade in percent, measured over a 200 m baseline. The baseline is
+      part of the definition, not an implementation detail: a DEM with ~2 m vertical
+      error differenced over 30 m produces about 9 percentage points of pure noise, and
+      over 200 m about 1.4. Comparing a 200 m-baseline grade against one measured over
+      30 m is comparing two different quantities.
+      Neither source distinguishes upgrade from downgrade, so neither does the weight.
       THE WORKED EXAMPLE OF WHY SOURCES CARRY SCOPE. HSM says +0.12 for total crashes
       on US rural two-lane roads; iRAP says +0.49 for run-off and head-on crashes
       globally. Both are defensible and they are not in conflict, because they are not
@@ -342,8 +346,13 @@ factors:
         licence: client
       - name: copernicus_dem_glo30
         tier: A
-        licence: public-domain
-        notes: 30 m resolution. Read as COG over /vsicurl/, never download whole tiles.
+        licence: CC-BY-4.0
+        notes: >
+          30 m resolution, read as a COG window over /vsicurl/ — never whole tiles.
+          Licence is attribution-required, not public domain: the Copernicus DEM free
+          and open licence obliges the report to credit ESA and Airbus. It is a DIGITAL
+          SURFACE model, so the elevation over a forested cutting is the canopy, and a
+          30 m pixel is wider than a two-lane road.
 
   - name: lanes
     label: Lane count
@@ -587,16 +596,27 @@ factors:
     transform: ln1p
     expected_sign: "+"
     drop_priority: 40
-    missing_behaviour: Urban/rural context is weakened; land use must carry it alone.
-    notes: UNCITED. No standard published weight exists on a comparable scale.
+    missing_behaviour: Urban/rural context is weakened; landuse_urban must carry it alone.
+    notes: >
+      UNCITED. No standard published weight exists on a comparable scale.
+      NOT YET IMPLEMENTED, and the reason is the delivery format rather than the data.
+      Every other Tier A raster here is a cloud-optimised GeoTIFF, so a corridor costs a
+      few window reads. Neither population source is: WorldPop's global mosaic answers a
+      Range request with 200 and streams the whole file, and GHSL ships deflated zip
+      tiles whose members cannot be windowed. Either way one corridor costs a whole-file
+      download, which contradicts this registry's own instruction on the DEM adapter and
+      belongs behind the content-addressed cache in step 2.9.
     adapters:
       - name: ghsl
         tier: A
-        licence: public-domain
-        notes: EU JRC Global Human Settlement Layer.
+        licence: CC-BY-4.0
+        notes: >
+          EU JRC Global Human Settlement Layer. Zipped tiles, not range-readable —
+          see the note above.
       - name: worldpop
         tier: A
-        licence: public-domain
+        licence: CC-BY-4.0
+        notes: Server ignores Range requests on the global mosaic. See the note above.
 
   - name: roadside_object_density
     label: Roadside fixed-object density (per km)
@@ -627,12 +647,55 @@ factors:
     expected_sign: "+"
     drop_priority: 30
     missing_behaviour: Roadside development intensity is lost.
-    notes: UNCITED. No standard published weight exists on a comparable scale.
+    notes: >
+      UNCITED. No standard published weight exists on a comparable scale.
+      UNITS: buildings within 50 m of the centreline, per kilometre, both sides.
     adapters:
       - name: ms_global_buildings
         tier: A
         licence: ODbL
-        notes: Microsoft Global ML Building Footprints.
+        notes: >
+          Microsoft Global ML Building Footprints — better coverage than OSM across
+          most of the target market, and the reason it is declared first. Not
+          implemented: it ships quadkey-partitioned GeoJSONL of tens of megabytes per
+          tile, so it cannot be windowed to a corridor and belongs behind the step 2.9
+          cache.
+      - name: osm_buildings
+        tier: A
+        licence: ODbL
+        notes: >
+          way["building"] within 50 m of the centreline, from the same Overpass call
+          the other OSM adapters use, so it costs one extra clause and no extra request.
+          Excellent in Europe, thinner where the ML footprints would win.
+
+  - name: landuse_urban
+    label: Built-up share of the roadside (0-1)
+    column: landuse_urban
+    transform: identity
+    expected_sign: "+"
+    drop_priority: 33
+    missing_behaviour: >
+      Urban/rural context rests on building_density and poi_density alone, both of
+      which measure what has been mapped rather than what is there.
+    notes: >
+      UNITS: proportion of sampled roadside classified built-up, 0 to 1.
+      MEASURED BESIDE THE ROAD, NEVER ON IT. ESA WorldCover classifies a sealed road as
+      built-up, so sampling the centreline would report a corridor as ~100% urban
+      wherever it is paved — a measurement of the road, not of its surroundings. The
+      adapter samples perpendicular offsets either side instead.
+      UNCITED. Land use enters published models as a stratification (urban versus rural
+      SPFs) rather than as a continuous covariate with a CMF, so there is no weight to
+      transfer onto a 0-1 share.
+    adapters:
+      - name: client_landuse
+        tier: D
+        licence: client
+      - name: esa_worldcover
+        tier: A
+        licence: CC-BY-4.0
+        notes: >
+          ESA WorldCover 10 m v200 (2021), read as a COG window over /vsicurl/.
+          Attribution required. Class 50 is built-up.
 
   - name: sight_distance_proxy
     label: Sight distance proxy (m)

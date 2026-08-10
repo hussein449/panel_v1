@@ -125,6 +125,13 @@ def values_of(result: AdapterResult, factor: str) -> pd.Series:
     )
 
 
+def factor_of(result: AdapterResult, factor: str):
+    for resolved in result.resolved:
+        if resolved.factor == factor:
+            return resolved
+    raise AssertionError(f"'{factor}' did not resolve")
+
+
 def skip_reason(result: AdapterResult, factor: str) -> str:
     for skipped in result.skipped:
         if skipped.factor == factor:
@@ -309,14 +316,17 @@ class TestExtractQuery:
         assert '["highway"]' in query
         assert "out geom;" in query
 
-    def test_both_road_and_poi_clauses_are_in_one_request(
+    def test_roads_buildings_and_pois_arrive_in_one_request(
         self, corridor: Corridor
     ) -> None:
-        """One fetch, not six. Overpass is volunteer-run infrastructure."""
+        """One fetch, not nine. Overpass is volunteer-run infrastructure."""
         client = client_returning()
         fetch_extract(corridor, client=client)
 
-        assert client.last_query.count("around:") == 2
+        query = client.last_query
+        assert query.count("out geom;") == 1, "one request"
+        assert query.count("around:") == 3, "roads, buildings, POIs"
+        assert '["building"]' in query
 
     def test_a_polyline_needs_two_points(self) -> None:
         with pytest.raises(CorridorError, match="at least two coordinates"):
@@ -504,22 +514,46 @@ class TestTagReading:
         extract = extract_from(corridor, way(run(0.0, CORRIDOR_M), maxspeed="CY:rural"))
         result = read_tags(extract, units, registry=shipped_registry)
 
-        assert "no `osm_maxspeed` evidence" in skip_reason(result, "speed_limit")
+        assert "states the tag anywhere" in skip_reason(result, "speed_limit")
 
-    def test_an_untagged_unit_means_the_factor_is_absent_not_imputed(
+    def test_a_short_untagged_gap_is_carried_across_and_declared(
         self, corridor: Corridor, units, shipped_registry: Registry
     ) -> None:
-        """Six units, one of them untagged. Filling it would be invention."""
+        """Six units, one untagged, five hundred metres from a tagged one.
+
+        The first version of this module discarded the factor here. On the real
+        Cyprus B9 that behaviour threw away `maxspeed` at 92% coverage and `lanes` at
+        84%, and the registry's own note says losing speed_limit biases the terms that
+        remain. Carrying a value 500 m and saying so is the smaller error.
+        """
         extract = extract_from(
             corridor,
             way(run(0.0, 2400.0), maxspeed="80"),
             way(run(2400.0, CORRIDOR_M)),
         )
-        result = read_tags(extract, units, registry=shipped_registry)
+        resolved = factor_of(
+            read_tags(extract, units, registry=shipped_registry), "speed_limit"
+        )
+
+        assert resolved.values.eq(80.0).all()
+        assert resolved.unit_coverage.iloc[-1] == 0.0, "carried, so no coverage of its own"
+        assert any("carried, not measured" in note for note in resolved.notes)
+
+    def test_a_gap_too_wide_to_carry_drops_the_factor(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        """Past the fill distance a road has changed character, not just lost a tag."""
+        extract = extract_from(
+            corridor,
+            way(run(0.0, 2400.0), maxspeed="80"),
+            way(run(2400.0, CORRIDOR_M)),
+        )
+        result = read_tags(
+            extract, units, registry=shipped_registry, max_gap_fill_m=200.0
+        )
 
         reason = skip_reason(result, "speed_limit")
-        assert "1 of 6 unit(s)" in reason
-        assert "imputation" in reason
+        assert "more than 200 m from any unit that does" in reason
 
     def test_thin_coverage_across_the_corridor_is_refused(
         self, corridor: Corridor, units, shipped_registry: Registry
@@ -547,7 +581,7 @@ class TestTagReading:
         result = read_tags(extract, units, registry=shipped_registry)
 
         assert "lit" not in [value.factor for value in result.resolved]
-        assert "evidence" in skip_reason(result, "lit")
+        assert "nothing to measure and nothing to carry" in skip_reason(result, "lit")
 
     def test_lit_is_the_lit_share_of_the_tagged_part(
         self, corridor: Corridor, units, shipped_registry: Registry

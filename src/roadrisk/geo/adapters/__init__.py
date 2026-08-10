@@ -22,12 +22,20 @@ Factor                  Registry adapter            Module
 ``access_density``      ``osm_service_driveway``    :mod:`.osm_density`
 ``ramp_density``        ``osm_link_ways``           :mod:`.osm_density`
 ``poi_density``         ``osm_poi``                 :mod:`.osm_density`
+``building_density``    ``osm_buildings``           :mod:`.osm_density`
+``grade_pct``           ``copernicus_dem_glo30``    :mod:`.grade`
+``landuse_urban``       ``esa_worldcover``          :mod:`.landcover`
 ======================  ==========================  ============================
 
-Still to come in 2.6: ``grade_pct`` from the Copernicus DEM, and the raster-backed
-context factors — land cover, population density, building density. They share a
-different problem from everything here (reading a cloud-optimised GeoTIFF rather than
-parsing a tag) and land together.
+Three sources, three costs. Curvature is arithmetic on the centreline. The nine OSM
+factors are one Overpass call. The two raster factors are COG window reads over HTTPS,
+and are the only ones that need GDAL — hence the separate ``raster`` extra.
+
+``population_density`` is the one Tier A factor in the brief with no adapter here, and
+the reason is delivery format rather than data: WorldPop's global mosaic ignores HTTP
+Range and GHSL ships deflated zip tiles, so either costs a whole-file download per
+corridor. The registry records that under the factor, and it belongs behind the
+content-addressed cache in step 2.9.
 
 Choosing between two adapters that both resolve the same factor, and scoring their
 agreement where they overlap, is step 2.7. Until it exists, :func:`.base.unit_frame`
@@ -50,6 +58,8 @@ from roadrisk.geo.adapters.curvature import (
     OSM_GEOMETRY_ADAPTER,
     curvature_adapter,
 )
+from roadrisk.geo.adapters.grade import compute_grade
+from roadrisk.geo.adapters.landcover import compute_landcover
 from roadrisk.geo.adapters.osm_density import count_densities, count_per_unit
 from roadrisk.geo.adapters.osm_tags import CarrierMatch, match_carriers, read_tags
 from roadrisk.geo.adapters.osmdata import (
@@ -59,26 +69,48 @@ from roadrisk.geo.adapters.osmdata import (
     build_extract_query,
     fetch_extract,
 )
+from roadrisk.geo.adapters.rasters import (
+    COPERNICUS_DEM,
+    ESA_WORLDCOVER,
+    CogSampler,
+    PointSampler,
+    RasterProduct,
+    elevation_sampler,
+    landcover_sampler,
+)
+from roadrisk.geo.adapters.sampling import Stations, stations_along, to_latlon
 
 __all__ = [
     "CLIENT_ALIGNMENT_ADAPTER",
+    "COPERNICUS_DEM",
+    "ESA_WORLDCOVER",
     "OSM_GEOMETRY_ADAPTER",
     "AdapterResult",
     "CarrierMatch",
+    "CogSampler",
     "FactorValues",
     "OsmExtract",
     "OsmNode",
     "OsmWay",
+    "PointSampler",
+    "RasterProduct",
     "SkippedFactor",
+    "Stations",
     "build_extract_query",
     "collect_notes",
+    "compute_grade",
+    "compute_landcover",
     "count_densities",
     "count_per_unit",
     "curvature_adapter",
+    "elevation_sampler",
     "fetch_extract",
+    "landcover_sampler",
     "match_carriers",
     "provenance_frame",
     "read_tags",
     "resolve",
+    "stations_along",
+    "to_latlon",
     "unit_frame",
 ]

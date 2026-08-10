@@ -56,10 +56,15 @@ class Licence(StrEnum):
     ODbL and CC-BY-SA both impose share-alike on a redistributed derived *database*.
     The report is fine with attribution; the dataset is not. Hence this travels with
     every value rather than being assumed per project.
+
+    ``CC-BY-4.0`` is attribution without share-alike — a materially lighter obligation
+    than the two above and a materially heavier one than public domain. It is separate
+    because collapsing it into either would misstate what the client must do.
     """
 
     ODBL = "ODbL"
     CC_BY_SA = "CC-BY-SA"
+    CC_BY = "CC-BY-4.0"
     PUBLIC_DOMAIN = "public-domain"
     PROPRIETARY = "proprietary"
     CLIENT = "client"

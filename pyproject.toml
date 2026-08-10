@@ -24,6 +24,13 @@ geo = [
     "shapely>=2.0",
     "pyproj>=3.6",
 ]
+# The DEM and land-cover adapters, and only those. rasterio bundles GDAL, which is by
+# far the heaviest thing this package can depend on, and the nine OSM factors plus the
+# whole engine run without it. Every raster adapter takes an injectable sampler, so the
+# test suite does not need this either.
+raster = [
+    "rasterio>=1.3",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",

@@ -251,6 +251,16 @@ def corridor(
             ),
         ),
     ] = False,
+    with_rasters: Annotated[
+        bool,
+        typer.Option(
+            "--rasters/--no-rasters",
+            help=(
+                "Sample the Copernicus DEM for gradient and ESA WorldCover for roadside "
+                'land use. Needs the network and pip install "roadrisk-panel[raster]".'
+            ),
+        ),
+    ] = False,
     unit_length_m: Annotated[
         float, typer.Option("--unit-length", help="Target segment length in metres.")
     ] = 500.0,
@@ -277,7 +287,11 @@ def corridor(
     'roadrisk centreline-help' for the recipe.
     """
     try:
-        from roadrisk.geo import build_corridor_panel
+        from roadrisk.geo import (
+            build_corridor_panel,
+            elevation_sampler,
+            landcover_sampler,
+        )
         from roadrisk.geo.demo import (
             monthly_periods,
             synthetic_centreline,
@@ -328,6 +342,11 @@ def corridor(
 
     if with_osm:
         console.print("[dim]Fetching OSM road attributes along the corridor…[/dim]")
+    if with_rasters:
+        console.print(
+            "[dim]Sampling the Copernicus DEM and ESA WorldCover along the corridor…"
+            "[/dim]"
+        )
 
     try:
         built = build_corridor_panel(
@@ -338,13 +357,15 @@ def corridor(
             target_length_m=unit_length_m,
             tolerance_m=tolerance_m,
             osm_client=HttpOverpassClient() if with_osm else None,
+            elevation=elevation_sampler() if with_rasters else None,
+            landcover=landcover_sampler() if with_rasters else None,
             ref=ref,
         )
     except RoadRiskError as exc:
         _print_rejection(exc)
         raise typer.Exit(EXIT_REJECTED) from exc
 
-    _render_corridor(built, with_osm=with_osm)
+    _render_corridor(built, with_osm=with_osm, with_rasters=with_rasters)
 
     assessment = assess(
         built.panel,
@@ -447,7 +468,9 @@ def _read_corridor_inputs(
     return points, crashes
 
 
-def _render_corridor(built, *, with_osm: bool = False) -> None:
+def _render_corridor(
+    built, *, with_osm: bool = False, with_rasters: bool = False
+) -> None:
     console.print(
         Panel(built.summary(), title="Corridor built", border_style="cyan")
     )
@@ -474,10 +497,22 @@ def _render_corridor(built, *, with_osm: bool = False) -> None:
 
     _render_provenance(built)
 
+    offered = []
     if not with_osm:
+        offered.append(
+            "--osm for the road's own tags and its junction, access, ramp, POI and "
+            "building densities"
+        )
+    if not with_rasters:
+        offered.append(
+            "--rasters for gradient from the Copernicus DEM and roadside land use from "
+            "ESA WorldCover"
+        )
+    if offered:
         console.print(
-            "[dim]Only the geometry adapters ran. Pass --osm to add the road's own "
-            "tags, junction, access, ramp and POI densities from OpenStreetMap.[/dim]\n"
+            "[dim]Not every source ran. Pass "
+            + "; ".join(offered)
+            + ".[/dim]\n"
         )
 
     if built.warnings:

@@ -14,7 +14,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 | Stage | State |
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
-| **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, and twelve Tier A factors behind one adapter contract. DEM grade, the raster context layers, fusion, Tier B and persistence outstanding. |
+| **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, and all twelve Tier A factors behind one adapter contract. Fusion, Tier B and persistence outstanding. |
 | Stage 3 — model depth (GLMM, GAM, Bayesian) | Not started |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
@@ -74,17 +74,28 @@ table with `latitude`, `longitude` and `period`:
 roadrisk corridor centreline.csv --crashes crashes.csv --out runs/corridor-01
 ```
 
-Add `--osm` to fetch the road's own attributes and its conflict-point densities:
+Add `--osm` and `--rasters` to fill the panel from open data:
 
 ```bash
-roadrisk corridor centreline.csv --crashes crashes.csv --osm
+roadrisk corridor centreline.csv --crashes crashes.csv --osm --rasters
 ```
 
-That takes the panel from two factor columns to twelve — speed limit, lanes, lighting,
-surface, footway and median from the way tags; junction, access, ramp and POI density
-from the graph — each printed with the adapter, tier, licence and coverage behind it.
-Every factor OSM could not support is listed separately, with the coverage that failed.
-Without `--osm` the pipeline never touches the network.
+That takes the panel from two factor columns to twelve, from three sources:
+
+| Source | Cost | Factors |
+|---|---|---|
+| Centreline geometry | arithmetic | `curve_radius_min`, `curve_density` |
+| OpenStreetMap, one Overpass call | one request | `speed_limit`, `lanes`, `lit`, `surface_paved`, `sidewalk_present`, `median_present`, `junction_density`, `access_density`, `ramp_density`, `poi_density`, `building_density` |
+| Copernicus DEM, ESA WorldCover | COG windows | `grade_pct`, `landuse_urban` |
+
+Each value is printed with the adapter, tier, licence and coverage behind it, and every
+factor the data could not support is listed separately with the coverage that failed.
+Without the flags the pipeline never touches the network. `--rasters` additionally needs
+GDAL, which is quarantined in its own extra:
+
+```bash
+pip install "roadrisk-panel[raster]"
+```
 
 ### Getting a centreline
 
@@ -183,10 +194,10 @@ and those are exactly the claims a client relies on.
 
 **A missing tag is not a zero.** OSM `lit` is absent on most of the target market's
 roads. Reading absence as "unlit" would manufacture a lighting effect out of mapper
-attention, pointing the direction the registry expects. So a factor is emitted only where
-every unit has direct evidence and at least half the corridor is tagged; otherwise it is
-reported as absent, with the coverage that failed. Nothing is imputed from a neighbouring
-unit.
+attention, pointing the direction the registry expects. So a factor needs half the
+corridor tagged to be emitted at all; below that it is reported as absent, with the
+coverage that failed. An untagged unit takes a neighbour's value only across a short gap,
+declares zero coverage of its own, and is counted in the notes.
 
 **Nothing is silent.** Every gate result, descent, dropped term and absent column is
 recorded in the run log and travels to the report. Degrade loudly.
@@ -227,7 +238,11 @@ src/roadrisk/
 │   │   ├── curvature.py     alignment; same maths, provenance depends on the line
 │   │   ├── osmdata.py       one Overpass call along the corridor, parsed
 │   │   ├── osm_tags.py      speed, lanes, lighting, surface, footway, median
-│   │   └── osm_density.py   junctions, accesses, ramps, roadside POIs per km
+│   │   ├── osm_density.py   junctions, accesses, ramps, POIs, buildings per km
+│   │   ├── rasters.py       COG windows over HTTPS — the only GDAL in the package
+│   │   ├── sampling.py      stations along the corridor, and beside it
+│   │   ├── grade.py         gradient from the DEM, over an error-budget baseline
+│   │   └── landcover.py     built-up share of the roadside, sampled off the line
 │   └── pipeline.py          the orchestrator
 ├── demo.py                  synthetic panels for tests and demonstration
 └── cli.py                   mode banner, refusal receipt, descent receipt
@@ -238,8 +253,13 @@ carries over unchanged — and it is why the geospatial dependencies are an opti
 rather than a hard requirement:
 
 ```bash
-pip install "roadrisk-panel[geo]"      # only needed for the pipeline
+pip install "roadrisk-panel[geo]"      # shapely + pyproj, for the pipeline
+pip install "roadrisk-panel[raster]"   # GDAL, for the DEM and land-cover adapters only
 ```
+
+The same rule applies downwards. GDAL is the heaviest thing this package can depend on
+and exactly two of twelve factors need it, so it sits behind its own extra — and because
+both raster adapters take an injectable sampler, the test suite does not need it either.
 
 ## The input contract
 

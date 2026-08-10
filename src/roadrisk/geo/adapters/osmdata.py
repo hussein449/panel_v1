@@ -125,6 +125,12 @@ class OsmWay:
         return self.highway in ACCESS_CLASSES
 
     @property
+    def is_building(self) -> bool:
+        """A mapped building outline. ``building=no`` exists and means what it says."""
+        value = str(self.tags.get("building", "")).strip().lower()
+        return bool(value) and value != "no"
+
+    @property
     def counts_towards_degree(self) -> bool:
         return self.highway in JUNCTION_CLASSES
 
@@ -166,6 +172,10 @@ class OsmExtract:
     def poi_nodes(self) -> tuple[OsmNode, ...]:
         return tuple(node for node in self.nodes if node.is_poi)
 
+    @property
+    def buildings(self) -> tuple[OsmWay, ...]:
+        return tuple(way for way in self.ways if way.is_building)
+
     def junction_points(self) -> list[Point]:
         """Vertices where three or more road edges meet.
 
@@ -189,11 +199,15 @@ class OsmExtract:
 
         return [Point(position[key]) for key, degree in incident.items() if degree >= 3]
 
+    @property
+    def road_ways(self) -> tuple[OsmWay, ...]:
+        return tuple(way for way in self.ways if way.highway)
+
     def summary(self) -> str:
         return (
-            f"{len(self.ways):,} way(s) within {self.road_radius_m:.0f} m and "
-            f"{len(self.poi_nodes):,} POI node(s) within {self.poi_radius_m:.0f} m of "
-            "the centreline"
+            f"{len(self.road_ways):,} road way(s) within {self.road_radius_m:.0f} m, "
+            f"{len(self.buildings):,} building(s) and {len(self.poi_nodes):,} POI "
+            f"node(s) within {self.poi_radius_m:.0f} m of the centreline"
         )
 
 
@@ -226,6 +240,7 @@ def build_extract_query(
         f"[out:json][timeout:{timeout_s}];"
         "("
         f'way["highway"](around:{road_radius_m:.0f},{polyline});'
+        f'way["building"](around:{poi_radius_m:.0f},{polyline});'
         f'node[~"^({poi_filter})$"~"."](around:{poi_radius_m:.0f},{polyline});'
         ");"
         "out geom;"
@@ -294,7 +309,7 @@ def fetch_extract(
             "vertices. The search ribbon is correspondingly looser on the bends; raise "
             "road_radius_m if the corridor is very windy."
         )
-    if not ways:
+    if not any(way.highway for way in ways):
         warnings.append(
             f"OSM returned no highway ways within {road_radius_m:.0f} m of this "
             "centreline. Either the area is unmapped, or the centreline does not lie "

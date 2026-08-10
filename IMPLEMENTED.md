@@ -5,7 +5,115 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Step 2.6: the adapter contract, and ten more factors
+## 2026-08-10 (latest) — Step 2.6 finished: the two rasters
+
+**Delivered:** `grade_pct` from the Copernicus DEM, `landuse_urban` from ESA WorldCover,
+`building_density` from OSM. Step 2.6 is complete at **12 factors** from three sources.
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --osm --rasters
+```
+
+**Verified:** 369 tests pass (28 new, none touching the network or GDAL), `ruff check`
+clean, and validated live against Cyprus B9.
+
+### Live on the B9
+
+```
+69 fragments -> 25.07 km -> 50 units
+12 factors resolved, 3 refused and named
+grade_pct      min 1.30%  median 6.12%  max 9.57%
+landuse_urban  min 0.00   median 0.00   max 0.55
+MODE B — curve_radius_min, grade_pct, speed_limit, access_density
+```
+
+A road climbing into the Troodos reading a median 6% gradient is the sanity check that
+matters. Flat would have meant the sampler was reading the wrong pixel; nothing would
+have meant the tile naming was wrong.
+
+### The baseline is the measurement decision, not the resolution
+
+A DEM's vertical error does not cancel when you difference two nearby pixels — it is
+amplified by the short distance you divide by:
+
+```
+grade noise  ~  sqrt(2) * vertical_error / baseline
+```
+
+At the ~2 m local error Copernicus GLO-30 is specified to, differencing over one 30 m
+pixel gives about **9 percentage points** of pure noise — larger than any real highway
+grade. Over 200 m it gives about 1.4. The HSM prices grade in bands at 3% and 6%, so the
+measurement has to separate 3 from 6; 200 m does, 30 m would have produced a column of
+plausible numbers with nothing in it, on a factor that carries a cited weight.
+
+So the baseline comes from the error budget, not from the pixel size, and it is part of
+the **definition** of the column — a grade over 30 m and a grade over 200 m are
+different quantities. The registry says so, and a test pins it: the same flat road under
+2 m of synthetic per-pixel noise must read under 4% at a 200 m baseline and more than
+three times worse at 30 m.
+
+### Land cover is sampled beside the road, never on it
+
+WorldCover classifies a sealed road as built-up. Sampling the centreline would have
+reported almost any paved corridor as 100% urban — a measurement of the road surface,
+not of its surroundings, and a column that would have correlated with `surface_paved`
+instead of with land use. Each station is sampled at four perpendicular offsets, 40 m
+and 80 m either side, and the centreline pixel is never read. A test builds exactly the
+trap: built-up on the line, grassland beside it, must score zero.
+
+### What the live run changed: a 92%-tagged factor was being thrown away
+
+The tag adapter shipped last commit refused any factor with a single unit lacking
+evidence. That sounded principled. On the real B9 it discarded **`maxspeed` at 92%
+coverage and `lanes` at 84%**, because three and five units out of fifty had none.
+
+That is not caution. The registry's own note records that losing `speed_limit` *biases
+what remains* — on the M51, adding speed doubled the curvature coefficient rather than
+shrinking it. Dropping a 92%-observed factor to avoid carrying a value across 500 m
+trades a small, reported approximation for a large, silent one.
+
+An untagged unit now takes the value of the nearest unit that has one, up to 1,500 m,
+reports zero coverage of its own, and is counted in the notes. Beyond that distance the
+gap is a different piece of road, not a gap in tagging, and the factor still drops. The
+50% corridor floor is untouched, so the change recovers `speed_limit` and `lanes` and
+leaves `lit` (32%), `sidewalk_present` (16%) and `median_present` (0%) refused exactly
+as before.
+
+### Registry changes this forced
+
+- **A new `landuse_urban` factor.** The brief lists it and `population_density`'s own
+  `missing_behaviour` already referred to it; it just had no declaration.
+- **`CC-BY-4.0` added to the licence enum.** Copernicus DEM and ESA WorldCover both
+  require attribution and neither imposes share-alike. Mapping them onto
+  `public-domain`, as the DEM adapter was declared, understated what the client must do.
+  The DEM's declaration is corrected, and both adapters put the attribution text in the
+  run notes.
+- **`osm_buildings` declared on `building_density`.** Microsoft's ML footprints stay
+  declared first because they cover the target market better; they are not implemented
+  because the dataset ships tens of megabytes of GeoJSONL per quadkey tile and cannot be
+  windowed to a corridor. OSM buildings cost one extra clause on a query already being
+  made.
+
+### The one Tier A factor with no adapter
+
+`population_density`, and the obstacle is delivery format rather than data. Measured,
+not assumed: **WorldPop's global mosaic answers a `Range` request with 200, not 206** —
+it ignores the header and streams the whole file — and **GHSL ships deflated zip tiles**
+whose members cannot be windowed. Either way one corridor costs a whole-file download,
+which contradicts this registry's own instruction on the DEM adapter. It is recorded
+under the factor and in the open decisions, with three ways out.
+
+### GDAL is quarantined
+
+`rasterio` is a new `raster` extra and nothing else depends on it — not the engine, not
+the OSM adapters, not the test suite. Both raster adapters take an injectable
+`PointSampler`, so the tests hand them analytic surfaces and assert that a 5% ramp reads
+5%. The only untested code is the HTTP window read, and `tools/validate_rasters.py`
+exercises that against the live buckets on a real road instead.
+
+---
+
+## 2026-08-10 — Step 2.6: the adapter contract, and ten more factors
 
 **Delivered:** `roadrisk.geo.adapters` — the seam every source plugs into, and the first
 ten factors to come through it. A corridor panel went from **2 factor columns to 12**.

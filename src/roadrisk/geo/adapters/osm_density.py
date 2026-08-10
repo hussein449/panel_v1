@@ -1,14 +1,15 @@
 """Tier A adapters — conflict points and roadside activity, counted per kilometre.
 
-Four factors: junction density, access density, ramp density and POI density. All four
-are counts of things near the corridor, divided by unit length, and all four use the
-same rule — **a feature belongs to the unit containing the point on the centreline
-nearest to it**, provided that nearest approach is within the feature's own tolerance.
+Five factors: junction, access, ramp, POI and building density. All five are counts of
+things near the corridor divided by unit length, and all five use the same rule — **a
+feature belongs to the unit containing the point on the centreline nearest to it**,
+provided that nearest approach is within the feature's own tolerance.
 
-**The four counts are defined so they cannot overlap.** A T-junction with a residential
-street is a junction; a driveway is an access; a slip road is a ramp. Each highway class
-belongs to exactly one of those three sets, so a motorway off-ramp is counted once as a
-ramp and never again as a junction. That matters more than the precise class boundaries:
+**The three road counts are defined so they cannot overlap.** A T-junction with a
+residential street is a junction; a driveway is an access; a slip road is a ramp. Each
+highway class belongs to exactly one of those sets, so a motorway off-ramp is counted
+once as a ramp and never again as a junction. That matters more than the precise class
+boundaries:
 the registry already records that ``ramp_density`` and ``access_density`` correlate at
 r = 0.365 on the M51 and that the sign on ``ramp_density`` inverts between
 specifications. Counting the same feature into two columns would guarantee that
@@ -59,6 +60,10 @@ RAMP_TOLERANCE_M = 35.0
 #: Roadside activity: a shop set back 40 m still generates turning movements and
 #: pedestrians. Beyond about 50 m it belongs to the next street.
 POI_TOLERANCE_M = 50.0
+
+#: Frontage development. The same reasoning as POIs, and the same distance, so the two
+#: describe the same strip of roadside from different angles.
+BUILDING_TOLERANCE_M = 50.0
 
 
 @dataclass(frozen=True)
@@ -139,7 +144,27 @@ _POI = _DensitySpec(
     ),
 )
 
-_SPECS: tuple[_DensitySpec, ...] = (_JUNCTION, _ACCESS, _RAMP, _POI)
+_BUILDING = _DensitySpec(
+    factor="building_density",
+    adapter="osm_buildings",
+    tolerance_m=BUILDING_TOLERANCE_M,
+    source=(
+        "OpenStreetMap `building` ways whose nearest approach to the centreline is "
+        f"within {BUILDING_TOLERANCE_M:.0f} m, counted once each and divided by unit "
+        "length. Both sides, from the same Overpass call the other OSM adapters use."
+    ),
+    notes=(
+        "Ways only. A building mapped as a multipolygon relation is not counted, which "
+        "under-reports the large and complex buildings — shopping centres, factories — "
+        "that generate the most roadside activity.",
+        "The registry prefers Microsoft's ML building footprints here, which cover the "
+        "target market better than OSM does. They are not implemented: the dataset "
+        "ships as tens of megabytes of GeoJSONL per quadkey tile and cannot be windowed "
+        "to a corridor.",
+    ),
+)
+
+_SPECS: tuple[_DensitySpec, ...] = (_JUNCTION, _ACCESS, _RAMP, _POI, _BUILDING)
 
 #: Every (factor, registry adapter) slot this module fills.
 SLOTS: tuple[tuple[str, str], ...] = tuple(
@@ -191,6 +216,7 @@ def count_densities(
         _ACCESS.factor: [way.geometry for way in extract.ways if way.is_access],
         _RAMP.factor: [way.geometry for way in extract.ways if way.is_link],
         _POI.factor: [node.point for node in extract.poi_nodes],
+        _BUILDING.factor: [way.geometry for way in extract.buildings],
     }
 
     unit_ids = pd.Index(segmentation.unit_ids, name=UNIT_COLUMN)
@@ -262,6 +288,7 @@ def count_per_unit(
 
 __all__ = [
     "ACCESS_TOLERANCE_M",
+    "BUILDING_TOLERANCE_M",
     "JUNCTION_TOLERANCE_M",
     "POI_TOLERANCE_M",
     "RAMP_TOLERANCE_M",

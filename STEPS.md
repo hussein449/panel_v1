@@ -57,7 +57,7 @@ being worked around — it is the shape of the product.
 | `[x]` | **2.3** Segmentation | Fixed-length units, chainage continuous and exhaustive, trailing runt merged | No gaps, no overlaps, unit lengths sum to the corridor |
 | `[x]` | **2.4** Panel skeleton | `unit_id × period × time_slot`, `n_crashes` initialised to 0 | Zero rows exist by construction; skeleton passes the input contract |
 | `[x]` | **2.5** Crash snapping | Project to centreline within tolerance, chainage → unit, period → cell | Every drop counted with a reason; `SnapReport` activates gate check 6 |
-| `[~]` | **2.6** Tier A adapters | Adapter contract + curvature + OSM tags + junction/access/ramp/POI density **done**. DEM grade and the raster context layers outstanding | Each returns value + source + tier + licence |
+| `[x]` | **2.6** Tier A adapters | 12 factors behind one adapter contract, from three sources: centreline geometry, one OSM call, two COG rasters | Each returns value + source + tier + licence |
 | `[ ]` | **2.7** Fusion + agreement | Highest-priority adapter wins; agreement where two sources overlap | Confidence tier emitted per factor per unit |
 | `[ ]` | **2.8** Tier B adapters | Mapillary detections, graph centrality traffic proxy | Never labelled `aadt` |
 | `[ ]` | **2.9** PostGIS + geographic cache | Persistence, and content-addressed caching by adapter + quantised bbox | Second corridor in the same country hits cache |
@@ -68,43 +68,51 @@ being worked around — it is the shape of the product.
 roadrisk corridor --demo --facility-type rural_two_lane --region middle_east --severity injury
 ```
 
-Add `--osm` to any corridor run to fetch the road's own tags and its conflict-point
-densities. Without it the pipeline never touches the network.
+Add `--osm` for the road's own tags and its conflict-point densities, and `--rasters`
+for gradient and roadside land use. Without either flag the pipeline never touches the
+network.
 
 **Validated on a real road, 2026-08-10.** Cyprus B9 through the Troodos mountains:
 69 OSM fragments → one 25.01 km centreline → 50 units → 1,200 panel rows → 99.8% snap
 rate → Mode A. Details and the two defects it exposed in
 [`IMPLEMENTED.md`](IMPLEMENTED.md).
 
-### 2.6 — twelve of the Tier A factors, from two sources
+### 2.6 — done
 
 ```bash
-roadrisk corridor centreline.csv --crashes crashes.csv --osm
+roadrisk corridor centreline.csv --crashes crashes.csv --osm --rasters
 ```
 
 The adapter contract is the deliverable, not the twelve columns. A module names the
-registry slot it fills — `osm_maxspeed`, `osm_graph_nodes` — and the tier and licence
-travel from *that declaration* onto every value it produces. An adapter cannot promote
-itself to Tier A or invent a licence, because it never gets to state either.
+registry slot it fills — `osm_maxspeed`, `copernicus_dem_glo30` — and the tier and
+licence travel from *that declaration* onto every value it produces. An adapter cannot
+promote itself to Tier A or invent a licence, because it never gets to state either.
 
-| Source | Factors |
-|---|---|
-| Centreline geometry | `curve_radius_min`, `curve_density` |
-| OSM way tags | `speed_limit`, `lanes`, `lit`, `surface_paved`, `sidewalk_present`, `median_present` |
-| OSM graph and POIs | `junction_density`, `access_density`, `ramp_density`, `poi_density` |
+| Source | Cost | Factors |
+|---|---|---|
+| Centreline geometry | arithmetic | `curve_radius_min`, `curve_density` |
+| OSM, one Overpass call | one request | `speed_limit`, `lanes`, `lit`, `surface_paved`, `sidewalk_present`, `median_present`, `junction_density`, `access_density`, `ramp_density`, `poi_density`, `building_density` |
+| Copernicus DEM, ESA WorldCover | COG windows | `grade_pct`, `landuse_urban` |
 
-Everything except curvature comes from **one** Overpass call, bounded by the corridor
-rather than by its bounding box.
+The OSM query is bounded by the corridor rather than by its bounding box. The rasters
+are read as windows over HTTPS range requests, never as whole tiles, and are the only
+part that needs GDAL — hence a separate extra:
 
-**Missing tags are not zeros.** A factor is emitted only where every unit has direct
-evidence and at least half the corridor is tagged; otherwise it is named as absent, with
-the coverage that failed. Reading an absent `lit` tag as "unlit" would manufacture a
-lighting effect out of mapper attention, pointing exactly the way the registry expects.
+```bash
+pip install "roadrisk-panel[raster]"
+```
 
-Still outstanding in 2.6: `grade_pct` from the Copernicus DEM, and the raster context
-layers — land cover, population density, building density. They share a different
-problem from everything above (reading a cloud-optimised GeoTIFF rather than parsing a
-tag) and land together.
+**Missing tags are not zeros.** A factor needs half the corridor tagged; an untagged unit
+takes its neighbour's value only across a short gap, and says so. Reading an absent `lit`
+tag as "unlit" would manufacture a lighting effect out of mapper attention, pointing
+exactly the way the registry expects.
+
+**Validated live on Cyprus B9, 2026-08-10.** 12 of 14 attempted factors resolved.
+`lit` (32% tagged), `sidewalk_present` (16%) and `median_present` (0%) were refused and
+reported. `grade_pct` reads a median 6.1% and a maximum 9.6% climbing into the Troodos.
+
+`population_density` is the one Tier A factor in the brief with no adapter, and the
+reason is delivery format rather than data — see the open decisions below.
 
 ### 2.2b — done
 
@@ -179,7 +187,7 @@ The network layer is injectable, so all 34 tests run without touching it.
 Things that need a human call, not a code change.
 
 1. ~~**Mode B default weights are unsourced.**~~ **RESOLVED as far as it can be
-   without spend, 2026-08-10.** Seven of twenty-one factors carry ten weights derived
+   without spend, 2026-08-10.** Seven of twenty-two factors carry ten weights derived
    from the AASHTO HSM, the Elvik Power Model and iRAP, each computed by
    `tools/derive_weights.py` and documented in [`docs/WEIGHTS.md`](docs/WEIGHTS.md).
    Weights are context-aware — the engine picks by facility type, region and crash
@@ -211,7 +219,19 @@ Things that need a human call, not a code change.
    while iRAP prices lane count at `−` for head-on-overtaking crashes only. Two
    mechanisms in one column — the composite-masking trap the brief warns about. The
    real fix is separating the exposure role from the risk role, not picking a sign.
-3. **Second corridor.** Still the critical path. Pick one where access density and ramp
+3. **`population_density` needs a range-readable source, or the 2.9 cache.** It is the
+   one Tier A factor in the brief with no adapter, and the obstacle is delivery format
+   rather than data. Every other raster here is a cloud-optimised GeoTIFF, so a corridor
+   costs a few window reads; neither population source is. Measured 2026-08-10:
+   WorldPop's global mosaic answers a `Range` request with **200, not 206** — it ignores
+   the header and streams the whole file — and GHSL ships deflated zip tiles whose
+   members cannot be windowed. Either way one corridor costs a whole-file download,
+   which contradicts the registry's own instruction on the DEM adapter. Three ways out,
+   in order of appeal: find a COG mirror (Meta's HRSL on `dataforgood-fb-data` is a
+   candidate and would need a new adapter declared); wait for the content-addressed
+   cache in 2.9 and pay the download once per region; or drop the factor and let
+   `landuse_urban` and `building_density` carry urban context between them.
+4. **Second corridor.** Still the critical path. Pick one where access density and ramp
    density separate — the M51 ramp/RAF inversion is not diagnosable on a single corridor.
 4. **Rung 4 engine.** PyMC/NumPyro keeps one language; R + INLA is materially faster for
    CAR/BYM at panel scale. Defer until MCMC actually hurts.

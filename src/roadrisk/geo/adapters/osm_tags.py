@@ -15,8 +15,22 @@ manufacturing a curvature signal out of vertex spacing.
 is absent on most of the target market's roads, and reading absence as "unlit" would
 manufacture a lighting effect out of mapper attention. So a sample without the tag is
 *no evidence*, a unit's value is the mean over the part of it that is tagged, and a
-factor is not emitted at all unless there is evidence on every unit and on at least half
-the corridor. The report says which factors failed that test and by how much.
+factor whose tag covers less than half the corridor is not emitted at all. The report
+says which factors failed that test and by how much.
+
+**A short untagged gap is carried across; a long one is not.** The first version of this
+module refused any factor with a single unit lacking evidence, which sounded principled
+and was wrong. On the real Cyprus B9, ``maxspeed`` covers 92% of the corridor and
+``lanes`` 84% — and both were being discarded because three and five units out of fifty
+had none. That is not caution: the registry's own note records that losing ``speed_limit``
+*biases what remains*, because on the M51 adding speed doubled the curvature coefficient
+rather than shrinking it. Dropping a 92%-observed factor to avoid carrying a value
+across 500 m trades a small, reported approximation for a large, silent one.
+
+So a unit with no tag of its own takes the value of the nearest unit that has one, up to
+:data:`MAX_GAP_FILL_M`, and every such unit is counted in the notes and carries zero unit
+coverage. Beyond that distance the gap is not a gap in tagging but a genuinely different
+piece of road, and the factor drops.
 
 **The paved-by-default convention is deliberately not applied.** Routers assume an
 untagged ``highway=primary`` is sealed, and they are usually right. The iRAP sealed
@@ -65,6 +79,12 @@ MIN_CORRIDOR_COVERAGE = 0.5
 #: value — the mean over what evidence there is — but a reader deserves to know that the
 #: number rests on a quarter of the segment.
 MIN_UNIT_COVERAGE = 0.25
+
+#: How far a unit with no tag of its own may reach along the corridor for a value.
+#: Three units at the default 500 m length: far enough to bridge the stretch where a
+#: mapper stopped tagging, short enough that a value is never carried across the sort of
+#: distance over which a road genuinely changes character.
+MAX_GAP_FILL_M = 1500.0
 
 #: Below this share of samples matched to any OSM way, the centreline is probably not on
 #: the road it claims to be.
@@ -416,6 +436,7 @@ def read_tags(
     tolerance_m: float = CARRIER_TOLERANCE_M,
     min_corridor_coverage: float = MIN_CORRIDOR_COVERAGE,
     min_unit_coverage: float = MIN_UNIT_COVERAGE,
+    max_gap_fill_m: float = MAX_GAP_FILL_M,
 ) -> AdapterResult:
     """Resolve every OSM-tag factor this corridor can support.
 
@@ -428,6 +449,8 @@ def read_tags(
         tolerance_m: How far a sample may sit from its carrier way.
         min_corridor_coverage: Share of the corridor that must carry a tag.
         min_unit_coverage: Share of a unit below which its value is called thin.
+        max_gap_fill_m: How far an untagged unit may reach along the corridor for a
+            value. Beyond it the factor drops rather than being carried.
 
     Returns:
         An :class:`AdapterResult` naming both what resolved and what did not.
@@ -469,6 +492,7 @@ def read_tags(
 
     unit_ids = pd.Index(segmentation.unit_ids, name=UNIT_COLUMN)
     counts = np.bincount(match.unit_index, minlength=match.n_units).astype(float)
+    midpoints = np.array([unit.midpoint_m for unit in segmentation], dtype=float)
     resolved = []
     skipped = []
 
@@ -486,17 +510,13 @@ def read_tags(
         )
         corridor_coverage = float(evidence.sum() / match.n_samples)
 
-        blank = int((evidence == 0).sum())
-        if blank:
+        if corridor_coverage == 0.0:
             skipped.append(
                 SkippedFactor(
                     spec.factor,
                     spec.adapter,
-                    f"{blank} of {match.n_units} unit(s) carry no `{spec.adapter}` "
-                    f"evidence at all ({corridor_coverage:.0%} of the corridor is "
-                    "tagged). Filling them from a neighbouring unit would be "
-                    "imputation, not measurement, so the factor is absent rather than "
-                    "partly invented",
+                    "no way carrying this corridor states the tag anywhere along it, "
+                    "so there is nothing to measure and nothing to carry",
                 )
             )
             continue
@@ -507,16 +527,38 @@ def read_tags(
                     spec.factor,
                     spec.adapter,
                     f"only {corridor_coverage:.0%} of the corridor carries the tag, "
-                    f"below the {min_corridor_coverage:.0%} floor. Every unit has some "
-                    "evidence, but the column would describe mapper attention more "
-                    "than it describes road",
+                    f"below the {min_corridor_coverage:.0%} floor. The column would "
+                    "describe mapper attention more than it describes road",
                 )
             )
             continue
 
-        means = totals / evidence
+        means, carried, stranded = _fill_gaps(
+            totals, evidence, midpoints, max_gap_fill_m
+        )
+        if stranded:
+            skipped.append(
+                SkippedFactor(
+                    spec.factor,
+                    spec.adapter,
+                    f"{len(stranded)} of {match.n_units} unit(s) carry no tag and sit "
+                    f"more than {max_gap_fill_m:.0f} m from any unit that does "
+                    f"({corridor_coverage:.0%} of the corridor is tagged overall). Over "
+                    "that distance a road changes character, so the value is not "
+                    "carried and the factor is absent rather than invented",
+                )
+            )
+            continue
+
         spec_notes = list(spec.notes)
-        thin = int((unit_coverage < min_unit_coverage).sum())
+        if carried:
+            spec_notes.append(
+                f"{spec.factor}: {carried} of {match.n_units} unit(s) carry no tag of "
+                "their own and take the value of the nearest unit that does, within "
+                f"{max_gap_fill_m:.0f} m. Those units report zero coverage — they are "
+                "carried, not measured."
+            )
+        thin = int(((unit_coverage < min_unit_coverage) & (unit_coverage > 0)).sum())
         if thin:
             spec_notes.append(
                 f"{spec.factor}: {thin} of {match.n_units} unit(s) rest on less than "
@@ -553,6 +595,43 @@ def _as_float(value: float | None) -> float:
     return float("nan") if value is None else float(value)
 
 
+def _fill_gaps(
+    totals: np.ndarray,
+    evidence: np.ndarray,
+    midpoints: np.ndarray,
+    max_gap_fill_m: float,
+) -> tuple[np.ndarray, int, list[int]]:
+    """Give every unit a value, carrying short gaps along the corridor.
+
+    Nearest *along the corridor*, not nearest in space, and only from a unit that has
+    its own evidence — so a value is never carried through a second gap and never
+    borrowed from the other side of a hairpin.
+
+    Returns the values, how many were carried, and any unit left too far from evidence
+    to be given one at all.
+    """
+    values = np.divide(
+        totals, evidence, out=np.full(len(totals), np.nan), where=evidence > 0
+    )
+
+    blanks = np.flatnonzero(evidence == 0)
+    if not blanks.size:
+        return values, 0, []
+
+    donors = np.flatnonzero(evidence > 0)
+    stranded: list[int] = []
+
+    for blank in blanks:
+        distances = np.abs(midpoints[donors] - midpoints[blank])
+        nearest = int(np.argmin(distances))
+        if distances[nearest] > max_gap_fill_m:
+            stranded.append(int(blank))
+        else:
+            values[blank] = values[donors[nearest]]
+
+    return values, int(blanks.size - len(stranded)), stranded
+
+
 def _aggregate(
     sampled: np.ndarray,
     unit_index: np.ndarray,
@@ -582,6 +661,7 @@ def sample_points(
 
 __all__ = [
     "CARRIER_TOLERANCE_M",
+    "MAX_GAP_FILL_M",
     "MIN_CARRIER_MATCH",
     "MIN_CORRIDOR_COVERAGE",
     "MIN_UNIT_COVERAGE",

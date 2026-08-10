@@ -26,7 +26,10 @@ from roadrisk.geo.adapters import (
     OSM_GEOMETRY_ADAPTER,
     AdapterResult,
     OsmExtract,
+    PointSampler,
     collect_notes,
+    compute_grade,
+    compute_landcover,
     count_densities,
     curvature_adapter,
     fetch_extract,
@@ -120,6 +123,8 @@ def build_corridor_panel(
     osm: OsmExtract | None = None,
     osm_client: OverpassClient | None = None,
     ref: str | None = None,
+    elevation: PointSampler | None = None,
+    landcover: PointSampler | None = None,
     latitude_column: str = "latitude",
     longitude_column: str = "longitude",
     period_column: str = "period",
@@ -147,6 +152,11 @@ def build_corridor_panel(
             Tier A adapters; supplying neither leaves the pipeline entirely offline.
         ref: Road reference, used to prefer the right way where several run close
             together.
+        elevation: Elevation sampler for ``grade_pct``. Supply
+            :func:`~roadrisk.geo.adapters.rasters.elevation_sampler` for Copernicus DEM
+            GLO-30 over the network, or any callable for a surface of your own.
+        landcover: Land-cover sampler for ``landuse_urban``. Supply
+            :func:`~roadrisk.geo.adapters.rasters.landcover_sampler` for ESA WorldCover.
         latitude_column, longitude_column, period_column, time_slot_column: Column
             names in ``crashes``.
 
@@ -207,6 +217,15 @@ def build_corridor_panel(
             )
         )
         results.append(count_densities(extract, segmentation, registry=active_registry))
+
+    if elevation is not None:
+        results.append(
+            compute_grade(segmentation, elevation, registry=active_registry)
+        )
+    if landcover is not None:
+        results.append(
+            compute_landcover(segmentation, landcover, registry=active_registry)
+        )
 
     values = unit_frame(results)
     if values is not None:
