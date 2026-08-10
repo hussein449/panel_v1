@@ -241,6 +241,16 @@ def corridor(
         str | None,
         typer.Option("--bbox", help="south,west,north,east in degrees. With --ref."),
     ] = None,
+    with_osm: Annotated[
+        bool,
+        typer.Option(
+            "--osm/--no-osm",
+            help=(
+                "Fetch OSM road attributes and conflict-point densities for every unit. "
+                "Needs the network; everything else runs offline."
+            ),
+        ),
+    ] = False,
     unit_length_m: Annotated[
         float, typer.Option("--unit-length", help="Target segment length in metres.")
     ] = 500.0,
@@ -273,6 +283,7 @@ def corridor(
             synthetic_centreline,
             synthetic_crashes,
         )
+        from roadrisk.geo.osm import HttpOverpassClient
     except ModuleNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(EXIT_REJECTED) from exc
@@ -315,6 +326,9 @@ def corridor(
         points, crashes = _read_corridor_inputs(centreline_path, crashes_path)
         corridor_name = centreline_path.stem
 
+    if with_osm:
+        console.print("[dim]Fetching OSM road attributes along the corridor…[/dim]")
+
     try:
         built = build_corridor_panel(
             points,
@@ -323,12 +337,14 @@ def corridor(
             crashes=crashes,
             target_length_m=unit_length_m,
             tolerance_m=tolerance_m,
+            osm_client=HttpOverpassClient() if with_osm else None,
+            ref=ref,
         )
     except RoadRiskError as exc:
         _print_rejection(exc)
         raise typer.Exit(EXIT_REJECTED) from exc
 
-    _render_corridor(built)
+    _render_corridor(built, with_osm=with_osm)
 
     assessment = assess(
         built.panel,
@@ -431,7 +447,7 @@ def _read_corridor_inputs(
     return points, crashes
 
 
-def _render_corridor(built) -> None:
+def _render_corridor(built, *, with_osm: bool = False) -> None:
     console.print(
         Panel(built.summary(), title="Corridor built", border_style="cyan")
     )
@@ -442,7 +458,7 @@ def _render_corridor(built) -> None:
     table.add_row("Length", f"{built.corridor.length_km:.2f} km")
     table.add_row("Units", f"{built.n_units:,}")
     table.add_row("Projection", f"EPSG:{built.corridor.epsg}")
-    table.add_row("Factors derived", ", ".join(built.factor_columns) or "none")
+    table.add_row("Factors derived", f"{len(built.factor_columns)}")
     if built.snap is not None:
         reasons = ", ".join(
             f"{k} {v:,}" for k, v in built.snap.dropped_reasons.items()
@@ -456,6 +472,14 @@ def _render_corridor(built) -> None:
     console.print(table)
     console.print()
 
+    _render_provenance(built)
+
+    if not with_osm:
+        console.print(
+            "[dim]Only the geometry adapters ran. Pass --osm to add the road's own "
+            "tags, junction, access, ramp and POI densities from OpenStreetMap.[/dim]\n"
+        )
+
     if built.warnings:
         console.print(
             Panel(
@@ -463,6 +487,54 @@ def _render_corridor(built) -> None:
                 # containing [out:json], which Rich would parse as a tag and drop.
                 Text("\n\n".join(f"• {w}" for w in built.warnings)),
                 title="Geometry notes",
+                border_style="yellow",
+            )
+        )
+        console.print()
+
+
+def _render_provenance(built) -> None:
+    """Value, source, tier and licence for every factor an adapter produced.
+
+    The brief asks each adapter to return all four. This is where a client auditing a
+    number finds out where it came from and what may be done with it.
+    """
+    provenance = built.provenance
+    if not provenance.empty:
+        table = Table(
+            title="Factor provenance — where every value came from",
+            header_style="bold",
+            title_justify="left",
+        )
+        table.add_column("Column")
+        table.add_column("Adapter")
+        table.add_column("Tier", justify="center")
+        table.add_column("Licence")
+        table.add_column("Cover", justify="right")
+        table.add_column("Source")
+
+        for row in provenance.itertuples():
+            coverage = f"{row.coverage:.0%}"
+            table.add_row(
+                row.column,
+                row.adapter,
+                row.tier,
+                row.licence,
+                Text(coverage, style="yellow" if row.coverage < 0.9 else None),
+                _cite(row.source, limit=52),
+            )
+        console.print(table)
+        console.print()
+
+    skipped = built.skipped
+    if skipped:
+        console.print(
+            Panel(
+                "\n".join(
+                    f"[bold]{factor}[/bold] via {adapter}\n  {reason}."
+                    for factor, adapter, reason in skipped
+                ),
+                title="Looked for, not found — these factors are absent, not zero",
                 border_style="yellow",
             )
         )

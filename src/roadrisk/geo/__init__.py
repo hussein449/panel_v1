@@ -22,6 +22,14 @@ except ModuleNotFoundError as exc:  # pragma: no cover - import-time guard
         'dependency. Install it with:  pip install "roadrisk-panel[geo]"'
     ) from exc
 
+from roadrisk.geo.adapters import (
+    AdapterResult,
+    FactorValues,
+    OsmExtract,
+    SkippedFactor,
+    fetch_extract,
+    provenance_frame,
+)
 from roadrisk.geo.corridor import Corridor
 from roadrisk.geo.crs import Projector, utm_epsg_for
 from roadrisk.geo.errors import (
@@ -37,14 +45,18 @@ from roadrisk.geo.segmentation import Segmentation, Unit, segment
 from roadrisk.geo.snapping import SnapOutcome, apply_counts, snap_crashes
 
 __all__ = [
+    "AdapterResult",
     "Corridor",
     "CorridorError",
     "CorridorPanel",
     "CurvatureResult",
+    "FactorValues",
     "GeoError",
+    "OsmExtract",
     "Projector",
     "Segmentation",
     "SegmentationError",
+    "SkippedFactor",
     "SnapError",
     "SnapOutcome",
     "Unit",
@@ -53,6 +65,8 @@ __all__ = [
     "build_corridor_panel",
     "build_skeleton",
     "compute_curvature",
+    "fetch_extract",
+    "provenance_frame",
     "segment",
     "snap_crashes",
     "utm_epsg_for",

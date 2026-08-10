@@ -5,7 +5,136 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Step 2.2b: fetch the corridor from OSM
+## 2026-08-10 (latest) — Step 2.6: the adapter contract, and ten more factors
+
+**Delivered:** `roadrisk.geo.adapters` — the seam every source plugs into, and the first
+ten factors to come through it. A corridor panel went from **2 factor columns to 12**.
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --osm
+```
+
+**Verified:** 341 tests pass (51 new, none touching the network), `ruff check` clean.
+
+### The contract is the deliverable, not the columns
+
+Part Six of the pipeline brief asks each adapter to return *value, source, tier and
+licence*. Three rules make that more than a data shape:
+
+**Tier and licence are read from the registry, never asserted by the adapter.** A module
+names the slot it fills — `osm_maxspeed`, `osm_graph_nodes` — and the tier and licence
+travel from that declaration onto every value. So an adapter cannot promote itself from
+Tier B to Tier A, invent a licence, or fill a slot nobody declared. `require_slots` runs
+before any work, so a renamed slot fails on the next run rather than on the one corridor
+where the tag finally appears.
+
+**A partial column is refused.** A factor resolved for some units and not others changes
+which rows the model sees, and the effect looks exactly like a finding.
+
+**An unresolved factor is named, with the reason.** "`surface_paved`: 0% of the corridor
+carries the tag" is useful. Omitting the row is not.
+
+Two adapters resolving the same factor raises rather than picking a winner — that is
+step 2.7, and guessing here would hide the disagreement 2.7 exists to measure.
+
+### What now resolves
+
+| Source | Factors |
+|---|---|
+| Centreline geometry | `curve_radius_min`, `curve_density` |
+| OSM way tags | `speed_limit`, `lanes`, `lit`, `surface_paved`, `sidewalk_present`, `median_present` |
+| OSM graph and POIs | `junction_density`, `access_density`, `ramp_density`, `poi_density` |
+
+Everything except curvature comes from **one** Overpass call. Fanning out one query per
+factor would multiply the load on a volunteer-run service by six for data that arrives in
+the same response.
+
+### The query follows the road, not its bounding box
+
+Overpass `around` accepts a polyline, so a 25 km corridor asks for a 100 m ribbon rather
+than the 25 × 15 km box that encloses it. Through a city that is the difference between a
+few thousand elements and a few hundred thousand. The centreline is simplified to 20 m
+before it goes in — well below the ribbon width, so simplification cannot move the search
+off the road — and the relaxation is reported if a very long corridor forces it.
+
+### Missing tags are not zeros
+
+This is the whole difficulty of the tag adapter and the reason it is 400 lines rather
+than 40.
+
+OSM `lit` is absent on most of the target market's roads. Reading absence as "unlit"
+would manufacture a lighting effect out of **mapper attention**, and it would point the
+direction the registry expects — which is precisely what makes it dangerous. It is the
+same failure as the vertex-spacing curvature artefact found last week, in a new place.
+
+So: a sample without the tag is *no evidence*; a unit's value is the mean over the part
+of it that is tagged; and a factor is emitted only when every unit has some evidence and
+at least half the corridor is tagged. Otherwise it is absent, with the coverage that
+failed printed next to it. Nothing is imputed from a neighbouring unit anywhere in this
+module.
+
+**The paved-by-default convention is deliberately not applied.** Routers assume an
+untagged `highway=primary` is sealed and they are usually right. The iRAP sealed-versus-
+unsealed weight is −1.0986, the largest in the registry: usually right is not good enough
+when being wrong applies a three-fold risk factor backwards. Explicit tags only.
+
+### The three densities partition the features between them
+
+A T-junction with a residential street is a junction; a driveway is an access; a slip
+road is a ramp. Each highway class belongs to exactly one set, so a motorway off-ramp is
+counted once and never again.
+
+That matters more than where the boundaries fall. The registry already records that
+`ramp_density` and `access_density` correlate at r = 0.365 on the M51 and that the sign
+on `ramp_density` inverts between specifications. Counting one feature into two columns
+would have *guaranteed* that collinearity rather than merely permitting it — and it would
+have looked like a finding about roads. The registry's own description of
+`access_density` said "plus minor-road joins"; the note now says why it does not.
+
+Junction degree is computed from vertex coordinates rather than OSM node ids: ways that
+meet share a node and therefore share its coordinates exactly, so the answer is identical
+and it does not depend on an output field a client or a cache might drop. A vertex
+interior to a way contributes two incident edges and an endpoint one, so a road split
+into two ways gives degree 2 — correctly not a junction — and a side road ending on it
+gives 3.
+
+### A density of zero is a statement about OSM, not about the road
+
+A corridor where nobody mapped the driveways reports zero accesses per kilometre. The
+column is then constant, and the engine drops constant columns before fitting, so the
+right thing happens — but the *route* matters, and the note says the data was absent
+rather than the road being empty. An extract that came back completely empty skips all
+four densities instead, because there a zero would mean "not fetched".
+
+### Degrading loudly, twice
+
+A failed Overpass fetch loses the OSM factors and nothing else — the crash counts,
+segmentation and curvature survive, and the failure is reported at the top of the run.
+Overpass mirrors return 504 under load often enough that a client should not lose their
+crash data to a busy volunteer server.
+
+Separately, when fewer than 90% of centreline samples find an OSM road within 20 m, the
+run says so: that usually means the centreline is not the road it claims to be.
+
+### What this exposed
+
+Ten new columns is the first time the engine has had a realistic specification to chew
+on, and the machinery built for it in Stage 1 came alive without changes: the VIF gate
+dropped `curve_radius_min` against `curve_density`, four constant columns
+(`lanes`, `lit`, `surface_paved`, `ramp_density` on the test corridor) were dropped
+before fitting, and the ladder settled at A-full with five factors. No engine code
+needed touching, which is the layering doing its job.
+
+### Still outstanding in 2.6
+
+`grade_pct` from the Copernicus DEM, and the raster context layers — land cover,
+population density, building density. They share a problem the whole of the above does
+not (reading a cloud-optimised GeoTIFF rather than parsing a tag, and a new optional
+dependency to do it) and they land together.
+
+---
+
+## 2026-08-10 — Step 2.2b: fetch the corridor from OSM
 
 **Delivered:** `roadrisk.geo.osm` — a road reference and a bounding box in, an assembled
 centreline out. No more manual QGIS export.

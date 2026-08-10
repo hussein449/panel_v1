@@ -102,7 +102,10 @@ factors:
       - name: osm_graph_nodes
         tier: A
         licence: ODbL
-        notes: Nodes of degree >= 3 per km of centreline. Pure graph computation.
+        notes: >
+          Nodes of degree >= 3 per km of centreline, counting through-traffic classes
+          only. Slip roads go to ramp_density and driveways to access_density, so the
+          three counts partition the features between them. Pure graph computation.
 
   - name: access_density
     label: Access and driveway density (per km)
@@ -138,6 +141,11 @@ factors:
       and the conversion is already inside the weight — do not convert the column too.
       Known collinearity with ramp_density on the M51 (r = 0.365) — both measure
       access. The VIF gate exists partly for this pair.
+      SCOPE: driveways and service roads only. Minor public roads joining the corridor
+      are counted by junction_density instead. The two definitions partition the
+      highway classes between them so no feature is counted twice — counting a
+      residential T-junction as both an access and a junction would make the two
+      columns collinear by construction rather than by accident.
     adapters:
       - name: client_inventory
         tier: D
@@ -145,7 +153,7 @@ factors:
       - name: osm_service_driveway
         tier: A
         licence: ODbL
-        notes: service=driveway plus minor-road joins per km.
+        notes: highway=service and highway=track within 25 m of the centreline, per km.
 
   - name: curve_density
     label: Curve density (curves per km)

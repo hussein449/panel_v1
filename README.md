@@ -14,7 +14,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 | Stage | State |
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
-| **Stage 2 — geospatial pipeline** | Geometry path built: corridor, linear referencing, segmentation, panel skeleton, crash snapping, curvature. Routing and the network-dependent adapters outstanding. |
+| **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, and twelve Tier A factors behind one adapter contract. DEM grade, the raster context layers, fusion, Tier B and persistence outstanding. |
 | Stage 3 — model depth (GLMM, GAM, Bayesian) | Not started |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
@@ -73,6 +73,18 @@ table with `latitude`, `longitude` and `period`:
 ```bash
 roadrisk corridor centreline.csv --crashes crashes.csv --out runs/corridor-01
 ```
+
+Add `--osm` to fetch the road's own attributes and its conflict-point densities:
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --osm
+```
+
+That takes the panel from two factor columns to twelve — speed limit, lanes, lighting,
+surface, footway and median from the way tags; junction, access, ramp and POI density
+from the graph — each printed with the adapter, tier, licence and coverage behind it.
+Every factor OSM could not support is listed separately, with the coverage that failed.
+Without `--osm` the pipeline never touches the network.
 
 ### Getting a centreline
 
@@ -164,6 +176,18 @@ automatically — the factor alone, the factor alongside each correlated partner
 correlation matrix, leave-one-unit-out — and the written verdict states plainly that the
 term is not interpretable as causal.
 
+**An adapter cannot declare its own provenance.** A source module names the registry slot
+it fills; the tier and licence attached to its values come from *that declaration*. So no
+adapter can promote itself to Tier A or attach a licence the registry never agreed to —
+and those are exactly the claims a client relies on.
+
+**A missing tag is not a zero.** OSM `lit` is absent on most of the target market's
+roads. Reading absence as "unlit" would manufacture a lighting effect out of mapper
+attention, pointing the direction the registry expects. So a factor is emitted only where
+every unit has direct evidence and at least half the corridor is tagged; otherwise it is
+reported as absent, with the coverage that failed. Nothing is imputed from a neighbouring
+unit.
+
 **Nothing is silent.** Every gate result, descent, dropped term and absent column is
 recorded in the run log and travels to the report. Degrade loudly.
 
@@ -198,6 +222,12 @@ src/roadrisk/
 │   ├── snapping.py          crashes onto the corridor, every drop given a reason
 │   ├── geometry.py          curvature, computed from the centreline alone
 │   ├── osm.py               fetch a corridor by road ref; stitch, bridge, gate
+│   ├── adapters/            one factor, one source, one tier, one licence
+│   │   ├── base.py          the contract — provenance read from the registry
+│   │   ├── curvature.py     alignment; same maths, provenance depends on the line
+│   │   ├── osmdata.py       one Overpass call along the corridor, parsed
+│   │   ├── osm_tags.py      speed, lanes, lighting, surface, footway, median
+│   │   └── osm_density.py   junctions, accesses, ramps, roadside POIs per km
 │   └── pipeline.py          the orchestrator
 ├── demo.py                  synthetic panels for tests and demonstration
 └── cli.py                   mode banner, refusal receipt, descent receipt
