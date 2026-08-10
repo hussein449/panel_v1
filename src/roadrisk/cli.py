@@ -214,6 +214,172 @@ def demo(
 
 
 @app.command()
+def corridor(
+    centreline_path: Annotated[
+        Path | None,
+        typer.Argument(
+            metavar="CENTRELINE",
+            help="CSV of ordered centreline vertices with latitude/longitude columns.",
+        ),
+    ] = None,
+    crashes_path: Annotated[
+        Path | None,
+        typer.Option("--crashes", help="Crash CSV with latitude, longitude and period."),
+    ] = None,
+    demo_corridor: Annotated[
+        bool,
+        typer.Option("--demo", help="Use a synthetic corridor instead of a file."),
+    ] = False,
+    unit_length_m: Annotated[
+        float, typer.Option("--unit-length", help="Target segment length in metres.")
+    ] = 500.0,
+    tolerance_m: Annotated[
+        float, typer.Option("--tolerance", help="Crash snapping tolerance in metres.")
+    ] = 30.0,
+    n_periods: Annotated[
+        int, typer.Option("--periods", help="Number of monthly periods to build.")
+    ] = 24,
+    facility_type: FacilityOption = FacilityType.ANY,
+    region: RegionOption = Region.GLOBAL,
+    severity: SeverityOption = Severity.ALL,
+    out_dir: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Directory for the run record.")
+    ] = None,
+) -> None:
+    """Build a panel from a corridor centreline, then assess it.
+
+    Geography produces the panel; the engine judges it. Zero-crash rows exist because
+    road exists, which is what makes Mode A admissible at all.
+    """
+    try:
+        from roadrisk.geo import build_corridor_panel
+        from roadrisk.geo.demo import (
+            monthly_periods,
+            synthetic_centreline,
+            synthetic_crashes,
+        )
+    except ModuleNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(EXIT_REJECTED) from exc
+
+    periods = monthly_periods(n_periods)
+
+    if demo_corridor:
+        points = synthetic_centreline(length_km=10.0)
+        crashes = synthetic_crashes(points, periods, n_crashes=900)
+        console.print(
+            "[dim]Synthetic corridor — 10 km, tightening bends, and a crash table "
+            "with the defects a real police extract has.[/dim]\n"
+        )
+    elif centreline_path is None:
+        console.print(
+            "[red]Supply a CENTRELINE csv, or pass --demo for a synthetic one.[/red]"
+        )
+        raise typer.Exit(EXIT_REJECTED)
+    else:
+        points, crashes = _read_corridor_inputs(centreline_path, crashes_path)
+
+    try:
+        built = build_corridor_panel(
+            points,
+            periods=periods,
+            name=centreline_path.stem if centreline_path else "demo",
+            crashes=crashes,
+            target_length_m=unit_length_m,
+            tolerance_m=tolerance_m,
+        )
+    except RoadRiskError as exc:
+        _print_rejection(exc)
+        raise typer.Exit(EXIT_REJECTED) from exc
+
+    _render_corridor(built)
+
+    assessment = assess(
+        built.panel,
+        snap=built.snap,
+        context=RunContext(
+            facility_type=facility_type, region=region, severity=severity
+        ),
+    )
+    _render(assessment)
+
+    if out_dir is not None:
+        _write_run(assessment, out_dir)
+        built.panel.to_csv(out_dir / "panel.csv", index=False)
+        if built.snap_detail is not None:
+            built.snap_detail.to_csv(out_dir / "snap_detail.csv", index=False)
+        console.print(f"\n[dim]Run record and panel written to {out_dir}[/dim]")
+
+
+def _read_corridor_inputs(
+    centreline_path: Path,
+    crashes_path: Path | None,
+) -> tuple[list[tuple[float, float]], pd.DataFrame | None]:
+    try:
+        frame = pd.read_csv(centreline_path)
+    except OSError as exc:
+        console.print(f"[red]Cannot read {centreline_path}: {exc}[/red]")
+        raise typer.Exit(EXIT_REJECTED) from exc
+
+    missing = [c for c in ("latitude", "longitude") if c not in frame.columns]
+    if missing:
+        console.print(
+            f"[red]{centreline_path} is missing column(s): {', '.join(missing)}[/red]"
+        )
+        raise typer.Exit(EXIT_REJECTED)
+
+    points = list(
+        zip(frame["latitude"].tolist(), frame["longitude"].tolist(), strict=True)
+    )
+
+    crashes = None
+    if crashes_path is not None:
+        try:
+            crashes = pd.read_csv(crashes_path)
+        except OSError as exc:
+            console.print(f"[red]Cannot read {crashes_path}: {exc}[/red]")
+            raise typer.Exit(EXIT_REJECTED) from exc
+
+    return points, crashes
+
+
+def _render_corridor(built) -> None:
+    console.print(
+        Panel(built.summary(), title="Corridor built", border_style="cyan")
+    )
+
+    table = Table(box=None, show_header=False, pad_edge=False)
+    table.add_column(style="dim")
+    table.add_column()
+    table.add_row("Length", f"{built.corridor.length_km:.2f} km")
+    table.add_row("Units", f"{built.n_units:,}")
+    table.add_row("Projection", f"EPSG:{built.corridor.epsg}")
+    table.add_row("Factors derived", ", ".join(built.factor_columns) or "none")
+    if built.snap is not None:
+        reasons = ", ".join(
+            f"{k} {v:,}" for k, v in built.snap.dropped_reasons.items()
+        )
+        table.add_row(
+            "Snapped",
+            f"{built.snap.n_snapped:,} of {built.snap.n_supplied:,} "
+            f"({built.snap.snap_rate:.1%})",
+        )
+        table.add_row("Dropped", reasons or "none")
+    console.print(table)
+    console.print()
+
+    if built.warnings:
+        console.print(
+            Panel(
+                "\n\n".join(f"• {w}" for w in built.warnings),
+                title="Geometry notes",
+                border_style="yellow",
+            )
+        )
+        console.print()
+
+
+@app.command()
 def version() -> None:
     """Print the engine version."""
     console.print(__version__)

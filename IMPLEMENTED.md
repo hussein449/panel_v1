@@ -5,7 +5,94 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Mode B decomposed by crash type
+## 2026-08-10 (latest) — Stage 2: the geometry path
+
+**Delivered:** `roadrisk.geo` — coordinates in, contract-valid panel out. The seam
+between Stage 2 and Stage 1 is closed: geography produces the panel, the engine judges
+it, and neither knows how the other works.
+
+**Verified:** 249 tests pass (51 new), `ruff check` clean.
+
+```bash
+roadrisk corridor --demo --facility-type rural_two_lane --region middle_east --severity injury
+```
+
+```
+demo: 10.84 km in 22 units, 528 panel rows, 772 crashes, 123 zero-crash rows
+Snapped   772 of 900 (85.8%)
+Dropped   beyond_tolerance 65, missing_coordinates 31, period_not_in_panel 32
+🟢 MODE A — FITTED FROM YOUR DATA · 2 factors · 772 crashes
+```
+
+### Layering
+
+`geo` imports `core`; `core` never imports `geo`. The geospatial dependencies are an
+**optional extra** (`pip install "roadrisk-panel[geo]"`) so the engine stays installable
+and runnable with nothing but pandas and statsmodels. Importing `roadrisk.geo` without
+them raises a message naming the extra rather than a bare `ModuleNotFoundError`.
+
+### Re-ordered on purpose
+
+PostGIS was step 2.1 and is now 2.9. A 100 km corridor fits in memory comfortably, and
+persistence is a Stage 5 concern. Doing the geometry in memory first reached the engine
+in one pass instead of stalling behind a migration.
+
+### What was built
+
+- **`crs.py`** — UTM projection. All geometry is metric; doing it in degrees produces
+  segment lengths wrong by a latitude-dependent factor, which would poison exposure.
+  Public signatures always name `latitude`/`longitude` because positional pairs invite
+  the (lat, lon) versus (lon, lat) error.
+- **`corridor.py`** — linear referencing and the structural gates. Rejects fewer than
+  two distinct points, corridors under 100 m, and vertex sets that collapse. A
+  self-intersecting centreline is **warned about, not rejected** — it is legal geometry
+  with ambiguous linear referencing near the crossing.
+- **`segmentation.py`** — fixed-length units with continuity asserted explicitly rather
+  than trusted. A trailing offcut below half the target is merged into the previous
+  unit; without that rule a 502 m corridor yields a 2 m unit whose exposure is near
+  zero and whose rate, if anything lands on it, is absurd.
+- **`panel.py`** — the skeleton. Zero-crash rows exist because road exists.
+- **`snapping.py`** — every crash that does not land is counted with a reason. This is
+  what finally **activates gate check 6**, which has been reporting "skipped, not
+  measured" since it was written.
+- **`geometry.py`** — curvature, the first Tier A adapter. Pure computation, no network.
+- **`pipeline.py`** — the orchestrator.
+
+### Curvature is verified against known shapes
+
+The circumradius is exact, so it can be tested rather than eyeballed: circles of radius
+100 / 500 / 900 / 2000 m are recovered to within 1e-6, and a straight line caps. Curve
+*density* counts runs, not bendy samples — a 300 m sweeping bend is one curve, not
+fifteen, or the metric would measure sampling rate.
+
+### A real limitation the tests found
+
+The plan was "resample the centreline so curvature does not depend on digitisation".
+The test asserting that **failed**, and it was right to.
+
+Resampling removes the dependence on lines traced *more* finely than the measurement
+interval — that part works. But it cannot rescue a line traced *coarsely*: the chords
+have already cut the corners, and resampling interpolates along them, producing
+near-straight runs meeting at artificially sharp joints. Curvature then reads far
+tighter than the real road.
+
+So the module measures the source vertex spacing and says so. An under-sampled
+centreline gets a prominent warning telling the reader not to trust the number and what
+to do about it. The test now asserts both halves — that extra vertices change nothing,
+and that an under-sampled line is detected.
+
+### What is not built
+
+- **Routing** (2.2b). `Corridor` takes a centreline that is already resolved — from a
+  GPX trace, a shapefile, or a routing engine. Turning two coordinates into a centreline
+  constrained to a named road needs the OSM graph.
+- **Every other Tier A adapter** — DEM grade, OSM tags, junction/access/ramp density,
+  POI, land cover. These need network access and per-source handling.
+- **Fusion, Tier B, PostGIS, caching.**
+
+Until the adapters land, a corridor panel carries two factor columns. Both feed
+registry factors that already have cited weights, so the loop closes — but Mode B on a
+real corridor will stay thin until 2.6 is finished.
 
 **Delivered:** the index no longer flattens crash types into one number. It scores each
 crash type separately and combines them with a cited distribution.

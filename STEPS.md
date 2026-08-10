@@ -43,17 +43,30 @@ This is the part that has to be right. It is pure Python over a dataframe.
 
 Turns two coordinates into the panel that Stage 1 consumes. Steps 1–6 of the pipeline brief.
 
+**Re-ordered deliberately.** PostGIS was 2.1; it is now 2.9. A 100 km corridor fits in
+memory comfortably, and persistence is a Stage 5 concern. Doing the geometry in memory
+first got the pipeline to the engine in one pass instead of behind a migration.
+
+Everything below runs with **no network and no API key**. That is not a limitation
+being worked around — it is the shape of the product.
+
 | | Step | Deliverable | Done when |
 |---|---|---|---|
-| `[ ]` | **2.1** PostGIS schema | Corridors, units, panel, crashes, factor values, runs | Migrations apply clean |
-| `[ ]` | **2.2** Corridor resolve | Snap two coords to the OSM graph, route constrained to road `ref`, linear reference | Rejects a route that leaves the named road |
-| `[ ]` | **2.3** Segmentation | Cut to homogeneous units — fixed length or break at junctions / class changes | Chainage is continuous, no gaps or overlaps |
-| `[ ]` | **2.4** Panel skeleton | `unit_id × period × time_slot`, `n_crashes` initialised to 0 | Zero rows exist by construction, never from the crash table |
-| `[ ]` | **2.5** Crash snapping | Project crashes to centreline within tolerance, chainage → unit, timestamp → period | Reports how many snapped, how many dropped, and why |
-| `[ ]` | **2.6** Tier A adapters | OSM tags, curvature, DEM grade, junction / access / ramp density, POI, land cover | Each returns value + source + tier + licence |
-| `[ ]` | **2.7** Fusion + agreement | Highest-priority adapter wins; agreement score where two sources overlap | Confidence tier emitted per factor per unit |
+| `[x]` | **2.2a** Corridor + linear reference | `Corridor.from_latlon`, UTM projection, chainage, structural gates | A corridor that cannot be linearly referenced is rejected, not silently used |
+| `[ ]` | **2.2b** Route from two coordinates | Snap to the OSM graph, route constrained to road `ref` | Rejects a route that leaves the named road |
+| `[x]` | **2.3** Segmentation | Fixed-length units, chainage continuous and exhaustive, trailing runt merged | No gaps, no overlaps, unit lengths sum to the corridor |
+| `[x]` | **2.4** Panel skeleton | `unit_id × period × time_slot`, `n_crashes` initialised to 0 | Zero rows exist by construction; skeleton passes the input contract |
+| `[x]` | **2.5** Crash snapping | Project to centreline within tolerance, chainage → unit, period → cell | Every drop counted with a reason; `SnapReport` activates gate check 6 |
+| `[~]` | **2.6** Tier A adapters | Curvature **done** (no network). Grade from DEM, OSM tags, junction/access/ramp density, POI, land cover outstanding | Each returns value + source + tier + licence |
+| `[ ]` | **2.7** Fusion + agreement | Highest-priority adapter wins; agreement where two sources overlap | Confidence tier emitted per factor per unit |
 | `[ ]` | **2.8** Tier B adapters | Mapillary detections, graph centrality traffic proxy | Never labelled `aadt` |
-| `[ ]` | **2.9** Geographic cache | Content-addressed by adapter + quantised bbox + params | Second corridor in the same country hits cache |
+| `[ ]` | **2.9** PostGIS + geographic cache | Persistence, and content-addressed caching by adapter + quantised bbox | Second corridor in the same country hits cache |
+
+**Try it:**
+
+```bash
+roadrisk corridor --demo --facility-type rural_two_lane --region middle_east --severity injury
+```
 
 ---
 

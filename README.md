@@ -14,7 +14,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 | Stage | State |
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
-| Stage 2 — geospatial pipeline | Not started |
+| **Stage 2 — geospatial pipeline** | Geometry path built: corridor, linear referencing, segmentation, panel skeleton, crash snapping, curvature. Routing and the network-dependent adapters outstanding. |
 | Stage 3 — model depth (GLMM, GAM, Bayesian) | Not started |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
@@ -55,10 +55,23 @@ To see the declared factors and their weight status:
 roadrisk registry
 ```
 
+To build a panel from a corridor centreline and assess it in one go:
+
+```bash
+roadrisk corridor --demo --facility-type rural_two_lane --region middle_east --severity injury
+```
+
 To assess a real panel:
 
 ```bash
 roadrisk assess panel.csv --out runs/corridor-01
+```
+
+To run a real corridor — a CSV of ordered `latitude`,`longitude` vertices, plus a crash
+table with `latitude`, `longitude` and `period`:
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --out runs/corridor-01
 ```
 
 ## Use as a library
@@ -145,12 +158,25 @@ src/roadrisk/
 │   ├── signguard.py         expected_sign enforcement and follow-up diagnostics
 │   ├── runlog.py            append-only event log, reproducibility manifest
 │   └── engine.py            the one entry point
+├── geo/                     geography → panel. Optional extra; core never imports it
+│   ├── crs.py               UTM projection — all geometry is metric, never degrees
+│   ├── corridor.py          linear referencing and the structural gates
+│   ├── segmentation.py      fixed-length units, continuity asserted not assumed
+│   ├── panel.py             the skeleton — zero rows exist because road exists
+│   ├── snapping.py          crashes onto the corridor, every drop given a reason
+│   ├── geometry.py          curvature, computed from the centreline alone
+│   └── pipeline.py          the orchestrator
 ├── demo.py                  synthetic panels for tests and demonstration
 └── cli.py                   mode banner, refusal receipt, descent receipt
 ```
 
 `core/` never imports the layers above it. That rule paid for itself in the M51 panel and
-carries over unchanged.
+carries over unchanged — and it is why the geospatial dependencies are an optional extra
+rather than a hard requirement:
+
+```bash
+pip install "roadrisk-panel[geo]"      # only needed for the pipeline
+```
 
 ## The input contract
 

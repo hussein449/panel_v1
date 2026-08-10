@@ -17,9 +17,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The geospatial pipeline. Deliberately NOT a core dependency: `roadrisk.core` must
+# stay installable and runnable with nothing but pandas/statsmodels, so the method
+# remains testable independently of the machinery that feeds it.
+geo = [
+    "shapely>=2.0",
+    "pyproj>=3.6",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "roadrisk-panel[geo]",
 ]
 
 [project.scripts]
