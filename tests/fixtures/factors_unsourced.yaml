@@ -1,0 +1,32 @@
+# TEST FIXTURE — a registry where nothing carries a citation.
+#
+# Exists to prove that Mode B refuses outright when there is no cited weight to rank
+# with. Once the shipped registry gained sourced weights it could no longer test that
+# path, and the path still matters: a client's own registry may cite nothing.
+
+version: "test-unsourced-0.1.0"
+
+factors:
+  - name: curve_density
+    label: Curve density (curves per km)
+    column: curve_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 85
+    missing_behaviour: Horizontal alignment leaves the model.
+    adapters:
+      - name: osm_geometry
+        tier: A
+        licence: ODbL
+
+  - name: junction_density
+    label: Junction density (per km)
+    column: junction_density
+    transform: ln1p
+    expected_sign: "+"
+    drop_priority: 95
+    missing_behaviour: Conflict-point exposure is lost.
+    adapters:
+      - name: osm_graph_nodes
+        tier: A
+        licence: ODbL

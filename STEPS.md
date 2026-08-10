@@ -104,10 +104,19 @@ Turns two coordinates into the panel that Stage 1 consumes. Steps 1–6 of the p
 
 Things that need a human call, not a code change.
 
-1. **Mode B default weights are unsourced.** The registry ships with `default_weight: null`
-   and Mode B refuses to score. Populating them is literature work — HSM CMFs, iRAP tables —
-   and each one needs a citation in `source`. This is deliberate: an uncited weight is the
-   liability the brief warns about. **Blocks Step 1.4 from being useful, not from being correct.**
+1. ~~**Mode B default weights are unsourced.**~~ **PARTLY RESOLVED, 2026-08-10.** Six of
+   twenty factors now carry weights derived from the AASHTO HSM and the Elvik Power
+   Model, each computed by `tools/derive_weights.py` and documented in
+   [`docs/WEIGHTS.md`](docs/WEIGHTS.md). Mode B scores. The remaining fourteen are
+   absent from the index, not weighted zero, and the report names them.
+   **Three follow-ups:**
+   - Verify the HSM equations against a licensed copy of the printed manual. They were
+     read from the NCHRP draft text of the 2nd edition and checked against its own
+     worked examples, which is good but is not the book.
+   - `speed_limit` (+1.6) is an upper bound — the Power Model exponent applies to
+     operating speed, not posted limit. Recalibrating against measured speed is the
+     highest-value single improvement available to Mode B.
+   - `median_present` and `curve_density` are the next sourceable candidates.
 2. **Second corridor.** Still the critical path. Pick one where access density and ramp
    density separate — the M51 ramp/RAF inversion is not diagnosable on a single corridor.
 3. **Rung 4 engine.** PyMC/NumPyro keeps one language; R + INLA is materially faster for

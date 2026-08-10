@@ -2,10 +2,29 @@
 
 from __future__ import annotations
 
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+
 import pytest
 
 from roadrisk.core.errors import RegistryError
 from roadrisk.core.registry import Registry, Sign, parse_registry
+
+DERIVE_SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "derive_weights.py"
+
+
+def _load_derivation_module() -> ModuleType:
+    """Import tools/derive_weights.py, which is a script rather than a package."""
+    if "derive_weights" in sys.modules:
+        return sys.modules["derive_weights"]
+    spec = importlib.util.spec_from_file_location("derive_weights", DERIVE_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["derive_weights"] = module
+    spec.loader.exec_module(module)
+    return module
 
 MINIMAL = """
 version: "test"
@@ -38,9 +57,61 @@ class TestShippedRegistry:
         assert shipped_registry.version
         assert len(shipped_registry.factors) >= 10
 
-    def test_every_weight_is_unsourced(self, shipped_registry: Registry) -> None:
-        """Deliberate. Mode B must refuse until the weights carry citations."""
-        assert len(shipped_registry.unsourced()) == len(shipped_registry.factors)
+    def test_some_weights_are_sourced_and_some_are_not(
+        self, shipped_registry: Registry
+    ) -> None:
+        """Partial coverage is the expected state, not a defect."""
+        sourced = [f for f in shipped_registry.factors if f.is_sourced]
+        assert sourced, "expected at least one cited weight"
+        assert shipped_registry.unsourced(), "expected some factors still uncited"
+
+    def test_every_weight_carries_a_citation(self, shipped_registry: Registry) -> None:
+        """The invariant that matters — a weight without a source must not exist."""
+        for factor in shipped_registry.factors:
+            if factor.default_weight is not None:
+                assert factor.weight_source, factor.name
+
+    def test_citations_name_a_document_not_just_a_number(
+        self, shipped_registry: Registry
+    ) -> None:
+        for factor in shipped_registry.factors:
+            if not factor.is_sourced:
+                continue
+            source = str(factor.weight_source)
+            assert any(
+                token in source for token in ("HSM", "TOI", "FHWA", "Elvik")
+            ), f"{factor.name} citation names no recognisable source: {source!r}"
+
+    def test_registry_weights_match_the_derivation_script(
+        self, shipped_registry: Registry
+    ) -> None:
+        """The registry must not drift from the arithmetic that produced it.
+
+        Every sourced weight is computed in tools/derive_weights.py from a published
+        equation. If someone hand-edits a weight, this fails.
+        """
+        derivations = _load_derivation_module()
+        computed = {
+            derive().factor: derive().weight for derive in derivations.DERIVATIONS
+        }
+
+        for name, weight in computed.items():
+            declared = shipped_registry.by_name(name).default_weight
+            assert declared is not None, f"{name} is derived but not set in the registry"
+            assert abs(declared - weight) < 5e-5, (
+                f"{name}: registry has {declared}, derivation gives {weight:.6f}"
+            )
+
+    def test_derived_weights_agree_with_their_declared_signs(
+        self, shipped_registry: Registry
+    ) -> None:
+        derivations = _load_derivation_module()
+        for derive in derivations.DERIVATIONS:
+            result = derive()
+            factor = shipped_registry.by_name(result.factor)
+            expected = 1 if factor.expected_sign is Sign.POSITIVE else -1
+            observed = 1 if result.weight > 0 else -1
+            assert observed == expected, result.factor
 
     def test_carries_its_own_checksum(self, shipped_registry: Registry) -> None:
         assert shipped_registry.sha256

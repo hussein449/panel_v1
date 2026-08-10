@@ -7,14 +7,29 @@
 # ---------------------------------------------------------------------------------
 # ON default_weight
 #
-# Every factor below ships with `default_weight: null`. That is deliberate, not an
-# oversight. Mode B applies published weights and must cite each one; an uncited
-# weight is the exact liability the brief warns about. The engine REFUSES to run
-# Mode B until a weight and its `weight_source` are both present.
+# Mode B applies published weights and must cite each one; an uncited weight is a
+# liability. The engine REFUSES to run Mode B until both `default_weight` and
+# `weight_source` are present, so a factor with no citation simply does not
+# participate — it is never silently given a weight of zero or one.
 #
-# Populating these is literature work — HSM Crash Modification Factors, iRAP tables,
-# or a named peer-reviewed source per factor. Until then Mode B is correct but not
-# yet useful, and Mode A is unaffected because it estimates its own coefficients.
+# Six factors are currently sourced, all from the AASHTO Highway Safety Manual or
+# the Elvik Power Model. Every one of those weights is COMPUTED, not chosen: run
+#
+#     python tools/derive_weights.py
+#
+# to regenerate them from the published equations. Full working, including each
+# equation verbatim and every assumption made to convert a CMF into a log-scale
+# weight, is in docs/WEIGHTS.md.
+#
+# THE TRANSFER PROBLEM: every HSM weight below was estimated on US rural two-lane
+# two-way highways. Applying them to Lebanon, MENA or South Asia is an
+# extrapolation and is the largest source of error in Mode B. It is defensible only
+# because Mode B is an ordinal RANKING — a common scaling error moves every unit
+# together and leaves the order intact. It would not be defensible for a predicted
+# count, which is one reason the engine refuses to emit one.
+#
+# The remaining factors stay unsourced until a citable weight exists for each.
+# Mode A is unaffected throughout — it estimates its own coefficients.
 # ---------------------------------------------------------------------------------
 #
 # ON expected_sign
@@ -94,13 +109,23 @@ factors:
     transform: ln1p
     expected_sign: "+"
     drop_priority: 90
-    default_weight: null
-    weight_source: null
+    default_weight: 0.1658
+    weight_source: >
+      AASHTO HSM Eq. 10-17 (driveway density, rural two-lane two-way segments;
+      derived from Muskaug). Log-linearised against ln1p over 3-20 accesses/km at a
+      reference AADT of 10,000 — the value used in the HSM's own worked example.
+      R2 = 0.965. Working: tools/derive_weights.py, docs/WEIGHTS.md.
     missing_behaviour: >
       Frequently the strongest non-exposure term, and frequently omitted by
       competitors because it is expensive to survey. Free here. Losing it inflates
       junction_density and the roadside activity terms.
     notes: >
+      UNITS: accesses per KILOMETRE, counting both sides. The HSM equation is per
+      mile and the conversion is already inside the derived weight — do not convert
+      the column as well.
+      The source CMF depends on AADT, which Mode B does not have; the reference
+      value above is an assumption, not a measurement. The AADT term is weak, since
+      it enters only as 0.05 - 0.005 x ln(AADT).
       Known collinearity with ramp_density on the M51 (r = 0.365) — both measure
       access. The VIF gate exists partly for this pair.
     adapters:
@@ -143,16 +168,27 @@ factors:
     transform: ln
     expected_sign: "+"
     drop_priority: 80
-    default_weight: null
-    weight_source: null
+    default_weight: 1.6
+    weight_source: >
+      Elvik (2009), Power Model, TOI Report 1034/2009 — exponent 1.6 for all injury
+      accidents on rural roads and freeways, as reproduced in FHWA-HRT-17-098
+      Chapter 2, Table 1. The Power form N ∝ V^k gives beta = k directly under a ln
+      transform, so this weight is exact rather than fitted.
+      Working: tools/derive_weights.py, docs/WEIGHTS.md.
     missing_behaviour: >
       The suppressor is lost. On M51, adding speed doubled the curvature coefficient
       rather than shrinking it — without speed, curvature reads weaker than it is.
     notes: >
-      This is POSTED, not operating speed. Posted is often constant along a corridor
-      and will not capture "drivers slow on this curve". Operating (85th percentile)
-      speed is a separate factor and a paid Tier C input. Do not conflate them in the
-      report.
+      WEIGHT IS AN UPPER BOUND. The Power Model relates MEAN OPERATING SPEED to
+      crashes; this column is POSTED limit. Posted moves operating speed by
+      materially less than 1:1, so 1.6 overstates this term and inflates it relative
+      to the other five. It is the largest and least certain weight in the registry.
+      Recalibrate against measured operating speed (Tier C) at the first opportunity.
+      If a panel counts FATAL crashes rather than injury crashes the exponent is 4.1,
+      not 1.6 — the weight is severity-specific and the registry currently assumes
+      injury crashes.
+      Posted limit is also often constant along a corridor, in which case the
+      variance check drops it before it reaches the model at all.
     adapters:
       - name: client_speed_survey
         tier: D
@@ -168,9 +204,19 @@ factors:
     transform: ln1p
     expected_sign: "+"
     drop_priority: 75
-    default_weight: null
-    weight_source: null
+    default_weight: 0.1212
+    weight_source: >
+      AASHTO HSM Table 10-11 (grades, rural two-lane two-way segments): CMF 1.00 /
+      1.10 / 1.16 for <=3%, 3-6%, >6%. Log-linearised against ln1p using band
+      midpoints 1.5 / 4.5 / 7.5 percent. R2 = 1.000, but on three points only — the
+      fit statistic is not evidence here, the source table is.
+      Working: tools/derive_weights.py, docs/WEIGHTS.md.
     missing_behaviour: Vertical alignment leaves the model.
+    notes: >
+      UNITS: ABSOLUTE grade in percent. HSM Table 10-11 does not distinguish
+      upgrade from downgrade, so neither does this weight.
+      The steep band is unbounded above and 7.5% was chosen to represent it; a
+      corridor with sustained grades well above 8% is under-weighted by this term.
     adapters:
       - name: client_survey
         tier: D
@@ -229,12 +275,21 @@ factors:
     transform: identity
     expected_sign: "+"
     drop_priority: 60
-    default_weight: null
-    weight_source: null
+    default_weight: 0.0668
+    weight_source: >
+      AASHTO HSM Eq. 10-20 (roadside design, rural two-lane two-way segments; RHR
+      scale of Zegeer et al., CMF from Harwood et al.). The equation is already
+      log-linear — ln(CMF) = 0.0668 x (RHR - 3) — so the weight is exact, with no
+      linearisation and no assumptions beyond the scale itself. The cleanest weight
+      in the registry. Working: tools/derive_weights.py, docs/WEIGHTS.md.
     missing_behaviour: >
       Run-off-road severity drivers are unrepresented. This is the factor iRAP
       charges 50-200 USD/km of survey vehicle to obtain.
     notes: >
+      UNITS: the HSM roadside hazard rating scale, integer 1 (best) to 7 (worst),
+      base condition 3. The weight is meaningless on any other scale — a vision
+      model emitting its own 0-1 hazard score MUST be mapped onto RHR first, and
+      that mapping is itself a modelling decision that belongs in the report.
       Derived from street-level imagery. Mapillary is CC-BY-SA — share-alike applies
       to a redistributed derived database, not to a report with attribution. Never
       use Google Street View for this; the Maps Platform ToS forbids deriving a
@@ -260,10 +315,20 @@ factors:
     transform: ln
     expected_sign: "-"
     drop_priority: 55
-    default_weight: null
-    weight_source: null
+    default_weight: -0.1855
+    weight_source: >
+      AASHTO HSM Eq. 10-13 (horizontal curves, rural two-lane two-way segments;
+      regression model of Zegeer et al.). Log-linearised against ln over radii of
+      50-1600 m, assuming a 0.5 km segment fully in curve with no spiral transition.
+      R2 = 0.878 — the weakest fit of the six, because a 1 + c/R relationship is only
+      roughly log-linear. Working: tools/derive_weights.py, docs/WEIGHTS.md.
     missing_behaviour: Curve severity is lost; curve_density still carries frequency.
     notes: >
+      UNITS: minimum radius in METRES. The HSM equation is in feet; the conversion
+      is already inside the derived weight.
+      THIS WEIGHT IS TIED TO THE SEGMENTATION LENGTH. HSM Eq. 10-13 depends on curve
+      length, so the 0.5 km assumption is baked in. Change the segmentation and this
+      weight must be regenerated.
       Adapter must cap radius on tangent sections — a straight has infinite radius
       and ln() will reject it. Cap at the corridor design maximum, and record the cap
       in the run log so the ceiling is visible in the report.
@@ -307,12 +372,22 @@ factors:
     transform: identity
     expected_sign: "-"
     drop_priority: 45
-    default_weight: null
-    weight_source: null
+    default_weight: -0.0817
+    weight_source: >
+      AASHTO HSM Eq. 10-21 (lighting) with Table 10-12 defaults for roadway type 2U
+      (p_inr = 0.382, p_pnr = 0.618, p_nr = 0.370); underlying research Elvik and
+      Vaa. A fully lit segment gives CMF = 0.9216, so the weight is ln(0.9216),
+      exact. Working: tools/derive_weights.py, docs/WEIGHTS.md.
     missing_behaviour: >
       Night risk is carried entirely by night_ratio, which cannot distinguish a lit
       corridor from an unlit one.
     notes: >
+      UNITS: proportion of the segment that is lit, 0 to 1. The weight scales
+      linearly between unlit and fully lit.
+      HSM Table 10-12 night-crash proportions are Washington State HSIS data
+      2002-2006. Night-crash share varies enormously by country and these should be
+      replaced with local proportions wherever they exist — this is a cheap and
+      high-value local calibration.
       OSM `lit` is badly under-tagged in most of the target market. Cross-validate
       against VIIRS night lights and report the disagreement rather than assuming the
       absent tag means unlit.

@@ -5,6 +5,78 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
+## 2026-08-10 — Mode B weights sourced; Mode B now scores
+
+**Delivered:** six of twenty registry factors now carry weights derived from published
+crash modification factors, so Mode B produces a ranking instead of refusing. Full
+sourcing, every equation verbatim and every assumption named, in
+[`docs/WEIGHTS.md`](docs/WEIGHTS.md).
+
+**Verified:** 120 tests pass, `ruff check` clean, `roadrisk demo --crash-rows-only` now
+scores 120 units on four cited terms.
+
+| Factor | Transform | Weight | Fit | Source |
+|---|---|---|---|---|
+| `speed_limit` | `ln` | +1.6000 | exact | Elvik (2009) Power Model, TØI 1034/2009 |
+| `access_density` | `ln1p` | +0.1658 | R² 0.965 | HSM Eq. 10-17 |
+| `grade_pct` | `ln1p` | +0.1212 | R² 1.000 | HSM Table 10-11 |
+| `curve_radius_min` | `ln` | −0.1855 | R² 0.878 | HSM Eq. 10-13 |
+| `lit` | `identity` | −0.0817 | exact | HSM Eq. 10-21 + Table 10-12 |
+| `roadside_hazard_score` | `identity` | +0.0668 | exact | HSM Eq. 10-20 |
+
+### Not one of these numbers was chosen
+
+`tools/derive_weights.py` computes every weight from the published equation, and a test
+(`test_registry_weights_match_the_derivation_script`) fails if the registry drifts from
+the script. Hand-editing a weight is now a test failure, not a silent change.
+
+The conversion problem is real and worth stating: published CMFs are multipliers on an
+SPF that already contains AADT, while the registry needs log-scale coefficients on
+transformed columns. Two of the six were already log-linear and converted exactly; four
+required fitting `ln(CMF)` against the declared transform over a stated range, with R²
+reported so a weak linearisation is visible.
+
+Weights had to land on the Mode A coefficient scale, not a standardised one. That is
+what makes *"Mode B is the prior, Mode A is that prior updated by data"* a fact about
+the code rather than a slogan.
+
+### Three honest caveats, all recorded in the registry itself
+
+1. **The equations were read from the NCHRP draft text of the HSM 2nd edition**, not
+   from a licensed copy of the printed AASHTO manual. Each was checked against the
+   worked examples in that same document and reproduces the published answers exactly —
+   good evidence, but not the book. Verify before a paying client sees output.
+2. **`speed_limit` = +1.6 is an upper bound.** The Power Model relates *operating* speed
+   to crashes; the column is *posted* limit, which moves operating speed by much less
+   than 1:1. It is the largest and least certain weight in the registry.
+3. **Every HSM weight was estimated on US rural two-lane highways.** The target market
+   is not that. This is the largest source of error in Mode B and is defensible only
+   because Mode B is an ordinal ranking — a common scaling error leaves the order
+   intact. It would not be defensible for a predicted count, which is one more reason
+   the engine refuses to emit one.
+
+### Design gap this exposed and closed
+
+`score_index` refused outright if *any* available factor lacked a citation. With a
+partly-sourced registry that meant six good weights were blocked by fourteen missing
+ones — the opposite of "degrade loudly, never silently skip".
+
+Now it scores on the cited subset and names the rest. An uncited factor is **absent**
+from the index, not weighted zero, and both the run log and the CLI say which and why.
+Mode B refuses outright only when nothing at all is cited — a path now covered by its
+own test fixture, since the shipped registry can no longer exercise it.
+
+### Still open
+
+- Fourteen factors uncited, with the reason recorded per factor in `docs/WEIGHTS.md`.
+  `median_present` (HSM Chapter 11) and `curve_density` are the next candidates.
+- `traffic_proxy`, `junction_density` and `ramp_density` may never be sourceable —
+  the first is our own construct, the second is modelled by the HSM as separate
+  intersection entities rather than a segment density, and the third has an unresolved
+  sign.
+
+---
+
 ## 2026-08-09 — Stage 0 and Stage 1 complete
 
 **Delivered:** the engine core. A plain Python library that takes a panel and returns a

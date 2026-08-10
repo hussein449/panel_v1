@@ -90,7 +90,11 @@ put one in. Mode B output can never be dressed in Mode A's language.
 
 **An uncited weight is refused.** Mode B will not score using a `default_weight` that
 carries no `weight_source`. A number the client cannot trace to either their own data or
-a named reference is a liability.
+a named reference is a liability. An uncited factor is *absent* from the index, never
+silently weighted zero, and the report names it. Six factors are currently sourced from
+the AASHTO HSM and the Elvik Power Model — every weight computed, not chosen, by
+[`tools/derive_weights.py`](tools/derive_weights.py) and documented with its full
+derivation in [`docs/WEIGHTS.md`](docs/WEIGHTS.md).
 
 **A contradicted sign is flagged, never quietly reported.** Every factor declares an
 `expected_sign`. A fitted coefficient pointing the other way triggers the diagnostics

@@ -26,6 +26,12 @@ def sourced_registry() -> Registry:
 
 
 @pytest.fixture(scope="session")
+def unsourced_registry() -> Registry:
+    """A registry where nothing carries a citation. Mode B must refuse outright."""
+    return load_registry(FIXTURES / "factors_unsourced.yaml")
+
+
+@pytest.fixture(scope="session")
 def rich_panel() -> pd.DataFrame:
     """A panel with enough crashes for the top rung."""
     return synthetic_panel(n_units=120, n_periods=24, seed=7)

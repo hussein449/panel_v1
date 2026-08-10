@@ -426,9 +426,28 @@ def _render_index(assessment: Assessment) -> None:
     weights.add_column("Weight", justify="right")
     weights.add_column("Source")
     for term in index.terms:
-        weights.add_row(term.factor, f"{term.weight:+.4g}", term.weight_source)
+        weights.add_row(term.factor, f"{term.weight:+.4g}", _cite(term.weight_source))
     console.print(weights)
+    console.print(
+        "[dim]Citations truncated for display — full text in the registry and in "
+        "assessment.json.[/dim]"
+    )
     console.print()
+
+    if index.skipped_unsourced:
+        console.print(
+            Panel(
+                f"{len(index.skipped_unsourced)} factor(s) are present in this panel "
+                "but carry no cited weight, so they did not enter the index:\n\n"
+                + ", ".join(index.skipped_unsourced)
+                + "\n\nThey are not weighted zero — they are absent. Add a "
+                "[bold]default_weight[/bold] and [bold]weight_source[/bold] to the "
+                "registry to bring them in.",
+                title="Available but uncited",
+                border_style="yellow",
+            )
+        )
+        console.print()
 
     ranking = Table(
         title="Highest-risk units (ranking only — not a crash prediction)",
@@ -445,6 +464,12 @@ def _render_index(assessment: Assessment) -> None:
         )
     console.print(ranking)
     console.print()
+
+
+def _cite(source: str, limit: int = 72) -> str:
+    """Collapse a folded YAML citation to one line, short enough for a table cell."""
+    collapsed = " ".join(source.split())
+    return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
 
 
 def _render_footer(assessment: Assessment) -> None:

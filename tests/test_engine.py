@@ -126,14 +126,43 @@ class TestRefusal:
 
 
 class TestModeB:
-    def test_refuses_to_score_on_unsourced_weights(
-        self, crash_only_panel: pd.DataFrame
+    def test_refuses_outright_when_nothing_is_cited(
+        self, crash_only_panel: pd.DataFrame, unsourced_registry
     ) -> None:
-        result = assess(crash_only_panel)
+        result = assess(crash_only_panel, registry=unsourced_registry)
 
         assert result.index is None
         assert result.index_refusal is not None
-        assert "no cited weight" in result.index_refusal
+        assert "no available factor carries a cited weight" in result.index_refusal
+
+    def test_scores_on_the_cited_subset_and_names_the_skips(
+        self, crash_only_panel: pd.DataFrame
+    ) -> None:
+        """Degrade loudly: an uncited factor is absent, not silently weighted zero."""
+        result = assess(crash_only_panel)
+
+        assert result.index is not None
+        assert result.index_refusal is None
+
+        scored = set(result.index.factor_names)
+        skipped = set(result.index.skipped_unsourced)
+
+        assert scored, "the shipped registry should now carry some cited weights"
+        assert skipped, "the shipped registry still has uncited factors"
+        assert not scored & skipped
+
+    def test_skipped_factors_are_warned_about_in_the_log(
+        self, crash_only_panel: pd.DataFrame
+    ) -> None:
+        result = assess(crash_only_panel)
+        assert any(e.code == "unsourced_skipped" for e in result.log)
+
+    def test_every_scored_term_carries_a_citation(
+        self, crash_only_panel: pd.DataFrame
+    ) -> None:
+        result = assess(crash_only_panel)
+        assert result.index is not None
+        assert all(term.weight_source.strip() for term in result.index.terms)
 
     def test_scores_when_weights_carry_citations(
         self, crash_only_panel: pd.DataFrame, sourced_registry

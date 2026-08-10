@@ -15,6 +15,12 @@ make the two modes incomparable.
 exposure. It deliberately does not multiply by exposure, so a long busy segment does not
 outrank a short lethal one. Ranking total burden instead is a different question and
 needs a different column.
+
+**On partial coverage.** A factor with no cited weight does not participate, and it does
+not silently become a weight of zero either. It is dropped from the specification and
+named in ``skipped_unsourced``, which the report prints — degrade loudly, never silently
+skip. Mode B refuses outright only when *no* available factor carries a citation, since
+at that point there is nothing legitimate left to rank with.
 """
 
 from __future__ import annotations
@@ -71,23 +77,23 @@ def score_index(
         unit_ids: The ``unit_id`` column, aligned to ``design``.
 
     Raises:
-        WeightNotSourced: Any supplied factor lacks a weight or a citation for it.
+        WeightNotSourced: Not one supplied factor carries a cited weight, so there is
+            nothing legitimate to score with.
     """
-    unsourced = [f.name for f in factors if not f.is_sourced]
-    if unsourced:
-        raise WeightNotSourced(
-            "Mode B cannot score — the following factor(s) have no cited weight: "
-            + ", ".join(sorted(unsourced))
-            + ". Set both `default_weight` and `weight_source` in the registry. A "
-            "weight the client cannot trace to a named reference must not appear in "
-            "an assessment."
-        )
+    unsourced = sorted(f.name for f in factors if not f.is_sourced)
+    usable = [f for f in factors if f.is_sourced and f.name in design.columns]
 
-    usable = [f for f in factors if f.name in design.columns]
     if not usable:
         raise WeightNotSourced(
-            "Mode B cannot score — none of the supplied factors are present in the "
-            "design matrix. Mode B needs at least one factor column."
+            "Mode B cannot score — no available factor carries a cited weight. "
+            + (
+                "Uncited: " + ", ".join(unsourced) + ". "
+                if unsourced
+                else "No factor columns are present in the panel. "
+            )
+            + "Set both `default_weight` and `weight_source` in the registry. A "
+            "weight the client cannot trace to a named reference must not appear in "
+            "an assessment."
         )
 
     terms: list[IndexTerm] = []
@@ -117,6 +123,7 @@ def score_index(
         unit_ranking=ranking,
         n_units=int(len(ranking)),
         n_observations=int(len(design)),
+        skipped_unsourced=unsourced,
     )
 
 

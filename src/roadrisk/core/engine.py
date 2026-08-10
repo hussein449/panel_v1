@@ -393,6 +393,17 @@ def _mode_b_assessment(
             ),
             factors=index.factor_names,
         )
+        if index.skipped_unsourced:
+            log.warning(
+                "mode_b",
+                "unsourced_skipped",
+                (
+                    f"{len(index.skipped_unsourced)} factor(s) were available in the "
+                    "panel but carry no cited weight, so they did not enter the "
+                    "index: " + ", ".join(index.skipped_unsourced) + "."
+                ),
+                factors=index.skipped_unsourced,
+            )
     except WeightNotSourced as exc:
         index_refusal = str(exc)
         log.refusal("mode_b", "unsourced_weights", index_refusal)
@@ -479,6 +490,7 @@ def _index_as_dict(index: IndexResult | None) -> dict[str, Any] | None:
         "specification": index.specification,
         "n_units": index.n_units,
         "n_observations": index.n_observations,
+        "skipped_unsourced": index.skipped_unsourced,
         "terms": [
             {
                 "factor": t.factor,
