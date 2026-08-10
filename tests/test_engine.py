@@ -188,18 +188,31 @@ class TestModeB:
     def test_mode_b_result_cannot_carry_a_count(
         self, crash_only_panel: pd.DataFrame, sourced_registry
     ) -> None:
-        """Structural, not conventional — there is no field to put one in."""
+        """Structural, not conventional — there is no field to put one in.
+
+        The invariant is *no counts and no uncertainty*, not a fixed column list. The
+        ranking also carries a per-crash-type score column so a bad unit can be read
+        for which kind of problem it has; those are scores, not predictions.
+        """
         result = assess(crash_only_panel, registry=sourced_registry)
         assert result.index is not None
 
         fields = set(vars(result.index))
         assert not fields & {"predicted_counts", "confidence_intervals", "p_values"}
-        assert set(result.index.unit_ranking.columns) == {
-            "unit_id",
-            "score",
-            "rank",
-            "percentile",
+
+        columns = set(result.index.unit_ranking.columns)
+        assert {"unit_id", "score", "rank", "percentile"} <= columns
+        assert not columns & {
+            "predicted",
+            "predicted_crashes",
+            "expected_crashes",
+            "ci_low",
+            "ci_high",
+            "p_value",
+            "std_error",
         }
+        extra = columns - {"unit_id", "score", "rank", "percentile"}
+        assert all(name.startswith("score_") for name in extra), extra
 
 
 class TestReproducibility:

@@ -105,6 +105,8 @@ class Assessment:
                 "region": self.context.region.value,
                 "severity": self.context.severity.value,
                 "declared": self.context.is_declared,
+                "crash_mix": self.context.crash_mix.as_dict(),
+                "crash_mix_is_default": self.context.uses_default_crash_mix,
                 "segment_length_km": self.context.segment_length_km,
                 "reference_aadt": self.context.reference_aadt,
             },
@@ -233,6 +235,7 @@ def assess(
             "facility_type": active_context.facility_type.value,
             "region": active_context.region.value,
             "severity": active_context.severity.value,
+            "crash_mix": active_context.crash_mix.as_dict(),
         },
     )
 
@@ -434,6 +437,24 @@ def _mode_b_assessment(
             ),
             factors=index.factor_names,
         )
+        log.info(
+            "mode_b",
+            "crash_mix",
+            (
+                f"Score decomposed by crash type — {index.crash_mix.describe()}. "
+                + (
+                    "Using the default distribution; it is an HSM figure and carries "
+                    "the same regional transfer problem as any other. Supplying a "
+                    "local distribution is a cheap improvement."
+                    if index.context.uses_default_crash_mix
+                    else "Distribution supplied by the caller."
+                )
+            ),
+            shares=index.crash_mix.as_dict(),
+            bucket_mean_scores={
+                b.value: round(v, 6) for b, v in index.bucket_mean_scores.items()
+            },
+        )
         _log_index_provenance(index, log)
     except WeightNotSourced as exc:
         index_refusal = str(exc)
@@ -598,6 +619,10 @@ def _index_as_dict(index: IndexResult | None) -> dict[str, Any] | None:
         "n_observations": index.n_observations,
         "skipped_unsourced": index.skipped_unsourced,
         "skipped_inadmissible": index.skipped_inadmissible,
+        "crash_mix": index.crash_mix.as_dict(),
+        "bucket_mean_scores": {
+            bucket.value: value for bucket, value in index.bucket_mean_scores.items()
+        },
         "terms": [
             {
                 "factor": t.factor,
@@ -605,6 +630,7 @@ def _index_as_dict(index: IndexResult | None) -> dict[str, Any] | None:
                 "weight": t.weight,
                 "weight_source": t.weight_source,
                 "family": t.family,
+                "scope": t.scope.value,
                 "mean_contribution": t.mean_contribution,
                 "sd_contribution": t.sd_contribution,
                 "concerns": [

@@ -106,6 +106,13 @@ North America. Every weight is computed, not chosen, by
 and head-on crashes globally. Four times apart and not in conflict — they answer
 different questions, so the engine marks them not-comparable and prints both.
 
+**A crash-type weight only moves its own crash type.** Published weights are
+crash-type specific — iRAP prices grade for run-off crashes and lighting for
+intersection crashes. Mode B scores each crash type separately and combines them with a
+cited distribution, so a run-off-only weight is not applied as though it moved every
+crash on the road. A weight scoped to *all* crashes still enters every type, so nothing
+that was already correct changes.
+
 **A contradicted sign is flagged, never quietly reported.** Every factor declares an
 `expected_sign`. A fitted coefficient pointing the other way triggers the diagnostics
 automatically — the factor alone, the factor alongside each correlated partner, the
@@ -128,6 +135,7 @@ src/roadrisk/
 │   ├── registry/            declarative factors (schema, loader, factors.yaml)
 │   ├── contract.py          the six required columns; exposure derivation
 │   ├── context.py           what kind of corridor, and what crashes were counted
+│   ├── crashmix.py          how total crashes split by type; the cited default
 │   ├── weights.py           weight selection and source-agreement scoring
 │   ├── transforms.py        ln / ln1p / identity / zscore, each guarded
 │   ├── diagnostics.py       VIF, correlation, dispersion

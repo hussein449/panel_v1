@@ -473,7 +473,8 @@ def _render_index(assessment: Assessment) -> None:
     weights.add_column("Factor")
     weights.add_column("Weight", justify="right")
     weights.add_column("From")
-    weights.add_column("Agreement", justify="center")
+    weights.add_column("Applies to")
+    weights.add_column("Agree", justify="center")
     weights.add_column("Source")
 
     for term in weights_ordered(index.terms):
@@ -481,8 +482,12 @@ def _render_index(assessment: Assessment) -> None:
             Text(term.factor, style="yellow" if term.has_concerns else None),
             f"{term.weight:+.4g}",
             term.family,
+            Text(
+                "all crash types" if term.applies_to_all_crash_types else term.scope.value,
+                style="dim" if term.applies_to_all_crash_types else "cyan",
+            ),
             _agreement_cell(term),
-            _cite(term.weight_source, limit=48),
+            _cite(term.weight_source, limit=36),
         )
     console.print(weights)
     console.print(
@@ -490,6 +495,7 @@ def _render_index(assessment: Assessment) -> None:
         "assessment.json. A yellow factor name means the weight carries a concern.[/dim]"
     )
     console.print()
+    _render_crash_types(index)
 
     for term in index.disagreements:
         agreement = term.agreement
@@ -567,6 +573,44 @@ def _render_index(assessment: Assessment) -> None:
             str(row.rank), str(row.unit_id), f"{row.score:.4f}", f"{row.percentile:.1%}"
         )
     console.print(ranking)
+    console.print()
+
+
+def _render_crash_types(index) -> None:
+    """Show the decomposition, because a combined score hides which problem it is."""
+    table = Table(
+        title="Crash-type decomposition — where the risk sits",
+        header_style="bold",
+        title_justify="left",
+    )
+    table.add_column("Crash type")
+    table.add_column("Share", justify="right")
+    table.add_column("Mean score", justify="right")
+    table.add_column("Terms entering it")
+
+    for bucket, mean_score in index.bucket_mean_scores.items():
+        entering = index.terms_for(bucket)
+        scoped = [t.factor for t in entering if not t.applies_to_all_crash_types]
+        detail = (
+            f"{len(entering)} ("
+            + (", ".join(scoped) + " scoped here" if scoped else "all total-scope")
+            + ")"
+        )
+        table.add_row(
+            bucket.value,
+            f"{index.crash_mix.share(bucket):.1%}",
+            f"{mean_score:+.4f}",
+            detail,
+        )
+
+    console.print(table)
+    note = f"Shares: {_cite(index.crash_mix.source, limit=110)}"
+    if index.context.uses_default_crash_mix:
+        note += (
+            "\nThis is the DEFAULT distribution — an HSM figure carrying the same "
+            "regional transfer problem as any other. Supplying a local one is cheap."
+        )
+    console.print(f"[dim]{note}[/dim]")
     console.print()
 
 

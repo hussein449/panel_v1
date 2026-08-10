@@ -133,16 +133,24 @@ class CrashScope(StrEnum):
     """Which crash types a weight covers.
 
     HSM CMFs are stated for *total* segment crashes. iRAP risk factors are stated per
-    crash type — its curvature factor covers run-off and head-on only. Two weights
-    with different scopes are measuring different quantities, and an agreement score
-    between them is not a like-for-like comparison. The engine records the mismatch
-    rather than quietly averaging across it.
+    crash type — its curvature factor covers run-off and head-on only, and its street
+    lighting factor covers intersection crashes only.
+
+    Scope does two jobs. It stops the engine scoring a like-for-like agreement between
+    weights measuring different quantities, and it decides which crash-type bucket a
+    weight enters when Mode B decomposes the score
+    (see :mod:`roadrisk.core.crashmix`).
+
+    ``TOTAL`` is a marker, not a type: a total-scope weight enters *every* bucket.
+    The remaining four partition all crashes exactly once, so shares over them sum
+    to one and nothing is double-counted or lost.
     """
 
     TOTAL = "total"
     RUN_OFF_HEAD_ON = "run_off_head_on"
     INTERSECTION = "intersection"
     PEDESTRIAN = "pedestrian"
+    OTHER = "other"
 
 
 class Weight(BaseModel):

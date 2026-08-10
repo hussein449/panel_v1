@@ -116,6 +116,62 @@ behind a good one.
 
 ---
 
+## The crash-type decomposition
+
+Published weights are **crash-type specific**. iRAP prices grade for run-off and head-on
+crashes; it prices street lighting for intersection crashes. Summing those into one
+number treats a run-off-only weight as though it moved every crash on the road.
+
+So the score is built per crash type and then combined:
+
+```
+log_score[type] = sum of  w_j * x_j    for weights scoped `type` or `total`
+combined        = sum of  share[type] * exp(log_score[type])
+row score       = ln(combined)
+```
+
+**A `total`-scope weight enters every bucket**, so a registry of only total-scope
+weights produces *exactly* the score it did before this existed. The change is a strict
+correction, not a re-scaling — there is a test asserting it. The final `ln` keeps the
+result on the Mode A coefficient scale, so the prior/posterior correspondence survives.
+
+A scoped weight is diluted by its share. With `run_off_head_on` at 64.3%, a weight
+contributing +0.8 to that bucket alone contributes
+`ln(0.643·e^0.8 + 0.357) = +0.55` to the combined score, not +0.8.
+
+### The buckets, and where the shares come from
+
+`TOTAL` is a marker, not a bucket. The four buckets partition all crashes exactly once,
+so shares sum to one and nothing is double-counted or lost.
+
+| Bucket | Share | Built from HSM Table 10-4 (fatal & injury, rural two-lane) |
+|---|---|---|
+| `run_off_head_on` | **64.26%** | ran off road 54.5 + overturned 3.7 + head-on 3.4 + opposite-direction sideswipe 2.66 |
+| `other` | **24.64%** | animal 3.8 + other single-vehicle 0.7 + rear-end 16.4 + same-direction sideswipe 1.14 + other multi-vehicle 2.6 |
+| `intersection` | **10.00%** | angle collision |
+| `pedestrian` | **1.10%** | collision with pedestrian 0.7 + with bicycle 0.4 |
+
+Source: AASHTO HSM Table 10-4, *Default Distribution by Collision Type for Specific Crash
+Severity Levels on Rural Two-Lane, Two-Way Roadway Segments*, fatal-and-injury column,
+HSIS Washington 2002–2006.
+
+The fatal-and-injury column is used rather than all-severity because the registry's speed
+weights are injury-specific.
+
+**This default carries the same regional transfer problem as any other HSM number**, and
+the engine says so on every run that uses it. Supplying a local crash-type distribution
+is one of the cheapest improvements available — most crash databases can produce it
+directly. `uniform_mix()` exists for callers who genuinely have no defensible split and
+would rather say so than borrow Washington State's.
+
+### Why this matters beyond correctness
+
+The ranking now carries a score column *per crash type*. A unit that ranks badly can be
+read for **which** problem it has — a run-off problem and an intersection problem call
+for different countermeasures, and a single combined number hides which one it is.
+
+---
+
 ## Selection
 
 Given several weights for one factor, the engine picks one. It never averages.

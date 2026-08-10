@@ -30,7 +30,7 @@ This is the part that has to be right. It is pure Python over a dataframe.
 | `[x]` | **1.1** Diagnostics | VIF, correlation matrix, variance-to-mean dispersion | VIF matches statsmodels on a known design |
 | `[x]` | **1.2** Validation gates | The 9 checks from Part Seven-B, each returning HARD / SOFT / INFO | A crash-only panel (no zero rows) is refused |
 | `[x]` | **1.3** Mode ladder | `A-full → A-reduced → A-minimal → B` descent, drops by registry priority | Every descent names the failed check and the dropped term |
-| `[x]` | **1.4** Mode B index | Weighted index from `default_weight`, ranked score, no counts | Refuses to score on an unsourced weight |
+| `[x]` | **1.4** Mode B index | Crash-type-decomposed weighted index from cited weights, ranked score, no counts | Refuses to score on an unsourced weight; a total-only registry scores identically to a flat sum |
 | `[x]` | **1.5** Mode A rungs 0–1 | Poisson GLM (reference) + NB2 GLM (shipped), `ln(exposure)` offset | Coefficients, CIs and p-values on a synthetic panel |
 | `[x]` | **1.6** Sign guard | Compare fitted signs to `expected_sign`, auto-run diagnostics on contradiction | A planted reversal is flagged, not reported quietly |
 | `[x]` | **1.7** Run log + manifest | Append-only event log, reproducibility manifest with hashes | Two identical runs produce the same manifest hash |
@@ -127,6 +127,16 @@ Things that need a human call, not a code change.
    caveat because the Power Model exponent applies to operating speed, not posted
    limit; `operating_speed_85` exists and is uncaveated but has no data. A single
    Tier C speed pull removes the largest known weakness in the index.
+3. **Supply a local crash-type distribution.** Mode B now decomposes the score by crash
+   type, and the default shares come from HSM Table 10-4 — Washington State, rural
+   two-lane, 2002–2006. Most national crash databases can produce a local split
+   directly, and it is one of the cheapest accuracy improvements available. Pass it as
+   `RunContext(crash_mix=...)`; `uniform_mix()` is available for corridors where no
+   defensible split exists.
+4. **Resolve `lanes`.** It is currently a volume proxy expecting `+` for total crashes,
+   while iRAP prices lane count at `−` for head-on-overtaking crashes only. Two
+   mechanisms in one column — the composite-masking trap the brief warns about. The
+   real fix is separating the exposure role from the risk role, not picking a sign.
 3. **Second corridor.** Still the critical path. Pick one where access density and ramp
    density separate — the M51 ramp/RAF inversion is not diagnosable on a single corridor.
 4. **Rung 4 engine.** PyMC/NumPyro keeps one language; R + INLA is materially faster for

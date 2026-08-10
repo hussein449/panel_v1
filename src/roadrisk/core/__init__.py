@@ -8,6 +8,7 @@ of the product around it.
 
 from roadrisk.core.context import RunContext
 from roadrisk.core.contract import ContractReport, prepare_panel
+from roadrisk.core.crashmix import DEFAULT_CRASH_MIX, CrashMix, uniform_mix
 from roadrisk.core.diagnostics import (
     DispersionReport,
     Family,
@@ -48,9 +49,11 @@ from roadrisk.core.signguard import SignGuardReport, run_sign_guard
 from roadrisk.core.weights import Agreement, WeightSelection, select_weight
 
 __all__ = [
+    "DEFAULT_CRASH_MIX",
     "Agreement",
     "Assessment",
     "CheckResult",
+    "CrashMix",
     "CheckStatus",
     "Coefficient",
     "ContractReport",
@@ -90,5 +93,6 @@ __all__ = [
     "prepare_panel",
     "run_sign_guard",
     "select_weight",
+    "uniform_mix",
     "walk_ladder",
 ]

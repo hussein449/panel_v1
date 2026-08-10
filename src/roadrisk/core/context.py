@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from roadrisk.core.contract import LENGTH_COLUMN
+from roadrisk.core.crashmix import DEFAULT_CRASH_MIX, CrashMix
 from roadrisk.core.registry.schema import FacilityType, Region, Severity
 
 
@@ -34,6 +35,7 @@ class RunContext:
     facility_type: FacilityType = FacilityType.ANY
     region: Region = Region.GLOBAL
     severity: Severity = Severity.ALL
+    crash_mix: CrashMix = DEFAULT_CRASH_MIX
     segment_length_km: float | None = None
     reference_aadt: float | None = None
 
@@ -52,6 +54,10 @@ class RunContext:
             f"{self.severity.value} crashes"
         )
 
+    @property
+    def uses_default_crash_mix(self) -> bool:
+        return self.crash_mix is DEFAULT_CRASH_MIX
+
     def measured_from(self, panel: pd.DataFrame) -> RunContext:
         """Fill the measurable fields from the panel, leaving declarations alone."""
         if LENGTH_COLUMN not in panel.columns:
@@ -61,6 +67,7 @@ class RunContext:
             facility_type=self.facility_type,
             region=self.region,
             severity=self.severity,
+            crash_mix=self.crash_mix,
             segment_length_km=median_length,
             reference_aadt=self.reference_aadt,
         )

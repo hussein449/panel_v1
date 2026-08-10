@@ -5,7 +5,96 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — iRAP Reference Guide sourced; global coverage triples
+## 2026-08-10 (latest) — Mode B decomposed by crash type
+
+**Delivered:** the index no longer flattens crash types into one number. It scores each
+crash type separately and combines them with a cited distribution.
+
+**Verified:** 198 tests pass, `ruff check` clean.
+
+### The problem
+
+Published weights are crash-type specific. iRAP prices grade for run-off and head-on
+crashes; it prices street lighting for intersection crashes. The index was summing them
+into one score, which treats a run-off-only weight as though it moved **every** crash on
+the road. That overstates every scoped weight, and it got worse with each iRAP weight
+added — the sourcing work was quietly making the flattening error bigger.
+
+### The fix
+
+```
+log_score[type] = sum of  w_j * x_j    for weights scoped `type` or `total`
+combined        = sum of  share[type] * exp(log_score[type])
+row score       = ln(combined)
+```
+
+A scoped weight moves only its own bucket and the share dilutes it. With
+`run_off_head_on` at 64.3%, a weight contributing +0.8 to that bucket contributes
+**+0.55** to the combined score, not +0.8.
+
+**Nothing that was already correct moves.** A `total`-scope weight enters every bucket,
+so a registry of only total-scope weights produces *exactly* the score it did before —
+asserted by `test_a_total_only_registry_scores_exactly_as_a_flat_sum`. The final `ln`
+keeps the result on the Mode A coefficient scale, so the prior/posterior correspondence
+survives the split.
+
+### The shares are cited, not invented
+
+`core/crashmix.py` holds the default, built from **AASHTO HSM Table 10-4** (default
+distribution by collision type, rural two-lane two-way segments, fatal-and-injury
+column, HSIS Washington 2002–2006):
+
+| Bucket | Share |
+|---|---|
+| `run_off_head_on` | 64.26% |
+| `other` | 24.64% |
+| `intersection` | 10.00% |
+| `pedestrian` | 1.10% |
+
+`CrashMix` validates that shares partition total crashes — missing bucket, negative
+share, or a sum that is not 1.0 all raise. The default carries the same regional
+transfer problem as any other HSM figure and the engine says so on every run that uses
+it. `uniform_mix()` exists for callers with no defensible split who would rather say so
+than borrow Washington State's.
+
+### What it looks like
+
+```
+Crash-type decomposition — where the risk sits
+┌─────────────────┬───────┬────────────┬───────────────────────────┐
+│ Crash type      │ Share │ Mean score │ Terms entering it         │
+├─────────────────┼───────┼────────────┼───────────────────────────┤
+│ run_off_head_on │ 64.3% │    +7.8101 │ 3 (grade_pct scoped here) │
+│ intersection    │ 10.0% │    +7.2417 │ 3 (lit scoped here)       │
+│ pedestrian      │  1.1% │    +7.3127 │ 2 (all total-scope)       │
+│ other           │ 24.6% │    +7.3127 │ 2 (all total-scope)       │
+└─────────────────┴───────┴────────────┴───────────────────────────┘
+```
+
+The ranking gained a score column per crash type, so a bad unit can be read for **which**
+problem it has. A run-off problem and an intersection problem call for different
+countermeasures; a single combined number hides which one it is. The "no counts"
+invariant is unchanged — the test now asserts the invariant properly rather than a fixed
+column list.
+
+### What this unblocks
+
+The four attributes rejected from the iRAP Guide were rejected partly *because* the model
+was flattened. With buckets:
+
+- **Number of lanes** now has somewhere to go — iRAP's factor is head-on-overtaking only.
+  It still needs `expected_sign` resolved first: our `lanes` is a volume proxy expecting
+  `+` for total crashes, iRAP's is `−` for one crash type. Those are two different
+  mechanisms in one column, which is the composite-masking trap the brief warns about.
+  Splitting exposure from risk is the real fix, and it is not a five-minute change.
+- **Median type** and **intersection type** remain blocked on their own issues
+  (traversability normalisation; per-junction rather than per-km), not on the flattening.
+
+### Cost
+
+Every scoped weight is now weaker than it was, because it is no longer being
+over-applied. Absolute scores shift; the *ranking* is what Mode B outputs and it moves
+only where the flattening was actually distorting it — which is the point.
 
 **Delivered:** the iRAP Methodology Reference Guide v3.10 was obtained and worked
 through. Four new weights, and the region-transfer flag largely disappears outside
