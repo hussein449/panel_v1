@@ -5,7 +5,81 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Validated on a real road: Cyprus B9
+## 2026-08-10 (latest) — Step 2.2b: fetch the corridor from OSM
+
+**Delivered:** `roadrisk.geo.osm` — a road reference and a bounding box in, an assembled
+centreline out. No more manual QGIS export.
+
+```bash
+roadrisk corridor --ref B9 --bbox 34.80,32.80,35.05,33.05 --region europe --severity injury
+```
+
+**Verified:** 290 tests pass (34 new, none touching the network), `ruff check` clean,
+validated live against two real Cyprus roads.
+
+### By reference, not by routing
+
+A routing engine returns the *fastest* path and will leave the road you asked about
+without saying so. `ref="B9"` cannot return anything that is not the B9. The brief's
+gate — *reject if the route leaves the named road* — becomes unnecessary, and is
+replaced by the failure that can actually happen: a scatter of disconnected pieces
+rather than a corridor.
+
+### Live results
+
+| | B9 (Troodos, undivided) | A1 (motorway, divided) |
+|---|---|---|
+| Fragments | 69 | 49 |
+| After merge | 3 | 4 |
+| Gaps bridged | 2 | 0 |
+| Longest share | **100%** | 26% |
+| Divided | no | **yes** — 49/49 one-way |
+| Result | 25.07 km | 8.11 km, 22.68 km excluded and reported |
+
+### Three bugs, each found by a test or by real data
+
+**1 · Opposing carriageways were being welded together.** The ends of a divided road's
+two carriageways sit ~20 m apart — inside any usable gap tolerance. A distance-only
+bridger joins them into a line that runs out along one side and back along the other,
+doubling the corridor and making every chainage wrong. Fixed with a turn check: a join
+whose direction change exceeds 120° is not a continuation.
+
+**2 · The turn check measured the wrong thing.** First version compared the heading of
+the *connector* between fragments, which reads the 20 m hop between carriageways as a
+90° turn and waves it through. It now compares the two fragments' own headings,
+skipping the connector.
+
+**3 · The join index was wrong for prepended fragments.** When the second fragment goes
+*before* the first, the weld sits at `len(other)`, not `len(line)`. Measuring at the
+wrong index samples the middle of a fragment, where the turn is naturally near zero —
+so every bad join passed. This one hid behind bug 2 and only surfaced once that was
+fixed.
+
+Bug 3 is why A1 changed from 16.06 km to 8.11 km. The diagnostic settled it: pieces 0
+and 1 sit **12.9 m apart at a 179.7° turn** — a carriageway meeting its opposite twin.
+The 16 km was a bad weld the index bug let through. 8.11 km is correct.
+
+### Divided roads are detected from the tag, not the geometry
+
+Cyprus A1 returns 49 ways, **every one `oneway=yes`** — which is exactly how OSM stores
+a divided road. Its two carriageways are 11 km apart at their furthest, so any
+distance-based rule fails precisely where the road is most interesting.
+
+This also forced a second fragmentation threshold. A divided road returns roughly half
+its length as the opposite carriageway, so the longest run carries ~50% — and the 0.6
+threshold rejected every motorway as "fragmented". Divided roads now use a 0.25 floor,
+and always report how much was excluded and why.
+
+### What is still manual
+
+Choosing *which* carriageway is still "the longest one". Selecting a direction
+deliberately needs the `oneway` direction plus the user's intent, and the crash table
+usually covers both directions anyway — so the honest behaviour for now is to take one,
+say so loudly, and let the analyst decide.
+
+---
+
+## 2026-08-10 — Validated on a real road: Cyprus B9
 
 **Delivered:** the pipeline run end to end on real OSM geometry, and two defects found
 by doing so. Also a feasibility answer for step 2.2b.

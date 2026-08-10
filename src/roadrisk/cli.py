@@ -230,6 +230,17 @@ def corridor(
         bool,
         typer.Option("--demo", help="Use a synthetic corridor instead of a file."),
     ] = False,
+    ref: Annotated[
+        str | None,
+        typer.Option(
+            "--ref",
+            help="Fetch the road from OSM by reference, e.g. 'B9'. Needs --bbox.",
+        ),
+    ] = None,
+    bbox: Annotated[
+        str | None,
+        typer.Option("--bbox", help="south,west,north,east in degrees. With --ref."),
+    ] = None,
     unit_length_m: Annotated[
         float, typer.Option("--unit-length", help="Target segment length in metres.")
     ] = 500.0,
@@ -268,12 +279,21 @@ def corridor(
 
     periods = monthly_periods(n_periods)
 
+    corridor_name = "corridor"
+
     if demo_corridor:
         points = synthetic_centreline(length_km=10.0)
         crashes = synthetic_crashes(points, periods, n_crashes=900)
+        corridor_name = "demo"
         console.print(
             "[dim]Synthetic corridor — 10 km, tightening bends, and a crash table "
             "with the defects a real police extract has.[/dim]\n"
+        )
+    elif ref is not None:
+        points = _fetch_from_osm(ref, bbox)
+        corridor_name = ref
+        crashes = (
+            pd.read_csv(crashes_path) if crashes_path is not None else None
         )
     elif centreline_path is None:
         from roadrisk.geo.corridor import CENTRELINE_GUIDANCE
@@ -293,12 +313,13 @@ def corridor(
         raise typer.Exit(EXIT_REJECTED)
     else:
         points, crashes = _read_corridor_inputs(centreline_path, crashes_path)
+        corridor_name = centreline_path.stem
 
     try:
         built = build_corridor_panel(
             points,
             periods=periods,
-            name=centreline_path.stem if centreline_path else "demo",
+            name=corridor_name,
             crashes=crashes,
             target_length_m=unit_length_m,
             tolerance_m=tolerance_m,
@@ -324,6 +345,58 @@ def corridor(
         if built.snap_detail is not None:
             built.snap_detail.to_csv(out_dir / "snap_detail.csv", index=False)
         console.print(f"\n[dim]Run record and panel written to {out_dir}[/dim]")
+
+
+def _fetch_from_osm(ref: str, bbox: str | None) -> list[tuple[float, float]]:
+    """Resolve a corridor straight from OSM, reporting what had to be assembled."""
+    from roadrisk.geo.osm import BoundingBox, fetch_corridor
+
+    if bbox is None:
+        console.print(
+            "[red]--ref needs --bbox south,west,north,east[/red]\n"
+            "[dim]e.g. --ref B9 --bbox 34.80,32.80,35.05,33.05[/dim]"
+        )
+        raise typer.Exit(EXIT_REJECTED)
+
+    try:
+        south, west, north, east = (float(part) for part in bbox.split(","))
+    except ValueError as exc:
+        console.print(f"[red]--bbox must be four numbers, got {bbox!r}[/red]")
+        raise typer.Exit(EXIT_REJECTED) from exc
+
+    console.print(f"[dim]Fetching ref={ref!r} from OpenStreetMap…[/dim]")
+    try:
+        fetched = fetch_corridor(
+            ref, BoundingBox(south=south, west=west, north=north, east=east)
+        )
+    except RoadRiskError as exc:
+        _print_rejection(exc)
+        raise typer.Exit(EXIT_REJECTED) from exc
+
+    table = Table(box=None, show_header=False, pad_edge=False)
+    table.add_column(style="dim")
+    table.add_column()
+    table.add_row("Fragments", str(fetched.n_fragments))
+    table.add_row("After merge", str(fetched.n_pieces_after_merge))
+    table.add_row("Gaps bridged", str(fetched.gaps_bridged))
+    table.add_row("Longest share", f"{fetched.longest_share:.1%}")
+    table.add_row("Divided road", "yes" if fetched.divided else "no")
+    if fetched.excluded_km:
+        table.add_row("Excluded", f"{fetched.excluded_km:.2f} km")
+    if fetched.tags.get("name"):
+        table.add_row("Name", fetched.tags["name"])
+    console.print(table)
+
+    if fetched.warnings:
+        console.print(
+            Panel(
+                Text("\n\n".join(f"• {w}" for w in fetched.warnings)),
+                title="Assembly notes",
+                border_style="yellow",
+            )
+        )
+    console.print()
+    return fetched.points
 
 
 def _read_corridor_inputs(

@@ -53,7 +53,7 @@ being worked around — it is the shape of the product.
 | | Step | Deliverable | Done when |
 |---|---|---|---|
 | `[x]` | **2.2a** Corridor + linear reference | `Corridor.from_latlon`, UTM projection, chainage, structural gates | A corridor that cannot be linearly referenced is rejected, not silently used |
-| `[ ]` | **2.2b** Resolve a corridor from OSM | Fetch by road `ref`, stitch fragments, trim to start/end | Rejects a route that leaves the named road |
+| `[x]` | **2.2b** Resolve a corridor from OSM | Fetch by road `ref`, stitch, bridge gaps, detect divided roads, trim to start/end | Refuses a fragmented collection; never welds opposing carriageways |
 | `[x]` | **2.3** Segmentation | Fixed-length units, chainage continuous and exhaustive, trailing runt merged | No gaps, no overlaps, unit lengths sum to the corridor |
 | `[x]` | **2.4** Panel skeleton | `unit_id × period × time_slot`, `n_crashes` initialised to 0 | Zero rows exist by construction; skeleton passes the input contract |
 | `[x]` | **2.5** Crash snapping | Project to centreline within tolerance, chainage → unit, period → cell | Every drop counted with a reason; `SnapReport` activates gate check 6 |
@@ -73,20 +73,28 @@ roadrisk corridor --demo --facility-type rural_two_lane --region middle_east --s
 rate → Mode A. Details and the two defects it exposed in
 [`IMPLEMENTED.md`](IMPLEMENTED.md).
 
-### 2.2b is smaller than it looked
+### 2.2b — done
 
-The real-road run doubled as a feasibility probe. `way["ref"=...](bbox)` returned 69
-fragments and **shapely's `linemerge` reassembled 99.9% of the length into one line**,
-handling unordered and mixed-direction input for free. The stitching is not the hard
-part. What remains:
+```bash
+roadrisk corridor --ref B9 --bbox 34.80,32.80,35.05,33.05 --region europe --severity injury
+```
 
-1. **Choose between carriageways** on a divided road — OSM returns both as separate
-   ways, and a corridor must be one of them.
-2. **Bridge gaps** where a way lost its `ref` tag mid-route.
-3. **Trim** to the requested start and end coordinates.
-4. **Gate**: reject when the assembled line leaves the named road.
+Fetching **by road reference** rather than routing between two points is deliberate: a
+router returns the *fastest* path and will leave the road you asked about without
+telling you. `ref="B9"` cannot return anything that is not the B9.
 
-Roughly a day, not the 2–3 originally estimated.
+Validated live against two real Cyprus roads:
+
+| | B9 (Troodos, undivided) | A1 (motorway, divided) |
+|---|---|---|
+| Fragments | 69 | 49 |
+| After merge | 3 | 4 |
+| Gaps bridged | 2 | 0 |
+| Longest share | **100%** | 26% |
+| Divided | no | **yes** (49/49 one-way) |
+| Result | 25.07 km | 8.11 km, 22.68 km excluded and reported |
+
+The network layer is injectable, so all 34 tests run without touching it.
 
 ---
 

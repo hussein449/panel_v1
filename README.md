@@ -76,9 +76,22 @@ roadrisk corridor centreline.csv --crashes crashes.csv --out runs/corridor-01
 
 ### Getting a centreline
 
-**Export the real road from OpenStreetMap — do not draw it by hand.** OSM's own vertices
-are already dense through bends, which is the only place curvature detail matters, and a
-hand-drawn line usually is not. The tool prints the full recipe:
+Easiest — let the tool fetch it, by road reference and bounding box:
+
+```bash
+roadrisk corridor --ref B9 --bbox 34.80,32.80,35.05,33.05 --crashes crashes.csv
+```
+
+Fetching **by reference** rather than routing between two points is deliberate: a router
+returns the *fastest* path and will leave the road you asked about without telling you.
+`ref="B9"` cannot return anything that is not the B9. The fetcher stitches the fragments
+OSM returns, bridges small gaps, detects divided roads from their `oneway` tags, and
+refuses a fragmented collection rather than handing back half a corridor.
+
+If you prefer to supply the line yourself, **export it from OpenStreetMap — do not draw
+it by hand.** OSM's own vertices are already dense through bends, which is the only place
+curvature detail matters, and a hand-drawn line usually is not. The tool prints the full
+recipe:
 
 ```bash
 roadrisk centreline-help
@@ -184,6 +197,7 @@ src/roadrisk/
 │   ├── panel.py             the skeleton — zero rows exist because road exists
 │   ├── snapping.py          crashes onto the corridor, every drop given a reason
 │   ├── geometry.py          curvature, computed from the centreline alone
+│   ├── osm.py               fetch a corridor by road ref; stitch, bridge, gate
 │   └── pipeline.py          the orchestrator
 ├── demo.py                  synthetic panels for tests and demonstration
 └── cli.py                   mode banner, refusal receipt, descent receipt
