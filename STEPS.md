@@ -53,7 +53,7 @@ being worked around — it is the shape of the product.
 | | Step | Deliverable | Done when |
 |---|---|---|---|
 | `[x]` | **2.2a** Corridor + linear reference | `Corridor.from_latlon`, UTM projection, chainage, structural gates | A corridor that cannot be linearly referenced is rejected, not silently used |
-| `[ ]` | **2.2b** Route from two coordinates | Snap to the OSM graph, route constrained to road `ref` | Rejects a route that leaves the named road |
+| `[ ]` | **2.2b** Resolve a corridor from OSM | Fetch by road `ref`, stitch fragments, trim to start/end | Rejects a route that leaves the named road |
 | `[x]` | **2.3** Segmentation | Fixed-length units, chainage continuous and exhaustive, trailing runt merged | No gaps, no overlaps, unit lengths sum to the corridor |
 | `[x]` | **2.4** Panel skeleton | `unit_id × period × time_slot`, `n_crashes` initialised to 0 | Zero rows exist by construction; skeleton passes the input contract |
 | `[x]` | **2.5** Crash snapping | Project to centreline within tolerance, chainage → unit, period → cell | Every drop counted with a reason; `SnapReport` activates gate check 6 |
@@ -67,6 +67,26 @@ being worked around — it is the shape of the product.
 ```bash
 roadrisk corridor --demo --facility-type rural_two_lane --region middle_east --severity injury
 ```
+
+**Validated on a real road, 2026-08-10.** Cyprus B9 through the Troodos mountains:
+69 OSM fragments → one 25.01 km centreline → 50 units → 1,200 panel rows → 99.8% snap
+rate → Mode A. Details and the two defects it exposed in
+[`IMPLEMENTED.md`](IMPLEMENTED.md).
+
+### 2.2b is smaller than it looked
+
+The real-road run doubled as a feasibility probe. `way["ref"=...](bbox)` returned 69
+fragments and **shapely's `linemerge` reassembled 99.9% of the length into one line**,
+handling unordered and mixed-direction input for free. The stitching is not the hard
+part. What remains:
+
+1. **Choose between carriageways** on a divided road — OSM returns both as separate
+   ways, and a corridor must be one of them.
+2. **Bridge gaps** where a way lost its `ref` tag mid-route.
+3. **Trim** to the requested start and end coordinates.
+4. **Gate**: reject when the assembled line leaves the named road.
+
+Roughly a day, not the 2–3 originally estimated.
 
 ---
 

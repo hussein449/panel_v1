@@ -5,7 +5,73 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Stage 2: the geometry path
+## 2026-08-10 (latest) — Validated on a real road: Cyprus B9
+
+**Delivered:** the pipeline run end to end on real OSM geometry, and two defects found
+by doing so. Also a feasibility answer for step 2.2b.
+
+**Road:** Cyprus **B9**, Limassol up into the Troodos mountains. Chosen because it is
+genuinely windy, so curvature has something real to find, and because it is in the
+target region rather than a US test fixture.
+
+```
+69 way fragments from OSM  ->  linemerge  ->  3 pieces, longest = 99.9% of length
+708 vertices, 25.01 km, 50 units, 1,200 panel rows
+snap 499/500 (99.8%), projection EPSG:32636
+MODE A — FITTED FROM YOUR DATA · 2 factors · 499 crashes
+```
+
+### Feasibility answer for 2.2b (automatic corridor resolution)
+
+The jigsaw problem is smaller than feared. `way["ref"="B9"](bbox)` returned 69
+fragments, and **shapely's `linemerge` reassembled them into a single line carrying
+99.9% of the total length** — unordered and mixed-direction input handled for free.
+
+So the remaining work is not the stitching. It is: choosing between the carriageways of
+a divided road, bridging gaps where a way lost its `ref` tag, and trimming to the
+requested start and end. Materially less than the "2–3 days" estimated.
+
+### Defect 1 — the default resample interval was set by guesswork
+
+20 m was a guess. Real OSM geometry on this road has a median vertex spacing of
+**24.7 m**, so the under-sampled-centreline warning fired on perfectly ordinary data.
+A warning that cries wolf on normal input trains people to ignore it.
+
+Default raised to **30 m**, chosen by measuring rather than guessing. The interval
+stays *fixed* rather than adapting per corridor, because curvature has to be comparable
+between corridors.
+
+### Defect 2 — the test fixture was manufacturing the signal it tested for
+
+The first real run produced `curve_radius_min = −0.4644, p < 0.0001`. Convincing, and
+completely spurious.
+
+Crashes were being placed by **vertex index**. Traced centrelines put vertices closer
+together through bends, so sampling by index concentrated crashes in curves and
+produced a curvature effect out of pure drawing style. Placing them uniformly along
+**distance** instead, the coefficient collapsed to **−0.0237, p = 0.69** — correctly
+nothing, because the synthetic crashes carry no curvature effect.
+
+Fixed in `geo/demo.py`, and pinned by
+`test_the_pipeline_does_not_manufacture_signal`: crashes with no true curvature effect
+must not yield a significant curvature coefficient. A pipeline that invents a
+relationship from how a road was drawn would be worse than useless.
+
+This is also a live demonstration of the confounding the whole product exists to catch
+— found in our own tooling first.
+
+### What the run confirms
+
+- Fetch, stitch, project, segment, snap and assess all work on real geometry.
+- Gate check 6 is live: 99.8%, passed.
+- Sign guard clean.
+- No signal is manufactured from geometry alone.
+
+**256 tests pass**, `ruff check` clean.
+
+---
+
+## 2026-08-10 — Stage 2: the geometry path
 
 **Delivered:** `roadrisk.geo` — coordinates in, contract-valid panel out. The seam
 between Stage 2 and Stage 1 is closed: geography produces the panel, the engine judges

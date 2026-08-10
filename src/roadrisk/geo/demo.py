@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from shapely.geometry import LineString
 
 from roadrisk.geo.crs import Projector
 
@@ -66,17 +67,24 @@ def synthetic_crashes(
     Deliberately imperfect: some crashes are geocoded off the road, some have no
     coordinates, some carry a period the panel does not cover. Snapping has to find and
     report all three, and a fixture where everything snaps would prove nothing.
+
+    **Crashes are placed uniformly along DISTANCE, not by vertex index.** Traced
+    centrelines put vertices closer together through bends, so sampling by index
+    concentrates crashes in curves and manufactures a curvature effect that is purely
+    an artefact of how the road was drawn. That mistake produced a spurious
+    ``curve_radius_min`` coefficient at p < 0.0001 during the first real-road test.
+    A fixture that fabricates the very signal the engine is supposed to detect is
+    worse than no fixture.
     """
     rng = np.random.default_rng(seed)
     projector = Projector.for_point(*centreline[0])
 
-    metric = np.array([projector.point_to_metric(lat, lon) for lat, lon in centreline])
-    n_vertices = len(metric)
+    line = LineString([projector.point_to_metric(lat, lon) for lat, lon in centreline])
 
     rows: list[dict[str, object]] = []
     for _ in range(n_crashes):
-        index = int(rng.integers(0, n_vertices))
-        x, y = metric[index]
+        along = line.interpolate(float(rng.uniform(0.0, line.length)))
+        x, y = along.x, along.y
 
         roll = rng.random()
         if roll < off_corridor_fraction:

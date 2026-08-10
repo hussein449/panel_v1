@@ -32,8 +32,15 @@ from roadrisk.geo.corridor import CENTRELINE_GUIDANCE
 from roadrisk.geo.segmentation import Segmentation
 
 #: Spacing the centreline is resampled to before curvature is measured. Short enough to
-#: resolve a tight bend, long enough not to amplify GPS jitter into false curvature.
-DEFAULT_RESAMPLE_INTERVAL_M = 20.0
+#: resolve a tight bend, long enough not to amplify jitter into false curvature.
+#:
+#: Set to 30 m after measuring real OSM data rather than by guesswork. A sample of the
+#: Cyprus B9 through the Troodos mountains — a windy primary road, so densely traced —
+#: carries a median vertex spacing of about 25 m. An interval of 20 m therefore fired
+#: the under-sampled warning on perfectly ordinary OSM geometry, which would have
+#: trained users to ignore it. The interval stays FIXED rather than adapting to each
+#: source, because curvature has to be comparable between corridors.
+DEFAULT_RESAMPLE_INTERVAL_M = 30.0
 
 #: Radius at or below which a sample counts as "in a curve". Taken from the iRAP
 #: boundary between "straight or gently curving" (>900 m) and "moderate curvature",

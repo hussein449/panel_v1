@@ -455,3 +455,25 @@ class TestPipelineEndToEnd:
         assert "M1" in summary
         assert "units" in summary
         assert "zero-crash rows" in summary
+
+    def test_the_pipeline_does_not_manufacture_signal(self, built) -> None:
+        """Crashes with no true curvature effect must not produce a curvature effect.
+
+        Found on the first real-road run. Crashes had been placed by vertex index,
+        and because traced centrelines put vertices closer together through bends,
+        that concentrated them in curves — producing `curve_radius_min` at p < 0.0001
+        out of pure geometry. Placing crashes uniformly along distance instead, the
+        coefficient collapsed to p = 0.69.
+
+        A pipeline that invents a relationship from how a road was drawn would be
+        worse than useless, so the property is pinned here.
+        """
+        result = assess(built.panel, snap=built.snap)
+
+        assert result.fit is not None
+        for coefficient in result.fit.coefficients:
+            assert coefficient.p_value > 0.01, (
+                f"{coefficient.factor} is significant at p={coefficient.p_value:.4g} "
+                "on crashes that carry no curvature effect — the pipeline is "
+                "manufacturing signal from geometry"
+            )
