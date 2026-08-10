@@ -6,11 +6,14 @@ possible — segmentation cuts on chainage, crashes snap to chainage, and factor
 attach to chainage ranges.
 
 **Routing is not implemented yet.** This class takes a centreline that has already been
-resolved — from a GPX trace, a shapefile, a routing engine, or a hand-drawn line. The
-OSM routing step that turns two coordinates into a centreline constrained to a named
-road is Step 2.2b and is not built. What *is* built are the structural gates: a corridor
-that cannot be linearly referenced is rejected here rather than producing a panel whose
-numbers are all wrong but plausible.
+resolved. The OSM step that turns two coordinates into a centreline constrained to a
+named road is Step 2.2b and is not built.
+
+Until it is, the recommended source is an **export of the real road from OSM**, not a
+hand-drawn line — see :data:`CENTRELINE_GUIDANCE`, which the CLI prints and which is
+attached to the under-sampled-centreline warning. What *is* built here are the
+structural gates: a corridor that cannot be linearly referenced is rejected rather than
+producing a panel whose numbers are all wrong but plausible.
 """
 
 from __future__ import annotations
@@ -31,6 +34,38 @@ MIN_VERTEX_SPACING_M = 1.0
 
 #: A corridor shorter than this cannot support meaningful segmentation.
 MIN_CORRIDOR_LENGTH_M = 100.0
+
+#: How to obtain a centreline good enough to measure curvature from.
+#:
+#: Surfaced by the CLI and attached to the under-sampled-centreline warning, because
+#: that warning is exactly the moment somebody needs to know this. Exporting the road
+#: from OSM beats hand-drawing it: mappers already placed vertices densely through the
+#: bends, which is the only place curvature detail matters.
+CENTRELINE_GUIDANCE = """\
+Best source: export the real road from OpenStreetMap rather than drawing it.
+
+  1. Open https://overpass-turbo.eu and zoom to the corridor.
+  2. Run, with your road's ref in place of M51:
+
+       [out:json];
+       way["ref"="M51"]({{bbox}});
+       (._;>;);
+       out geom;
+
+  3. Export -> GeoJSON.
+  4. In QGIS: Vector > Geometry Tools > Merge Lines, to join the pieces OSM
+     returns into one line. Then export the vertices as CSV with `latitude`
+     and `longitude` columns.
+
+Why: OSM's own vertices are already dense through bends, which is where curvature
+detail matters. A hand-drawn line usually is not.
+
+If you must draw it by hand:
+  - Dense on the bends; sparse on the straights is fine, they cap anyway.
+  - Never cut a corner - two clicks across a curve become a fake sharp bend.
+  - Pick ONE carriageway on a divided road; do not zigzag between them.
+  - Do not double back on yourself.\
+"""
 
 
 @dataclass(frozen=True)
@@ -163,4 +198,9 @@ def _drop_duplicate_vertices(
     return cleaned
 
 
-__all__ = ["MIN_CORRIDOR_LENGTH_M", "MIN_VERTEX_SPACING_M", "Corridor"]
+__all__ = [
+    "CENTRELINE_GUIDANCE",
+    "MIN_CORRIDOR_LENGTH_M",
+    "MIN_VERTEX_SPACING_M",
+    "Corridor",
+]

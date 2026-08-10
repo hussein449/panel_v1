@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from roadrisk.geo.corridor import CENTRELINE_GUIDANCE
 from roadrisk.geo.segmentation import Segmentation
 
 #: Spacing the centreline is resampled to before curvature is measured. Short enough to
@@ -89,7 +90,8 @@ class CurvatureResult:
                 "straight segments meeting at artificially sharp joints. Curvature "
                 "here reads TIGHTER than the real road and must not be trusted. "
                 "Obtain a finer centreline, or raise the resample interval above the "
-                "source spacing and accept coarser curvature."
+                "source spacing and accept coarser curvature.\n\n"
+                + CENTRELINE_GUIDANCE
             )
         if self.n_units_capped:
             notes.append(

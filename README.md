@@ -74,6 +74,25 @@ table with `latitude`, `longitude` and `period`:
 roadrisk corridor centreline.csv --crashes crashes.csv --out runs/corridor-01
 ```
 
+### Getting a centreline
+
+**Export the real road from OpenStreetMap — do not draw it by hand.** OSM's own vertices
+are already dense through bends, which is the only place curvature detail matters, and a
+hand-drawn line usually is not. The tool prints the full recipe:
+
+```bash
+roadrisk centreline-help
+```
+
+In short: run an Overpass query for the road's `ref` at [overpass-turbo.eu](https://overpass-turbo.eu),
+export GeoJSON, merge the pieces into one line in QGIS, export the vertices as CSV.
+
+That is the same OSM data the automatic routing step (2.2b) will fetch once it exists —
+you are just doing it in a browser until then. If you do trace by hand, keep vertices
+dense through bends, never cut a corner, pick one carriageway on a divided road, and do
+not double back. The engine measures your vertex spacing and warns if it is too coarse
+to trust the curvature.
+
 ## Use as a library
 
 ```python

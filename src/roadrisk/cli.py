@@ -250,6 +250,10 @@ def corridor(
 
     Geography produces the panel; the engine judges it. Zero-crash rows exist because
     road exists, which is what makes Mode A admissible at all.
+
+    CENTRELINE is a CSV of ordered vertices with latitude and longitude columns.
+    Export the real road from OpenStreetMap rather than drawing it — run
+    'roadrisk centreline-help' for the recipe.
     """
     try:
         from roadrisk.geo import build_corridor_panel
@@ -272,8 +276,19 @@ def corridor(
             "with the defects a real police extract has.[/dim]\n"
         )
     elif centreline_path is None:
+        from roadrisk.geo.corridor import CENTRELINE_GUIDANCE
+
         console.print(
-            "[red]Supply a CENTRELINE csv, or pass --demo for a synthetic one.[/red]"
+            "[red]Supply a CENTRELINE csv, or pass --demo for a synthetic one.[/red]\n"
+        )
+        console.print(
+            Panel(
+                # Text(), not a bare string: the Overpass query contains [out:json],
+                # which Rich would otherwise swallow as a markup tag.
+                Text(CENTRELINE_GUIDANCE),
+                title="Where to get a centreline",
+                border_style="cyan",
+            )
         )
         raise typer.Exit(EXIT_REJECTED)
     else:
@@ -371,12 +386,39 @@ def _render_corridor(built) -> None:
     if built.warnings:
         console.print(
             Panel(
-                "\n\n".join(f"• {w}" for w in built.warnings),
+                # Text(), not markup: the under-sampling note embeds an Overpass query
+                # containing [out:json], which Rich would parse as a tag and drop.
+                Text("\n\n".join(f"• {w}" for w in built.warnings)),
                 title="Geometry notes",
                 border_style="yellow",
             )
         )
         console.print()
+
+
+@app.command("centreline-help")
+def centreline_help() -> None:
+    """How to get a corridor centreline good enough to measure curvature from."""
+    try:
+        from roadrisk.geo.corridor import CENTRELINE_GUIDANCE
+    except ModuleNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(EXIT_REJECTED) from exc
+
+    console.print(
+        Panel(
+            # Text(), not a bare string: the Overpass query contains [out:json],
+            # which Rich would otherwise swallow as a markup tag.
+            Text(CENTRELINE_GUIDANCE),
+            title="Where to get a centreline",
+            border_style="cyan",
+        )
+    )
+    console.print(
+        "[dim]Routing straight from two coordinates is Step 2.2b and is not built "
+        "yet. Until it is, this export is the same OSM data that step would fetch — "
+        "you are just doing it in a browser.[/dim]"
+    )
 
 
 @app.command()
