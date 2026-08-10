@@ -133,7 +133,7 @@ class TestModeB:
 
         assert result.index is None
         assert result.index_refusal is not None
-        assert "no available factor carries a cited weight" in result.index_refusal
+        assert "no available factor yields a usable weight" in result.index_refusal
 
     def test_scores_on_the_cited_subset_and_names_the_skips(
         self, crash_only_panel: pd.DataFrame

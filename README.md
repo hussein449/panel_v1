@@ -13,7 +13,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 
 | Stage | State |
 |---|---|
-| **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. |
+| **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
 | Stage 2 — geospatial pipeline | Not started |
 | Stage 3 — model depth (GLMM, GAM, Bayesian) | Not started |
 | Stage 4 — report and PDF | Not started |
@@ -88,13 +88,23 @@ most common and most damaging misuse of the method.
 **Mode B cannot produce a count.** Not by convention — the result type has no field to
 put one in. Mode B output can never be dressed in Mode A's language.
 
-**An uncited weight is refused.** Mode B will not score using a `default_weight` that
-carries no `weight_source`. A number the client cannot trace to either their own data or
-a named reference is a liability. An uncited factor is *absent* from the index, never
-silently weighted zero, and the report names it. Six factors are currently sourced from
-the AASHTO HSM and the Elvik Power Model — every weight computed, not chosen, by
-[`tools/derive_weights.py`](tools/derive_weights.py) and documented with its full
-derivation in [`docs/WEIGHTS.md`](docs/WEIGHTS.md).
+**An uncited weight is refused.** Mode B will not score using a weight that carries no
+`source`. A number the client cannot trace to a named reference is a liability. An
+uncited factor is *absent* from the index, never silently weighted zero, and the report
+names it.
+
+**A weight is a number plus the context it is valid in.** Each declares its facility
+type, region, crash severity and crash scope. A weight restricted to one facility is
+inadmissible on another; a fatal-crash weight never scores an injury panel. A regional
+mismatch is allowed but reported, because refusing would leave nothing usable outside
+North America. Every weight is computed, not chosen, by
+[`tools/derive_weights.py`](tools/derive_weights.py) — see
+[`docs/WEIGHTS.md`](docs/WEIGHTS.md).
+
+**Where two sources disagree, both are reported.** Never averaged. HSM prices grade at
++0.12 for total crashes on US rural two-lane roads; iRAP prices it at +0.49 for run-off
+and head-on crashes globally. Four times apart and not in conflict — they answer
+different questions, so the engine marks them not-comparable and prints both.
 
 **A contradicted sign is flagged, never quietly reported.** Every factor declares an
 `expected_sign`. A fitted coefficient pointing the other way triggers the diagnostics
@@ -117,6 +127,8 @@ src/roadrisk/
 ├── core/                    plain library — no web, no network, no database
 │   ├── registry/            declarative factors (schema, loader, factors.yaml)
 │   ├── contract.py          the six required columns; exposure derivation
+│   ├── context.py           what kind of corridor, and what crashes were counted
+│   ├── weights.py           weight selection and source-agreement scoring
 │   ├── transforms.py        ln / ln1p / identity / zscore, each guarded
 │   ├── diagnostics.py       VIF, correlation, dispersion
 │   ├── gates.py             the nine validation checks

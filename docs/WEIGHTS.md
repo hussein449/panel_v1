@@ -1,284 +1,280 @@
-# Mode B Weights — Sources and Derivations
+# Mode B Weights — Sources, Derivations and Selection
 
-Every `default_weight` in the factor registry, where it came from, and the arithmetic
-that turned a published crash modification factor into a registry weight.
+Every weight in the factor registry: where it came from, the arithmetic that turned a
+published multiplier into a registry weight, the context it is valid in, and how the
+engine chooses between sources that disagree.
 
 **Regenerate everything:**
 
 ```bash
-python tools/derive_weights.py
+python tools/derive_weights.py            # report
+python tools/derive_weights.py --yaml     # registry-ready fragments
 ```
 
-Not one number below was chosen. Each is computed from a published equation, and a test
-(`test_registry_weights_match_the_derivation_script`) fails if the registry ever drifts
-from the script.
+Not one number below was chosen. Two tests enforce that in both directions: the registry
+may not drift from the script, and no weight may be introduced by hand that the script
+does not produce.
 
 ---
 
-## Provenance of the equations themselves — read this first
+## The rule that shapes all of this
 
-The HSM equations reproduced below were verified verbatim against the **NCHRP draft text
-for the second edition of the Highway Safety Manual**, which reproduces Chapter 10
-(rural two-lane two-way roads) with the equation numbering used here.
+**A weight is not a number. It is a number plus the context it is valid in.**
 
-They were **not** verified against a purchased copy of the printed AASHTO HSM. Each one
-was additionally checked against the worked examples in that same document — the
-arithmetic reproduces the published example answers exactly, which is good evidence the
-equations were read correctly, but it is not the same as checking the book.
+The first sourcing pass shipped bare numbers with citations, and every caveat that
+followed traced to the same gap: nothing recorded the facility type, region, crash
+severity or crash scope a weight was estimated for, so US rural two-lane injury-crash
+coefficients were applied to any corridor anywhere, silently.
 
-**Before any of this reaches a paying client, verify against a licensed copy of the
-AASHTO HSM.** That is a one-afternoon task and it closes the last provenance gap.
+Each weight now declares:
+
+| Field | Why it exists |
+|---|---|
+| `family` | `hsm`, `irap` or `elvik` — which body of evidence |
+| `facility_type` | Restricted weights are **inadmissible** elsewhere |
+| `region` | Never a filter, always a reported concern |
+| `severity` | A fatal weight must never score an injury panel |
+| `scope` | Total crashes vs run-off/head-on — different quantities |
+| `assumes` | Derivation conditions, checked against the actual run |
+| `caveat` | An intrinsic limitation, surfaced on every run |
+
+---
+
+## Provenance — read this before trusting any HSM number
+
+The HSM equations were verified verbatim against the **NCHRP draft text for the second
+edition of the Highway Safety Manual**, which reproduces Chapter 10 with the equation
+numbering used here. Each was additionally checked against the worked examples in that
+same document, and the arithmetic reproduces the published answers exactly.
+
+`tests/test_published_equations.py` writes each equation out a second time, independently
+of the derivation script, and asserts the published worked-example answer. If the script
+and the test ever disagree, one of them misread the manual.
+
+**This is not the same as checking the book.** Two gaps remain:
+
+1. It is the **draft** 2nd-edition text, not a licensed copy.
+2. **HSM 2nd edition (2024) is published and changed Parts C and D.** Some Chapter 10
+   content may be superseded. Nothing here is edition-pinned to a verifiable artefact.
+
+Closing this needs a licensed AASHTO HSM. It is on the open-decisions list in `STEPS.md`
+and it is cheap — one afternoon with the book.
+
+This is also the reason **iRAP is the preferred family**: it is free, openly documented,
+global, and — unlike HSM CMFs and the Power Model, which are treatment-effect constructs
+being repurposed — **cross-sectional by construction**, which is exactly what Mode B
+does.
 
 ---
 
 ## Why a derivation is needed at all
 
-Published CMFs are **multipliers on a safety performance function that already contains
-AADT**. The registry needs **log-scale coefficients on transformed columns**.
+Published CMFs and risk factors are **multipliers**. The registry needs **log-scale
+coefficients on transformed columns**, so that a Mode B weight sits on the same scale as
+a Mode A coefficient. That is what makes *"Mode B is the prior, Mode A is that prior
+updated by data"* a fact about the code rather than a slogan.
 
-The reason is not cosmetic. A Mode B weight has to sit on the same scale as a Mode A
-coefficient — that is what makes the two modes comparable, and what makes *"Mode B is
-the prior, Mode A is that prior updated by data"* a true statement about the code rather
-than a slogan.
+A multiplier `c` corresponds to a log-scale contribution of `ln(c)`. Where the
+relationship is already log-linear the coefficient falls straight out. Otherwise
+`ln(multiplier)` is fitted against the declared transform by least squares over a stated
+range, with R² reported.
 
-The conversion: a CMF of `c` corresponds to a log-scale contribution of `ln(c)`.
-
-- Where the CMF is already log-linear in the variable (roadside hazard rating), the
-  coefficient falls straight out and the weight is **exact**.
-- Where it is not, `ln(CMF)` is fitted against the registry's declared transform by
-  least squares over a stated range. The fitted intercept is discarded — Mode B is an
-  ordinal ranking, so a constant shifts every unit equally and cannot change the order.
-- R² is reported so a poor linearisation is visible rather than hidden.
+**Band midpoint rule.** Sources state multipliers per band with the top band unbounded.
+One rule throughout: interior bands use their true midpoint; the unbounded top band uses
+`threshold + half the width of the band below`. HSM's ">6%" becomes 7.5; iRAP's ">10%"
+becomes 11.25. A rule beats a preference, and it must be the same rule for both.
 
 ---
 
-## Summary
+## The weights
 
-| Factor | Transform | Weight | Fit | Source |
-|---|---|---|---|---|
-| `speed_limit` | `ln` | **+1.6000** | exact | Elvik (2009) Power Model, TØI 1034/2009 |
-| `access_density` | `ln1p` | **+0.1658** | R² 0.965 | HSM Eq. 10-17 |
-| `grade_pct` | `ln1p` | **+0.1212** | R² 1.000 † | HSM Table 10-11 |
-| `curve_radius_min` | `ln` | **−0.1855** | R² 0.878 | HSM Eq. 10-13 |
-| `lit` | `identity` | **−0.0817** | exact | HSM Eq. 10-21 + Table 10-12 |
-| `roadside_hazard_score` | `identity` | **+0.0668** | exact | HSM Eq. 10-20 |
+| Factor | Family | Weight | Fit | Facility | Region | Severity | Scope |
+|---|---|---|---|---|---|---|---|
+| `speed_limit` | elvik | **+1.6000** | exact | any | global | injury | total |
+| `speed_limit` | elvik | **+4.1000** | exact | any | global | fatal | total |
+| `operating_speed_85` | elvik | **+1.6000** | exact | any | global | injury | total |
+| `operating_speed_85` | elvik | **+4.1000** | exact | any | global | fatal | total |
+| `grade_pct` | irap | **+0.4863** | R² 0.795 | any | global | all | run-off/head-on |
+| `grade_pct` | hsm | **+0.1212** | R² 1.000 † | rural 2-lane | N. America | all | total |
+| `access_density` | hsm | **+0.1658** | R² 0.965 | rural 2-lane | N. America | all | total |
+| `curve_radius_min` | hsm | **−0.1855** | R² 0.878 | rural 2-lane | N. America | all | total |
+| `lit` | hsm | **−0.0817** | exact | rural 2-lane | N. America | all | total |
+| `roadside_hazard_score` | hsm | **+0.0668** | exact | rural 2-lane | N. America | all | total |
 
-† Three points and two fitted parameters. The R² is near-saturated and is not evidence
-of anything; the source table is.
+† Three points, two fitted parameters. Near-saturated and not evidence of anything; the
+source table is.
 
-All six agree with the `expected_sign` already declared in the registry, which is a
-weak but real consistency check — the signs were declared from mechanism before any
-weight was looked up.
+Every weight agrees with the `expected_sign` declared from mechanism before any source
+was looked up. That is validated at load, per weight — one bad source cannot slip in
+behind a good one.
 
 ---
 
-## 1 · `roadside_hazard_score` — +0.0668
+## Selection
 
-**Source:** AASHTO HSM Equation 10-20, roadside design, rural two-lane two-way segments.
-RHR scale from Zegeer et al.; CMF from Harwood et al.
+Given several weights for one factor, the engine picks one. It never averages.
+
+**Admissibility** is strict on the two dimensions where the wrong weight is a
+*correctness* error rather than a transfer approximation:
+
+- **Facility type** — a weight restricted to one facility is inadmissible on another.
+  `any` is admissible everywhere.
+- **Severity** — a fatal weight must never score an injury panel. 1.6 versus 4.1 is a
+  factor-of-two error, not a nuance.
+
+**Region is deliberately not a filter.** Filtering on it would leave almost nothing
+admissible outside North America, which helps nobody. A regional mismatch is recorded as
+a concern and surfaced instead — the transfer problem stated out loud rather than hidden
+or used as an excuse to refuse.
+
+**Ranking** among admissible weights: exact facility beats `any`, exact region beats
+`global`, exact severity beats `all`, then family preference (iRAP → HSM → Elvik).
+
+**Consequence worth knowing:** an undeclared run admits only unrestricted weights. On
+the shipped registry that is one factor. Declaring `--facility-type rural_two_lane
+--region north_america --severity injury` admits four. The engine will not guess what
+kind of road it was handed.
+
+---
+
+## Agreement
+
+Where two or more admissible weights exist for one factor:
+
+- **Different `scope`** → not comparable, no score. HSM prices total crashes; iRAP's
+  grade factor prices run-off and head-on. An agreement score between them would compare
+  different quantities.
+- **Different sign** → score 0 and a flag. *(Unreachable through a registry — the
+  `expected_sign` validator rejects a contradicting source at load. Kept as defence in
+  depth.)*
+- **Otherwise** → `min(|w₁|, |w₂|) / max(|w₁|, |w₂|)`.
+
+The selected weight always comes from the selection rule. Agreement is *reported*, never
+used to average.
+
+**`grade_pct` is the worked example.** HSM says +0.12 for total crashes on US rural
+two-lane roads. iRAP says +0.49 for run-off and head-on crashes globally. Four times
+apart, and **not in conflict** — they answer different questions. Averaging them would
+produce a number neither source supports. The engine keeps both, marks them
+not-comparable, and prints both.
+
+---
+
+## Assumption checks
+
+Two weights were derived under conditions the run may not match. Both declare them, and
+the engine warns when the run differs by more than 25%:
+
+| Weight | Assumes | Why it matters |
+|---|---|---|
+| `curve_radius_min` | `segment_length_km: 0.5` | HSM Eq. 10-13 depends on curve length, so the weight is tied to the segmentation. Change the segmentation and regenerate it. |
+| `access_density` | `reference_aadt: 10000` | The source CMF depends on AADT, which Mode B does not have. |
+
+`segment_length_km` is **measured** from the panel, not declared, so the check cannot be
+gamed by declaring a convenient value.
+
+---
+
+## Per-weight detail
+
+### `roadside_hazard_score` — HSM +0.0668, exact
 
 > CMF₁₀ᵣ = e^(−0.6869 + 0.0668 × RHR) ⁄ e^(−0.4865)
 
-Base condition RHR = 3, on a 1 (best) to 7 (worst) scale.
+Since −0.6869 + 0.0668 × 3 = −0.4865 exactly, this reduces to
+`ln(CMF) = 0.0668 × (RHR − 3)`. No linearisation, no range, no assumption beyond the
+scale. **Check:** RHR 4 → 1.069, published example 1.07.
 
-**Derivation.** Since −0.6869 + 0.0668 × 3 = −0.4865 exactly, the expression simplifies
-to `CMF = exp(0.0668 × (RHR − 3))`, so `ln(CMF) = 0.0668 × (RHR − 3)`. The log-scale
-coefficient on RHR **is** 0.0668. No linearisation, no range, no assumption.
+*Units:* HSM roadside hazard rating, integer 1–7, base 3. A vision model emitting its own
+0–1 score must be mapped onto RHR first, and that mapping belongs in the report.
 
-**Check.** RHR = 4 → CMF = 1.069, matching the published worked example value of 1.07.
-
-**Assumption.** The column must be on the HSM RHR 1–7 scale. A vision model emitting its
-own 0–1 hazard score must be mapped onto RHR first, and that mapping is itself a
-modelling decision that belongs in the report.
-
-This is the cleanest weight in the set and the one to trust most.
-
----
-
-## 2 · `lit` — −0.0817
-
-**Source:** AASHTO HSM Equation 10-21, lighting, with Table 10-12 defaults for roadway
-type 2U. Underlying research: Elvik and Vaa.
+### `lit` — HSM −0.0817, exact
 
 > CMF₁₁ᵣ = 1.0 − [(1.0 − 0.72 × pᵢₙᵣ − 0.83 × pₚₙᵣ) × pₙᵣ]
 
-Table 10-12 (2U): pᵢₙᵣ = 0.382, pₚₙᵣ = 0.618, pₙᵣ = 0.370.
+Table 10-12 (2U): pᵢₙᵣ = 0.382, pₚₙᵣ = 0.618, pₙᵣ = 0.370 → CMF 0.9216 → weight
+ln(0.9216). A fully lit rural two-lane segment carries ~8% fewer total crashes.
 
-**Derivation.**
+*Caveat:* those proportions are Washington State HSIS data 2002–2006. Night-crash share
+varies enormously by country; replacing them with local values is cheap and high-value.
 
-```
-0.72 × 0.382 = 0.27504
-0.83 × 0.618 = 0.51294
-1.0 − 0.78798 = 0.21202
-0.21202 × 0.370 = 0.078447
-CMF = 1 − 0.078447 = 0.92155      →   weight = ln(0.92155) = −0.0817
-```
+### `speed_limit` / `operating_speed_85` — Elvik +1.6 (injury), +4.1 (fatal), exact
 
-A fully lit rural two-lane segment carries about **8% fewer total crashes**.
+Power Model `N ∝ V^k`, so `ln(N) = k·ln(V)` and the weight *is* the exponent.
 
-**Assumptions.** The column is the *proportion* of the segment lit, 0 to 1, so the weight
-scales linearly between unlit and fully lit. HSM Table 10-12 proportions come from
-Washington State HSIS data 2002–2006; night-crash share varies enormously by country and
-replacing these with local proportions is a cheap, high-value calibration.
+**The split is the fix.** The Power Model relates *operating* speed to crashes. Applied
+to `operating_speed_85` it carries no caveat at all. Applied to `speed_limit` it is an
+upper bound, because posted limit moves operating speed by materially less than 1:1 —
+and that weight declares a permanent `caveat` saying so, surfaced on every run.
 
----
+Deflating the posted weight would need a transfer coefficient nobody has published for
+*cross-sectional* ranking (the 25–50% figures in the literature are before-after, a
+different quantity). Inventing one would be worse than declaring the limitation.
 
-## 3 · `speed_limit` — +1.6000
+Measuring operating speed on even one corridor remains the single highest-value
+calibration available to Mode B.
 
-**Source:** Elvik (2009), the Power Model, TØI Report 1034/2009 — exponent **1.6 for all
-injury accidents on rural roads and freeways**, as reproduced in FHWA-HRT-17-098
-Chapter 2, Table 1.
+### `grade_pct` — HSM +0.1212 / iRAP +0.4863
 
-The same table gives 4.1 for fatal accidents, 4.6 for fatalities, and 2.2 for all injured
-road users.
+HSM Table 10-11: 1.00 / 1.10 / 1.16 for ≤3%, 3–6%, >6%, midpoints 1.5 / 4.5 / 7.5.
+iRAP: 1.0 / 1.2 / 1.7 for <7.5%, 7.5–10%, >10%, midpoints 3.75 / 8.75 / 11.25.
 
-**Derivation.** The Power Model is `N ∝ V^k`. Taking logs, `ln(N) = k × ln(V)`. The
-registry declares a `ln` transform on this column, so the weight **is** the exponent.
-Exact, no fitting.
+*Units:* absolute grade in percent. Neither source distinguishes upgrade from downgrade.
 
-**⚠ This is the least trustworthy weight in the registry, and the largest.**
-
-- The Power Model relates **mean operating speed** to crashes. This column is **posted
-  limit**. A change in posted limit moves operating speed by materially less than 1:1, so
-  applying 1.6 to posted limit **overstates** the effect and inflates this term relative
-  to the other five.
-- The exponent is severity-specific. The registry assumes the panel counts injury
-  crashes. If it counts fatal crashes, the correct exponent is 4.1.
-- Posted limit is frequently constant along a whole corridor, in which case the engine's
-  variance check drops the term before it ever reaches the model.
-
-Treat +1.6 as an upper bound and recalibrate against measured operating speed (Tier C) at
-the first opportunity. This is the single highest-value calibration available to Mode B.
-
----
-
-## 4 · `grade_pct` — +0.1212
-
-**Source:** AASHTO HSM Table 10-11, grades, rural two-lane two-way segments.
-
-| Terrain | Grade | CMF |
-|---|---|---|
-| Level | ≤ 3% | 1.00 |
-| Moderate | 3% < grade ≤ 6% | 1.10 |
-| Steep | > 6% | 1.16 |
-
-**Derivation.** Bands represented by midpoints 1.5% / 4.5% / 7.5%. Least-squares fit of
-`ln(CMF)` on `ln(1 + grade)`:
-
-| Grade | ln(1+g) | CMF | ln(CMF) |
-|---|---|---|---|
-| 1.5% | 0.9163 | 1.00 | 0.0000 |
-| 4.5% | 1.7047 | 1.10 | 0.0953 |
-| 7.5% | 2.1401 | 1.16 | 0.1484 |
-
-Slope = **0.1212**.
-
-**Assumptions.** Column must be **absolute** grade in percent — HSM Table 10-11 does not
-distinguish upgrade from downgrade, so neither does this weight. The steep band is
-unbounded above and 7.5% was chosen to represent it; a corridor with sustained grades
-well above 8% is under-weighted by this term.
-
----
-
-## 5 · `curve_radius_min` — −0.1855
-
-**Source:** AASHTO HSM Equation 10-13, horizontal curves, rural two-lane two-way
-segments. Regression model of Zegeer et al.
+### `curve_radius_min` — HSM −0.1855, R² 0.878
 
 > CMF₃ᵣ = (1.55 × L_c + 80.2⁄R − 0.012 × S) ⁄ (1.55 × L_c)
 
-where L_c = curve length in miles, R = radius in feet, S = 1 if a spiral transition is
-present, 0 if not.
+Fitted over 50–1600 m assuming a 0.5 km segment fully in curve, no spiral. **Check:**
+0.1 mi / 1,200 ft → 1.431, published example 1.43.
 
-**Check.** L_c = 0.1 mi, R = 1,200 ft, S = 0 → CMF = 1.431, matching the published worked
-example value of 1.43.
+*Weakest fit in the registry* — a `1 + c/R` relationship is only roughly log-linear, so
+it under-weights very tight curves. Declared as a caveat. *Units:* metres.
 
-**Derivation.** Assuming a 0.5 km segment (0.3107 mi) fully in curve with no spiral,
-`ln(CMF)` is fitted on `ln(R)` for R from 50 m to 1,600 m. Slope = **−0.1855**,
-R² = 0.878.
+### `access_density` — HSM +0.1658, R² 0.965
 
-**Assumptions — this is the weakest of the six.**
+> CMF₆ᵣ = [0.322 + DD × k] ⁄ [0.322 + 5 × k],  k = 0.05 − 0.005 × ln(AADT)
 
-- **R² 0.878.** A `1 + c/R` relationship is only roughly log-linear, so the weight is a
-  compromise across the radius range. It under-weights very tight curves.
-- **Tied to the segmentation length.** HSM Eq. 10-13 depends on curve length, so the
-  0.5 km assumption is baked into the number. **Change the segmentation and this weight
-  must be regenerated.**
-- Column must be minimum radius in **metres**; the foot conversion is inside the weight.
-- The adapter must cap radius on tangent sections — an uncapped infinity fails the `ln`
-  transform, by design.
+Fitted over 3–20 accesses/km at AADT 10,000. **Check:** DD 6 @ 10,000 → 1.012, published
+example 1.01. *Units:* accesses per **km**, both sides; the mile conversion is inside the
+weight.
 
 ---
 
-## 6 · `access_density` — +0.1658
+## Still uncited — 14 factors
 
-**Source:** AASHTO HSM Equation 10-17, driveway density, rural two-lane two-way segments.
-Derived from the work of Muskaug.
+Each factor's `notes` in `factors.yaml` records its own reason. Summary:
 
-> CMF₆ᵣ = [0.322 + DD × (0.05 − 0.005 × ln(AADT))] ⁄ [0.322 + 5 × (0.05 − 0.005 × ln(AADT))]
-
-where DD = driveways per mile counting both sides. Base condition is 5 driveways/mile;
-below that the HSM sets CMF₆ᵣ = 1.00.
-
-**Check.** DD = 6, AADT = 10,000 → CMF = 1.012, matching the published worked example
-value of 1.01.
-
-**Derivation.** Evaluated at a reference AADT of 10,000, `ln(CMF)` is fitted on
-`ln(1 + accesses per km)` across 3–20 accesses/km. Slope = **+0.1658**, R² = 0.965.
-
-**Assumptions.**
-
-- **The source CMF depends on AADT, which Mode B does not have.** 10,000 is the value
-  used in the HSM's own worked example. The AADT term is weak — it enters only as
-  `0.05 − 0.005 × ln(AADT)` — but this is an assumption, not a measurement.
-- Column must be accesses **per kilometre**, both sides. The mile conversion is inside
-  the weight; do not convert the column as well.
-
----
-
-## The transfer problem
-
-**Every HSM weight above was estimated on US rural two-lane two-way highways.** The
-target market for this tool is Lebanon, MENA, South Asia and much of Africa — different
-vehicle fleets, different enforcement, different roadside activity, different crash
-reporting.
-
-Applying these weights outside that facility type and that country is an extrapolation,
-and it is **the largest single source of error in Mode B**.
-
-It is defensible only because Mode B is an **ordinal ranking**. A common scaling error
-moves every unit together and leaves the order intact. It would not be defensible for a
-predicted count — which is one reason the engine structurally refuses to emit one.
-
-Every assessment must say this. It belongs on the limitations page (Step 4.3).
-
----
-
-## Still unsourced, and why
-
-Fourteen of twenty factors carry no weight and therefore do not enter the index. They are
-not weighted zero — they are absent, and the report names them.
-
-| Factor | Why not sourced |
+| Factor | Why not |
 |---|---|
-| `traffic_proxy` | Our own construct — graph centrality has no published crash weight. Deliberately never labelled `aadt`, so the HSM AADT exponent does not transfer. |
-| `junction_density` | The HSM models intersections as separate entities with their own SPFs, not as a segment-level density. No transferable CMF exists. |
-| `curve_density` | HSM Eq. 10-13 prices curve *severity* via radius, not curve *frequency* per km. Sourcing this needs a different study. |
-| `ramp_density` | Open blocker — the term inverts on M51 and is not diagnosable on one corridor. Sourcing a weight before the sign is understood would be premature. |
-| `lanes` | The HSM prices lane *width*, not lane *count*. Different quantity. |
-| `median_present` | Plausibly sourceable from HSM Chapter 11 (rural multilane) divided/undivided SPFs. Not yet done. |
-| `sidewalk_present` | FHWA pedestrian CMFs exist but apply to pedestrian crashes specifically, not total crashes. Needs a severity-aware index first. |
-| `surface_paved` | Paved/unpaved is not a condition index. Skid resistance and IRI are the priced Tier D quantities that actually carry the effect. |
-| `poi_density`, `population_density`, `building_density`, `roadside_object_density`, `night_ratio`, `sight_distance_proxy` | No standard published weight on any comparable scale. |
+| `traffic_proxy` | Our own construct. No published weight exists for graph centrality, and the HSM AADT exponent does not transfer precisely because this is not AADT. |
+| `junction_density` | HSM models intersections as separate entities with their own SPFs; iRAP prices intersection type per intersection. Neither prices junction *frequency* along a segment. |
+| `curve_density` | Both sources price curve *severity* via radius, not curve *frequency* per km. |
+| `ramp_density` | **Deliberate.** The sign inverts on M51 and is not diagnosable on one corridor. Sourcing a weight before the sign is understood would lend false confidence to a term known to behave badly. |
+| `lanes` | Both sources price lane *width*, not *count*. |
+| `median_present` | **Best next candidate.** HSM Chapter 11 divided/undivided SPFs, and iRAP prices median type directly. |
+| `sidewalk_present` | FHWA and iRAP both price this for *pedestrian* crashes. Enters with scope `pedestrian`, which needs a severity-aware index first. |
+| `surface_paved` | iRAP's road condition attribute grades condition, not surface type. |
+| `roadside_object_density`, `sight_distance_proxy` | iRAP prices both, but the numeric factors need the Methodology Reference Guide. |
+| `poi_density`, `population_density`, `building_density`, `night_ratio` | No standard published weight on a comparable scale. |
 
-**Next best candidates:** `median_present` (HSM Chapter 11) and `curve_density` (a
-curve-frequency study rather than a radius CMF). Both are ordinary literature work.
+**The iRAP coverage gap.** iRAP publishes Road Attribute Risk Factor fact sheets per
+attribute, and the consolidated **Methodology Reference Guide v3.10** describes all of
+them. The Guide sits behind free SSO registration at
+`resources.irap.org`, and individual fact sheets were not reliably retrievable.
+Only **grade** could be verified from a retrieved fact sheet, so only grade was sourced.
+
+Completing the iRAP set is the highest-value next step for Mode B — it would plausibly
+source `median_present`, `surface_paved`, `sight_distance_proxy` and
+`roadside_object_density`, and add a global cross-check to every HSM weight. It needs one
+free registration and the Guide.
 
 ---
 
 ## Sources
 
-- [NCHRP draft text for the second edition of the Highway Safety Manual](https://onlinepubs.trb.org/onlinepubs/nchrp/nchrp_wod_297Draft.pdf) — Chapter 10, rural two-lane two-way roads. Equations 10-13, 10-17, 10-20, 10-21 and Tables 10-11, 10-12 verified verbatim here, and checked against the worked examples in the same document.
-- [FHWA-HRT-17-098, *Self-Enforcing Roadways: A Guidance Report*, Chapter 2](https://www.fhwa.dot.gov/publications/research/safety/17098/003.cfm) — reproduces the Elvik (2009) Power Model exponents (Table 1).
-- Elvik, R. (2009), *The Power Model of the relationship between speed and road safety: update and new analyses*, TØI Report 1034/2009, Institute of Transport Economics, Oslo — the primary source for the speed exponent. Cited via FHWA above; the report itself was not retrieved.
+- [NCHRP draft text for the second edition of the Highway Safety Manual](https://onlinepubs.trb.org/onlinepubs/nchrp/nchrp_wod_297Draft.pdf) — Chapter 10. Equations 10-13, 10-17, 10-20, 10-21 and Tables 10-11, 10-12 verified verbatim and checked against the worked examples in the same document.
+- [FHWA-HRT-17-098, *Self-Enforcing Roadways: A Guidance Report*, Chapter 2](https://www.fhwa.dot.gov/publications/research/safety/17098/003.cfm) — reproduces the Elvik (2009) Power Model exponents (Table 1): 1.6 injury, 4.1 fatal, 4.6 fatalities, 2.2 injured road users, for rural roads and freeways.
+- Elvik, R. (2009), *The Power Model of the relationship between speed and road safety: update and new analyses*, TØI Report 1034/2009, Institute of Transport Economics, Oslo. Cited via FHWA above; the report itself was not retrieved.
+- [iRAP methodology and Road Attribute Risk Factor fact sheets](https://irap.org/methodology/) — grade risk factors 1.0 / 1.2 / 1.7. The consolidated Methodology Reference Guide v3.10 requires free registration at [resources.irap.org](https://resources.irap.org/Key-documents/).
 - [FHWA CMF Clearinghouse — HSM resources](https://cmfclearinghouse.fhwa.dot.gov/resources_hsm.php) — for cross-checking CMF provenance.

@@ -5,6 +5,107 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
+## 2026-08-10 (later) — Weights become context-aware; the caveats close
+
+**Delivered:** the three caveats flagged in the previous entry, fixed at their shared
+root cause rather than individually. A weight is no longer a bare number with a
+citation; it declares the context it is valid in, and the engine picks accordingly.
+
+**Verified:** 166 tests pass, `ruff check` clean, and the two demo runs below differ in
+exactly the intended way.
+
+### The root cause
+
+All three caveats — draft-text provenance, the posted-versus-operating speed exponent,
+and US-rural-two-lane transfer — were symptoms of one gap: **nothing recorded what
+context a weight was valid in.** So US rural two-lane injury-crash coefficients were
+applied to any corridor anywhere, silently.
+
+Each weight now declares `family`, `facility_type`, `region`, `severity`, `scope`,
+`assumes` and `caveat`. `Factor.default_weight` is gone; `Factor.weights` is a list.
+The loader raises a named migration error on the old schema rather than letting
+pydantic produce a riddle.
+
+### Selection, and what it refuses
+
+Admissibility is strict where the wrong weight is a *correctness* error: a weight
+restricted to one facility type is inadmissible on another, and a fatal-crash weight
+never scores an injury panel. Region is deliberately **not** a filter — filtering on it
+would leave almost nothing admissible outside North America, so a regional mismatch is
+recorded as a concern and surfaced instead. That is the transfer problem stated out
+loud rather than hidden or used as an excuse to refuse.
+
+Visible consequence, and the verification the plan asked for:
+
+```
+roadrisk demo --crash-rows-only                                    → 1 term
+roadrisk demo --crash-rows-only --facility-type rural_two_lane \
+              --region north_america --severity injury             → 4 terms
+```
+
+An undeclared run admits only unrestricted weights. The engine does not guess what kind
+of road it was handed.
+
+### Agreement — the caveat turned into the differentiator
+
+Where two sources cover one factor, the engine reports how far apart they are and never
+averages them. `grade_pct` is the worked example: HSM says **+0.12** for total crashes
+on US rural two-lane roads, iRAP says **+0.49** for run-off and head-on crashes
+globally. Four times apart, and **not in conflict** — they answer different questions.
+The engine marks them not-comparable on `scope` and prints both.
+
+Adding `CrashScope` was the non-obvious part. Without it a naive agreement score would
+have compared a total-crash weight against a run-off-only weight and reported a
+meaningless 0.25.
+
+### Caveat 2, fixed by splitting the factor
+
+`operating_speed_85` is now a distinct registry factor. The Elvik exponents are
+methodologically correct there and carry **no caveat at all**. On `speed_limit` they
+carry a permanent one, surfaced on every run. Both are severity-tagged — 1.6 injury,
+4.1 fatal — and the engine cannot apply one to the other's panel.
+
+Deflating the posted weight was considered and rejected: the 25–50% transfer figures in
+the literature are *before-after*, and Mode B is *cross-sectional*. Inventing a transfer
+coefficient would have been worse than declaring the limitation.
+
+### Caveat 1, narrowed but not closed
+
+`tests/test_published_equations.py` writes each HSM equation out a second time,
+independently of the derivation script, and asserts the worked-example answer the
+source publishes — RHR 4 → 1.07, DD 6 @ AADT 10,000 → 1.01, curve 0.1 mi / 1,200 ft →
+1.43. A transcription error can no longer pass silently.
+
+That is not the same as checking the book, and **HSM 2nd edition (2024) is published
+and changed Parts C and D**. Closing this needs a licensed copy. It stays on the
+open-decisions list.
+
+### Assumption checks
+
+`curve_radius_min` declares `segment_length_km: 0.5`; `access_density` declares
+`reference_aadt: 10000`. The engine compares them against the actual run and warns
+above 25% deviation. `segment_length_km` is **measured** from the panel, not declared,
+so the check cannot be gamed.
+
+### What I could not get
+
+iRAP publishes Road Attribute Risk Factor fact sheets per attribute, and they are the
+right source for this product — global, and cross-sectional by construction, which is
+what Mode B actually does. Only **grade** was retrievable; the consolidated Methodology
+Reference Guide v3.10 sits behind free SSO registration.
+
+So iRAP contributes one weight instead of the five or six it could. Completing that set
+is the highest-value next step for Mode B and needs one free registration.
+
+### Note on an unreachable branch
+
+`assess_agreement` scores a sign conflict at zero and flags it. A registry cannot reach
+that path — the `expected_sign` validator rejects a contradicting source at load. It is
+kept as defence in depth, tested by constructing the selection directly, and the
+docstring says so rather than leaving a reader to wonder.
+
+---
+
 ## 2026-08-10 — Mode B weights sourced; Mode B now scores
 
 **Delivered:** six of twenty registry factors now carry weights derived from published

@@ -48,8 +48,31 @@ def _yaml(*entries: str) -> str:
     return head + "".join(entry.split("factors:", 1)[1] for entry in rest)
 
 
-def factor_yaml(name: str, column: str, sign: str = "+", priority: int = 10) -> str:
-    return MINIMAL.format(name=name, column=column, sign=sign, priority=priority)
+def factor_yaml(
+    name: str,
+    column: str,
+    sign: str = "+",
+    priority: int = 10,
+    weights: str = "",
+) -> str:
+    return (
+        MINIMAL.format(name=name, column=column, sign=sign, priority=priority) + weights
+    )
+
+
+def weight_yaml(
+    value: float,
+    *,
+    family: str = "hsm",
+    source: str = "AASHTO HSM Eq. 10-20",
+    extra: str = "",
+) -> str:
+    return (
+        "    weights:\n"
+        f"      - value: {value}\n"
+        f"        family: {family}\n"
+        f'        source: "{source}"\n' + extra
+    )
 
 
 class TestShippedRegistry:
@@ -68,39 +91,61 @@ class TestShippedRegistry:
     def test_every_weight_carries_a_citation(self, shipped_registry: Registry) -> None:
         """The invariant that matters — a weight without a source must not exist."""
         for factor in shipped_registry.factors:
-            if factor.default_weight is not None:
-                assert factor.weight_source, factor.name
+            for weight in factor.weights:
+                assert weight.source.strip(), factor.name
 
     def test_citations_name_a_document_not_just_a_number(
         self, shipped_registry: Registry
     ) -> None:
         for factor in shipped_registry.factors:
-            if not factor.is_sourced:
-                continue
-            source = str(factor.weight_source)
-            assert any(
-                token in source for token in ("HSM", "TOI", "FHWA", "Elvik")
-            ), f"{factor.name} citation names no recognisable source: {source!r}"
+            for weight in factor.weights:
+                assert any(
+                    token in weight.source
+                    for token in ("HSM", "TOI", "FHWA", "Elvik", "iRAP")
+                ), f"{factor.name} citation names no recognisable source"
 
     def test_registry_weights_match_the_derivation_script(
         self, shipped_registry: Registry
     ) -> None:
         """The registry must not drift from the arithmetic that produced it.
 
-        Every sourced weight is computed in tools/derive_weights.py from a published
-        equation. If someone hand-edits a weight, this fails.
+        Every weight is computed in tools/derive_weights.py from a published equation.
+        Hand-editing one is a test failure, not a silent change.
         """
         derivations = _load_derivation_module()
-        computed = {
-            derive().factor: derive().weight for derive in derivations.DERIVATIONS
+
+        for derive in derivations.DERIVATIONS:
+            result = derive()
+            factor = shipped_registry.by_name(result.factor)
+            match = [
+                w
+                for w in factor.weights
+                if w.family.value == result.family
+                and w.severity.value == result.severity
+            ]
+            assert match, (
+                f"{result.factor}: derivation produces a {result.family}/"
+                f"{result.severity} weight the registry does not declare"
+            )
+            assert abs(match[0].value - result.value) < 5e-5, (
+                f"{result.key}: registry has {match[0].value}, "
+                f"derivation gives {result.value:.6f}"
+            )
+
+    def test_every_registry_weight_comes_from_the_script(
+        self, shipped_registry: Registry
+    ) -> None:
+        """The reverse direction — no weight may be introduced by hand."""
+        derivations = _load_derivation_module()
+        derived = {
+            (d.factor, d.family, d.severity)
+            for d in (derive() for derive in derivations.DERIVATIONS)
         }
 
-        for name, weight in computed.items():
-            declared = shipped_registry.by_name(name).default_weight
-            assert declared is not None, f"{name} is derived but not set in the registry"
-            assert abs(declared - weight) < 5e-5, (
-                f"{name}: registry has {declared}, derivation gives {weight:.6f}"
-            )
+        for factor in shipped_registry.factors:
+            for weight in factor.weights:
+                key = (factor.name, weight.family.value, weight.severity.value)
+                assert key in derived, f"{key} is in the registry but not derived"
 
     def test_derived_weights_agree_with_their_declared_signs(
         self, shipped_registry: Registry
@@ -110,8 +155,41 @@ class TestShippedRegistry:
             result = derive()
             factor = shipped_registry.by_name(result.factor)
             expected = 1 if factor.expected_sign is Sign.POSITIVE else -1
-            observed = 1 if result.weight > 0 else -1
+            observed = 1 if result.value > 0 else -1
             assert observed == expected, result.factor
+
+    def test_speed_is_split_into_posted_and_operating(
+        self, shipped_registry: Registry
+    ) -> None:
+        """The Power Model applies to operating speed, so posted gets its own factor.
+
+        Keeping them as one column is what made the caveat unavoidable.
+        """
+        posted = shipped_registry.by_name("speed_limit")
+        operating = shipped_registry.by_name("operating_speed_85")
+
+        assert posted.column != operating.column
+        assert all(w.caveat for w in posted.weights), "posted weights must self-declare"
+        assert not any(w.caveat for w in operating.weights)
+
+    def test_speed_weights_are_severity_specific(
+        self, shipped_registry: Registry
+    ) -> None:
+        severities = {
+            w.severity.value for w in shipped_registry.by_name("speed_limit").weights
+        }
+        assert {"injury", "fatal"} <= severities
+
+    def test_sources_that_disagree_are_both_kept(
+        self, shipped_registry: Registry
+    ) -> None:
+        """grade_pct carries HSM and iRAP weights that differ four-fold.
+
+        Keeping both, with their scopes declared, is the point. Averaging them would
+        produce a number neither source supports.
+        """
+        families = {w.family.value for w in shipped_registry.by_name("grade_pct").weights}
+        assert {"hsm", "irap"} <= families
 
     def test_carries_its_own_checksum(self, shipped_registry: Registry) -> None:
         assert shipped_registry.sha256
@@ -140,23 +218,49 @@ class TestValidation:
             parse_registry(text)
 
     def test_rejects_weight_without_citation(self) -> None:
-        text = factor_yaml("a", "col_a") + "    default_weight: 0.3\n"
-        with pytest.raises(RegistryError, match="must carry a citation"):
+        text = factor_yaml(
+            "a",
+            "col_a",
+            weights="    weights:\n      - value: 0.3\n        family: hsm\n",
+        )
+        with pytest.raises(RegistryError, match="source"):
             parse_registry(text)
 
-    def test_rejects_citation_without_weight(self) -> None:
-        text = factor_yaml("a", "col_a") + '    weight_source: "HSM"\n'
-        with pytest.raises(RegistryError, match="no default_weight"):
+    def test_rejects_weight_with_empty_citation(self) -> None:
+        text = factor_yaml("a", "col_a", weights=weight_yaml(0.3, source=""))
+        with pytest.raises(RegistryError, match="source"):
             parse_registry(text)
 
     def test_rejects_weight_contradicting_expected_sign(self) -> None:
         """The registry must not ship a contradiction with itself."""
-        text = (
-            factor_yaml("a", "col_a", sign="+")
-            + "    default_weight: -0.3\n"
-            + '    weight_source: "HSM"\n'
+        text = factor_yaml("a", "col_a", sign="+", weights=weight_yaml(-0.3))
+        with pytest.raises(RegistryError, match="must not ship a contradiction"):
+            parse_registry(text)
+
+    def test_checks_every_weight_not_just_the_first(self) -> None:
+        """One bad source must not slip in behind a good one."""
+        text = factor_yaml("a", "col_a", sign="+", weights=weight_yaml(0.3)) + (
+            "      - value: -0.4\n"
+            "        family: irap\n"
+            '        source: "iRAP fact sheet"\n'
         )
         with pytest.raises(RegistryError, match="must not ship a contradiction"):
+            parse_registry(text)
+
+    def test_rejects_indistinguishable_weights(self) -> None:
+        """Two weights matching the same context would make selection arbitrary."""
+        text = factor_yaml("a", "col_a", weights=weight_yaml(0.3)) + (
+            "      - value: 0.4\n"
+            "        family: hsm\n"
+            '        source: "AASHTO HSM Eq. 10-13"\n'
+        )
+        with pytest.raises(RegistryError, match="Selection would be"):
+            parse_registry(text)
+
+    def test_rejects_the_pre_0_2_schema_by_name(self) -> None:
+        """A confusing `extra fields not permitted` would waste an afternoon."""
+        text = factor_yaml("a", "col_a") + "    default_weight: 0.3\n"
+        with pytest.raises(RegistryError, match="pre-0.2 single-weight schema"):
             parse_registry(text)
 
     def test_error_names_the_factor_not_its_index(self) -> None:

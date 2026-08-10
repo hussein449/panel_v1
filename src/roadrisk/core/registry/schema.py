@@ -65,6 +65,125 @@ class Licence(StrEnum):
     CLIENT = "client"
 
 
+class WeightFamily(StrEnum):
+    """Which body of evidence a weight comes from.
+
+    Preference order for selection is declared in ``roadrisk.core.weights`` — iRAP
+    first, because it is global and cross-sectional by construction, which is what
+    Mode B actually does.
+    """
+
+    IRAP = "irap"
+    HSM = "hsm"
+    ELVIK = "elvik"
+
+
+class FacilityType(StrEnum):
+    """The road type a weight was estimated on, or that a corridor is.
+
+    ``ANY`` on a weight means the source does not restrict by facility. ``ANY`` on a
+    run means the corridor type was not declared, in which case only unrestricted
+    weights are admissible — the engine will not guess.
+    """
+
+    RURAL_TWO_LANE = "rural_two_lane"
+    RURAL_MULTILANE = "rural_multilane"
+    URBAN_ARTERIAL = "urban_arterial"
+    ANY = "any"
+
+
+class Region(StrEnum):
+    """Where a weight was estimated, or where a corridor is."""
+
+    NORTH_AMERICA = "north_america"
+    EUROPE = "europe"
+    AUSTRALASIA = "australasia"
+    GLOBAL = "global"
+
+
+class Severity(StrEnum):
+    """Which crashes a weight predicts.
+
+    This is not decoration. The Elvik Power Model exponent is 1.6 for injury crashes
+    and 4.1 for fatal ones — applying the wrong one is a factor-of-two error, and
+    before this existed the registry silently assumed injury.
+    """
+
+    ALL = "all"
+    INJURY = "injury"
+    FSI = "fsi"
+    FATAL = "fatal"
+
+
+class CrashScope(StrEnum):
+    """Which crash types a weight covers.
+
+    HSM CMFs are stated for *total* segment crashes. iRAP risk factors are stated per
+    crash type — its curvature factor covers run-off and head-on only. Two weights
+    with different scopes are measuring different quantities, and an agreement score
+    between them is not a like-for-like comparison. The engine records the mismatch
+    rather than quietly averaging across it.
+    """
+
+    TOTAL = "total"
+    RUN_OFF_HEAD_ON = "run_off_head_on"
+    INTERSECTION = "intersection"
+    PEDESTRIAN = "pedestrian"
+
+
+class Weight(BaseModel):
+    """One published weight for one factor, with the context it is valid in.
+
+    A weight used to be a bare number plus a citation. That was the root cause of
+    every caveat in the first sourcing pass: nothing recorded the facility type, the
+    region, the severity or the crash scope a number was estimated for, so the engine
+    applied US rural two-lane injury-crash coefficients to any corridor anywhere and
+    said nothing.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    value: float
+    source: str = Field(min_length=1, description="Citation. Never optional.")
+    family: WeightFamily
+
+    facility_type: FacilityType = FacilityType.ANY
+    region: Region = Region.GLOBAL
+    severity: Severity = Severity.ALL
+    scope: CrashScope = CrashScope.TOTAL
+
+    fit_r2: float | None = Field(
+        default=None,
+        description="Linearisation quality where the weight was fitted; None if exact.",
+    )
+    assumes: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Run conditions this weight was derived under, checked against the actual "
+            "run. e.g. {'segment_length_km': 0.5} or {'reference_aadt': 10000}."
+        ),
+    )
+    caveat: str | None = Field(
+        default=None,
+        description=(
+            "A limitation intrinsic to this weight, true on every run regardless of "
+            "context. Always surfaced as a concern — this is how a known-imperfect "
+            "weight stays usable without becoming quietly trusted."
+        ),
+    )
+    notes: str | None = None
+
+    @property
+    def sign(self) -> int:
+        if self.value > 0:
+            return 1
+        return -1 if self.value < 0 else 0
+
+    @property
+    def is_exact(self) -> bool:
+        return self.fit_r2 is None
+
+
 class Adapter(BaseModel):
     """One way of obtaining a factor.
 
@@ -96,46 +215,58 @@ class Factor(BaseModel):
     drop_priority: int = Field(
         description="Descent order when the ladder must shed terms. Lower is dropped first."
     )
-    default_weight: float | None = Field(
-        default=None,
-        description="Mode B weight, on the transformed scale. None means unsourced.",
-    )
-    weight_source: str | None = Field(
-        default=None,
-        description="Citation for default_weight. Required whenever a weight is set.",
+    weights: list[Weight] = Field(
+        default_factory=list,
+        description=(
+            "Published weights for this factor, each carrying the context it is valid "
+            "in. Empty means uncited, and an uncited factor never enters Mode B."
+        ),
     )
     notes: str | None = None
 
     @property
     def is_sourced(self) -> bool:
-        """True when this factor can legitimately be used by Mode B."""
-        return self.default_weight is not None and bool(self.weight_source)
+        """True when this factor carries at least one cited weight."""
+        return bool(self.weights)
+
+    def weights_from(self, family: WeightFamily) -> list[Weight]:
+        return [w for w in self.weights if w.family is family]
 
     @model_validator(mode="after")
-    def _weight_requires_citation(self) -> Factor:
-        if self.default_weight is not None and not self.weight_source:
+    def _weights_agree_with_expected_sign(self) -> Factor:
+        """A weight contradicting its own declared sign is a registry bug, not a finding.
+
+        This runs per weight, so one bad source cannot slip in behind a good one.
+        """
+        for weight in self.weights:
+            if weight.sign == 0 or weight.sign == self.expected_sign.as_int:
+                continue
             raise ValueError(
-                f"factor '{self.name}' sets default_weight={self.default_weight} but no "
-                "weight_source. Every published weight must carry a citation."
-            )
-        if self.weight_source and self.default_weight is None:
-            raise ValueError(
-                f"factor '{self.name}' has a weight_source but no default_weight."
+                f"factor '{self.name}' declares expected_sign "
+                f"'{self.expected_sign.value}' but the weight from "
+                f"{weight.family.value} is {weight.value}. Fix one of them — the "
+                "registry must not ship a contradiction with itself."
             )
         return self
 
     @model_validator(mode="after")
-    def _weight_agrees_with_expected_sign(self) -> Factor:
-        """A weight that contradicts its own declared sign is a registry bug, not a finding."""
-        if self.default_weight is None or self.default_weight == 0:
-            return self
-        observed = 1 if self.default_weight > 0 else -1
-        if observed != self.expected_sign.as_int:
-            raise ValueError(
-                f"factor '{self.name}' declares expected_sign '{self.expected_sign.value}' "
-                f"but default_weight is {self.default_weight}. Fix one of them — the "
-                "registry must not ship a contradiction."
+    def _weights_are_distinguishable(self) -> Factor:
+        """Two weights matching the same context would make selection arbitrary."""
+        seen: set[tuple[str, str, str, str]] = set()
+        for weight in self.weights:
+            key = (
+                weight.family.value,
+                weight.facility_type.value,
+                weight.region.value,
+                weight.severity.value,
             )
+            if key in seen:
+                raise ValueError(
+                    f"factor '{self.name}' has two weights with identical "
+                    f"family/facility/region/severity {key}. Selection would be "
+                    "arbitrary — differentiate them or remove one."
+                )
+            seen.add(key)
         return self
 
 
@@ -224,10 +355,16 @@ class Registry(BaseModel):
 
 __all__ = [
     "Adapter",
+    "CrashScope",
+    "FacilityType",
     "Factor",
     "Licence",
+    "Region",
     "Registry",
+    "Severity",
     "Sign",
     "Tier",
     "Transform",
+    "Weight",
+    "WeightFamily",
 ]

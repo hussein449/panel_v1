@@ -57,12 +57,46 @@ def parse_registry(text: str, *, origin: str = "<string>") -> Registry:
             f"got {type(data).__name__}"
         )
 
+    _reject_legacy_schema(data, origin)
+
     try:
         return Registry.model_validate(data)
     except ValidationError as exc:
         raise RegistryError(
             f"{origin} failed validation:\n{_describe(exc, data)}"
         ) from exc
+
+
+_LEGACY_KEYS = ("default_weight", "weight_source")
+
+
+def _reject_legacy_schema(data: dict[str, Any], origin: str) -> None:
+    """Name the migration rather than letting `extra='forbid'` produce a riddle.
+
+    Registries written before 0.2 carried a single `default_weight` plus a
+    `weight_source` string. A weight now declares the context it is valid in, which
+    is what stopped US rural two-lane coefficients from being applied silently to any
+    corridor anywhere.
+    """
+    factors = data.get("factors")
+    if not isinstance(factors, list):
+        return
+
+    offenders = [
+        str(entry.get("name", f"#{index}"))
+        for index, entry in enumerate(factors)
+        if isinstance(entry, dict) and any(key in entry for key in _LEGACY_KEYS)
+    ]
+    if not offenders:
+        return
+
+    raise RegistryError(
+        f"{origin} uses the pre-0.2 single-weight schema. Replace `default_weight` "
+        "and `weight_source` with a `weights:` list, where each entry declares "
+        "`value`, `source`, `family`, and optionally `facility_type`, `region`, "
+        "`severity`, `scope` and `assumes`. See docs/WEIGHTS.md.\n"
+        f"  affected factor(s): {', '.join(offenders)}"
+    )
 
 
 def _describe(exc: ValidationError, data: dict[str, Any]) -> str:

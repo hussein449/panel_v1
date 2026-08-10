@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 
+from roadrisk.core.context import RunContext
 from roadrisk.core.contract import (
     CRASH_COLUMN,
     LOG_EXPOSURE_COLUMN,
@@ -57,6 +58,7 @@ class Assessment:
     rung: Rung
     banner: str
     registry_version: str
+    context: RunContext
     contract: ContractReport
     gates: GateReport
     ladder: LadderResult
@@ -98,6 +100,14 @@ class Assessment:
             "rung": self.rung.value,
             "banner": self.banner,
             "registry_version": self.registry_version,
+            "context": {
+                "facility_type": self.context.facility_type.value,
+                "region": self.context.region.value,
+                "severity": self.context.severity.value,
+                "declared": self.context.is_declared,
+                "segment_length_km": self.context.segment_length_km,
+                "reference_aadt": self.context.reference_aadt,
+            },
             "panel": {
                 "rows": self.contract.n_rows,
                 "units": self.contract.n_units,
@@ -147,6 +157,7 @@ def assess(
     panel: pd.DataFrame,
     *,
     registry: Registry | None = None,
+    context: RunContext | None = None,
     snap: SnapReport | None = None,
     correlation_threshold: float = DEFAULT_CORRELATION_THRESHOLD,
     max_leave_one_out: int = DEFAULT_MAX_LEAVE_ONE_OUT,
@@ -156,6 +167,9 @@ def assess(
     Args:
         panel: The panel. Must satisfy the input contract.
         registry: Factor registry. Defaults to the one shipped with the package.
+        context: What kind of corridor this is and what crashes were counted, used to
+            pick between published weights in Mode B. Undeclared by default, which
+            admits only unrestricted weights — the engine does not guess.
         snap: Crash-snapping report from the geospatial pipeline, when there was one.
         correlation_threshold: Minimum |r| for a factor to count as a correlated partner
             in the sign guard's follow-up diagnostics.
@@ -186,6 +200,28 @@ def assess(
         total_crashes=contract.total_crashes,
     )
 
+    active_context = (context if context is not None else RunContext()).measured_from(
+        prepared
+    )
+    log.info(
+        STAGE,
+        "context",
+        (
+            f"Run context — {active_context.describe()}"
+            + (
+                ""
+                if active_context.is_declared
+                else ". Nothing was declared, so only unrestricted weights are "
+                "admissible in Mode B. Declaring the corridor type, region and crash "
+                "severity may admit better-matched weights."
+            )
+        ),
+        facility_type=active_context.facility_type.value,
+        region=active_context.region.value,
+        severity=active_context.severity.value,
+        declared=active_context.is_declared,
+    )
+
     manifest = build_manifest(
         prepared,
         registry_version=active_registry.version,
@@ -194,6 +230,9 @@ def assess(
             "correlation_threshold": correlation_threshold,
             "max_leave_one_out": max_leave_one_out,
             "snap_supplied": snap is not None,
+            "facility_type": active_context.facility_type.value,
+            "region": active_context.region.value,
+            "severity": active_context.severity.value,
         },
     )
 
@@ -237,6 +276,7 @@ def assess(
 
     common = {
         "registry_version": active_registry.version,
+        "context": active_context,
         "contract": contract,
         "gates": gates,
         "dispersion": dispersion,
@@ -381,9 +421,10 @@ def _mode_b_assessment(
     """Score Mode B, or explain precisely why it could not be scored."""
     index: IndexResult | None = None
     index_refusal: str | None = None
+    context: RunContext = common["context"]
 
     try:
-        index = score_index(design, available, unit_ids)
+        index = score_index(design, available, unit_ids, context)
         log.info(
             "mode_b",
             "index_scored",
@@ -393,17 +434,7 @@ def _mode_b_assessment(
             ),
             factors=index.factor_names,
         )
-        if index.skipped_unsourced:
-            log.warning(
-                "mode_b",
-                "unsourced_skipped",
-                (
-                    f"{len(index.skipped_unsourced)} factor(s) were available in the "
-                    "panel but carry no cited weight, so they did not enter the "
-                    "index: " + ", ".join(index.skipped_unsourced) + "."
-                ),
-                factors=index.skipped_unsourced,
-            )
+        _log_index_provenance(index, log)
     except WeightNotSourced as exc:
         index_refusal = str(exc)
         log.refusal("mode_b", "unsourced_weights", index_refusal)
@@ -419,6 +450,81 @@ def _mode_b_assessment(
         index_refusal=index_refusal,
         **common,  # type: ignore[arg-type]
     )
+
+
+def _log_index_provenance(index: IndexResult, log: RunLog) -> None:
+    """Record which weight was used for each term, and every reason to doubt it."""
+    for term in index.terms:
+        log.info(
+            "mode_b",
+            "weight_selected",
+            f"'{term.factor}' scored with the {term.family} weight {term.weight:+.4f}.",
+            factor=term.factor,
+            family=term.family,
+            weight=term.weight,
+        )
+        for concern in term.concerns:
+            log.warning(
+                "mode_b",
+                concern.code,
+                f"'{term.factor}': {concern.message}",
+                factor=term.factor,
+            )
+        agreement = term.agreement
+        if agreement is None:
+            continue
+        if agreement.signs_conflict:
+            log.flag(
+                "mode_b",
+                "source_sign_conflict",
+                f"'{term.factor}': {agreement.note} Values: "
+                + ", ".join(
+                    f"{family}={value:+.4f}"
+                    for family, value in zip(
+                        agreement.families, agreement.values, strict=True
+                    )
+                ),
+                factor=term.factor,
+                families=agreement.families,
+                values=agreement.values,
+            )
+        else:
+            log.info(
+                "mode_b",
+                "source_agreement",
+                f"'{term.factor}': {agreement.note}",
+                factor=term.factor,
+                score=agreement.score,
+                comparable=agreement.comparable,
+            )
+
+    if index.skipped_unsourced:
+        log.warning(
+            "mode_b",
+            "unsourced_skipped",
+            (
+                f"{len(index.skipped_unsourced)} factor(s) were available in the panel "
+                "but carry no cited weight, so they did not enter the index: "
+                + ", ".join(index.skipped_unsourced)
+                + "."
+            ),
+            factors=index.skipped_unsourced,
+        )
+
+    if index.skipped_inadmissible:
+        log.warning(
+            "mode_b",
+            "inadmissible_skipped",
+            (
+                f"{len(index.skipped_inadmissible)} factor(s) carry a cited weight, but "
+                "none valid for this run's facility type or crash severity, so they did "
+                "not enter the index: "
+                + ", ".join(index.skipped_inadmissible)
+                + ". Stretching a weight across facility or severity is a correctness "
+                "error, not a transfer approximation."
+            ),
+            factors=index.skipped_inadmissible,
+        )
 
 
 def _refusal_receipt(hard_failures: list[Any]) -> str:
@@ -491,14 +597,31 @@ def _index_as_dict(index: IndexResult | None) -> dict[str, Any] | None:
         "n_units": index.n_units,
         "n_observations": index.n_observations,
         "skipped_unsourced": index.skipped_unsourced,
+        "skipped_inadmissible": index.skipped_inadmissible,
         "terms": [
             {
                 "factor": t.factor,
                 "label": t.label,
                 "weight": t.weight,
                 "weight_source": t.weight_source,
+                "family": t.family,
                 "mean_contribution": t.mean_contribution,
                 "sd_contribution": t.sd_contribution,
+                "concerns": [
+                    {"code": c.code, "message": c.message} for c in t.concerns
+                ],
+                "agreement": (
+                    {
+                        "score": t.agreement.score,
+                        "comparable": t.agreement.comparable,
+                        "families": t.agreement.families,
+                        "values": t.agreement.values,
+                        "signs_conflict": t.agreement.signs_conflict,
+                        "note": t.agreement.note,
+                    }
+                    if t.agreement
+                    else None
+                ),
             }
             for t in index.terms
         ],

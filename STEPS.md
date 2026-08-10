@@ -104,20 +104,28 @@ Turns two coordinates into the panel that Stage 1 consumes. Steps 1–6 of the p
 
 Things that need a human call, not a code change.
 
-1. ~~**Mode B default weights are unsourced.**~~ **PARTLY RESOLVED, 2026-08-10.** Six of
-   twenty factors now carry weights derived from the AASHTO HSM and the Elvik Power
-   Model, each computed by `tools/derive_weights.py` and documented in
-   [`docs/WEIGHTS.md`](docs/WEIGHTS.md). Mode B scores. The remaining fourteen are
-   absent from the index, not weighted zero, and the report names them.
-   **Three follow-ups:**
-   - Verify the HSM equations against a licensed copy of the printed manual. They were
-     read from the NCHRP draft text of the 2nd edition and checked against its own
-     worked examples, which is good but is not the book.
-   - `speed_limit` (+1.6) is an upper bound — the Power Model exponent applies to
-     operating speed, not posted limit. Recalibrating against measured speed is the
-     highest-value single improvement available to Mode B.
-   - `median_present` and `curve_density` are the next sourceable candidates.
-2. **Second corridor.** Still the critical path. Pick one where access density and ramp
+1. ~~**Mode B default weights are unsourced.**~~ **RESOLVED as far as it can be
+   without spend, 2026-08-10.** Seven of twenty-one factors carry ten weights derived
+   from the AASHTO HSM, the Elvik Power Model and iRAP, each computed by
+   `tools/derive_weights.py` and documented in [`docs/WEIGHTS.md`](docs/WEIGHTS.md).
+   Weights are context-aware — the engine picks by facility type, region and crash
+   severity, reports what it reached for, and scores agreement between sources.
+   **Two things still need a human:**
+   - **A licensed AASHTO HSM.** Equations were read from the NCHRP draft text of the
+     2nd edition and are double-checked against their published worked examples by
+     `tests/test_published_equations.py`, but HSM2 (2024) changed Parts C and D and
+     nothing here is edition-pinned to a verifiable artefact. One afternoon with the
+     book closes it.
+   - **The iRAP Methodology Reference Guide v3.10** — free, but behind SSO registration
+     at `resources.irap.org`. Only `grade` could be verified from a retrievable fact
+     sheet. The Guide would plausibly source `median_present`, `surface_paved`,
+     `sight_distance_proxy` and `roadside_object_density`, and add a global cross-check
+     to every HSM weight. Highest-value next step for Mode B.
+2. **Measure operating speed on one corridor.** `speed_limit` carries a permanent
+   caveat because the Power Model exponent applies to operating speed, not posted
+   limit; `operating_speed_85` exists and is uncaveated but has no data. A single
+   Tier C speed pull removes the largest known weakness in the index.
+3. **Second corridor.** Still the critical path. Pick one where access density and ramp
    density separate — the M51 ramp/RAF inversion is not diagnosable on a single corridor.
-3. **Rung 4 engine.** PyMC/NumPyro keeps one language; R + INLA is materially faster for
+4. **Rung 4 engine.** PyMC/NumPyro keeps one language; R + INLA is materially faster for
    CAR/BYM at panel scale. Defer until MCMC actually hurts.

@@ -6,6 +6,7 @@ the core dependencies installed, which is what keeps the method testable indepen
 of the product around it.
 """
 
+from roadrisk.core.context import RunContext
 from roadrisk.core.contract import ContractReport, prepare_panel
 from roadrisk.core.diagnostics import (
     DispersionReport,
@@ -31,11 +32,23 @@ from roadrisk.core.gates import (
 )
 from roadrisk.core.ladder import LadderResult, Mode, Rung, walk_ladder
 from roadrisk.core.models import Coefficient, FitResult, IndexResult
-from roadrisk.core.registry import Factor, Registry, Sign, load_registry
+from roadrisk.core.registry import (
+    FacilityType,
+    Factor,
+    Region,
+    Registry,
+    Severity,
+    Sign,
+    Weight,
+    WeightFamily,
+    load_registry,
+)
 from roadrisk.core.runlog import RunLog, RunManifest
 from roadrisk.core.signguard import SignGuardReport, run_sign_guard
+from roadrisk.core.weights import Agreement, WeightSelection, select_weight
 
 __all__ = [
+    "Agreement",
     "Assessment",
     "CheckResult",
     "CheckStatus",
@@ -43,6 +56,7 @@ __all__ = [
     "ContractReport",
     "ContractViolation",
     "DispersionReport",
+    "FacilityType",
     "FailureType",
     "Family",
     "Factor",
@@ -51,23 +65,30 @@ __all__ = [
     "IndexResult",
     "LadderResult",
     "Mode",
+    "Region",
     "RegistryError",
     "Registry",
     "RoadRiskError",
     "Rung",
+    "RunContext",
     "RunLog",
     "RunManifest",
+    "Severity",
     "Sign",
     "SignGuardReport",
     "SnapReport",
     "TransformError",
     "VIFReport",
+    "Weight",
+    "WeightFamily",
     "WeightNotSourced",
+    "WeightSelection",
     "assess",
     "compute_dispersion",
     "compute_vif",
     "load_registry",
     "prepare_panel",
     "run_sign_guard",
+    "select_weight",
     "walk_ladder",
 ]
