@@ -17,6 +17,23 @@ does not produce.
 
 ---
 
+## The three books, at a glance
+
+Every number in this registry comes from one of exactly three published sources. Nothing
+else is used, and nothing is expert judgement.
+
+| Source | What it gave us | Scope of its numbers | Access |
+|---|---|---|---|
+| **AASHTO Highway Safety Manual**, Chapter 10 (rural two-lane two-way roads) | `roadside_hazard_score`, `lit`, `grade_pct`, `curve_radius_min`, `access_density` — and **Table 10-4**, the crash-type distribution used to combine the buckets | US rural two-lane, total crashes | Paid. Read here from the NCHRP draft 2nd-edition text — see *Provenance* below |
+| **iRAP Methodology Reference Guide v3.10** | `grade_pct`, `curve_radius_min`, `surface_paved`, `lit` | Global, per crash type and per road-user group | Free after registration at resources.irap.org. Licensed — kept in gitignored `references/`, never redistributed |
+| **Elvik (2009) Power Model**, TØI Report 1034/2009 | `speed_limit`, `operating_speed_85` | Global, severity-specific (1.6 injury / 4.1 fatal) | Cited via FHWA-HRT-17-098 Table 1, which is public |
+
+Full citations, URLs and what each could *not* source are in [Sources](#sources) at the
+end. Every individual weight also carries its own `source` string in `factors.yaml`,
+which travels all the way into the assessment JSON and the report.
+
+---
+
 ## The rule that shapes all of this
 
 **A weight is not a number. It is a number plus the context it is valid in.**
@@ -278,15 +295,24 @@ scale. **Check:** RHR 4 → 1.069, published example 1.07.
 *Units:* HSM roadside hazard rating, integer 1–7, base 3. A vision model emitting its own
 0–1 score must be mapped onto RHR first, and that mapping belongs in the report.
 
-### `lit` — HSM −0.0817, exact
+### `lit` — HSM −0.0817 (total) / iRAP −0.1398 (intersection)
 
 > CMF₁₁ᵣ = 1.0 − [(1.0 − 0.72 × pᵢₙᵣ − 0.83 × pₚₙᵣ) × pₙᵣ]
 
-Table 10-12 (2U): pᵢₙᵣ = 0.382, pₚₙᵣ = 0.618, pₙᵣ = 0.370 → CMF 0.9216 → weight
-ln(0.9216). A fully lit rural two-lane segment carries ~8% fewer total crashes.
+HSM Table 10-12 (2U): pᵢₙᵣ = 0.382, pₚₙᵣ = 0.618, pₙᵣ = 0.370 → CMF 0.9216 → weight
+ln(0.9216). A fully lit rural two-lane segment carries ~8% fewer **total** crashes.
+Those proportions are Washington State HSIS data 2002–2006; night-crash share varies
+enormously by country, so replacing them with local values is cheap and high-value.
 
-*Caveat:* those proportions are Washington State HSIS data 2002–2006. Night-crash share
-varies enormously by country; replacing them with local values is cheap and high-value.
+iRAP Guide: **present 1.00 versus not-present 1.15** for vehicle occupants at
+**intersections** — updated in the v3.10 model. Weight is ln(1.00) − ln(1.15), exact.
+
+The two are not comparable and the engine says so: HSM prices lighting across all
+segment crashes, iRAP prices it for intersection crashes only. iRAP's pedestrian and
+bicyclist factors are higher (1.25), so a corridor with heavy pedestrian activity is
+under-weighted by the iRAP term.
+
+*Units:* proportion of the segment lit, 0 to 1, both sources.
 
 ### `speed_limit` / `operating_speed_85` — Elvik +1.6 (injury), +4.1 (fatal), exact
 
@@ -304,24 +330,40 @@ different quantity). Inventing one would be worse than declaring the limitation.
 Measuring operating speed on even one corridor remains the single highest-value
 calibration available to Mode B.
 
-### `grade_pct` — HSM +0.1212 / iRAP +0.4863
+### `grade_pct` — HSM +0.1212 (total) / iRAP +0.4863 (run-off & head-on)
 
 HSM Table 10-11: 1.00 / 1.10 / 1.16 for ≤3%, 3–6%, >6%, midpoints 1.5 / 4.5 / 7.5.
-iRAP: 1.0 / 1.2 / 1.7 for <7.5%, 7.5–10%, >10%, midpoints 3.75 / 8.75 / 11.25.
+iRAP Guide: 1.0 / 1.2 / 1.7 for 0–7.5%, 7.5–10%, ≥10%, midpoints 3.75 / 8.75 / 11.25,
+vehicle-occupant run-off and head-on/loss-of-control crashes.
+
+Four times apart because they price different crash types. The iRAP Guide notes its
+≥10% factor reflects extreme gradients and may overstate risk at the lower end of that
+band, and that the values derive primarily from Harwood et al. (2000) up to 8%.
 
 *Units:* absolute grade in percent. Neither source distinguishes upgrade from downgrade.
 
-### `curve_radius_min` — HSM −0.1855, R² 0.878
+### `curve_radius_min` — HSM −0.1855 (total) / iRAP −0.7232 (run-off & head-on)
 
 > CMF₃ᵣ = (1.55 × L_c + 80.2⁄R − 0.012 × S) ⁄ (1.55 × L_c)
 
-Fitted over 50–1600 m assuming a 0.5 km segment fully in curve, no spiral. **Check:**
-0.1 mi / 1,200 ft → 1.431, published example 1.43.
+HSM fitted over 50–1600 m assuming a 0.5 km segment fully in curve, no spiral.
+**Check:** 0.1 mi / 1,200 ft → 1.431, published example 1.43. R² 0.878 — the weakest fit
+in the registry, because a `1 + c/R` relationship is only roughly log-linear, so it
+under-weights very tight curves.
 
-*Weakest fit in the registry* — a `1 + c/R` relationship is only roughly log-linear, so
-it under-weights very tight curves. Declared as a caveat. *Units:* metres.
+iRAP Guide: risk factors 1.0 / 1.8 / 3.5 / 6.0 for straight-or-gently-curving, moderate,
+sharp and very sharp — **and it publishes the radius range for each**: >900 m, 500–900,
+200–500, 0–200. That is the only reason a categorical attribute could be converted to a
+continuous weight at all. Fitted at midpoints 1100 / 700 / 350 / 100 m, R² **0.938** —
+better than the HSM equivalent, and it does not depend on segment length, so it is not
+tied to the segmentation.
 
-### `access_density` — HSM +0.1658, R² 0.965
+Motorcyclist factors are ~10% higher than the vehicle-occupant values used; a
+high-motorcycle corridor is under-weighted.
+
+*Units:* minimum radius in metres, both sources.
+
+### `access_density` — HSM +0.1658 (total), R² 0.965
 
 > CMF₆ᵣ = [0.322 + DD × k] ⁄ [0.322 + 5 × k],  k = 0.05 − 0.005 × ln(AADT)
 
@@ -329,9 +371,28 @@ Fitted over 3–20 accesses/km at AADT 10,000. **Check:** DD 6 @ 10,000 → 1.01
 example 1.01. *Units:* accesses per **km**, both sides; the mile conversion is inside the
 weight.
 
+The only factor in the shipped registry with **no global alternative** — so a non-US
+corridor still reaches for American evidence here, and the engine flags it every run.
+
+### `surface_paved` — iRAP −1.0986 (total), exact
+
+iRAP Guide, Skid resistance: **sealed-adequate 1.0 versus unsealed-adequate 3.0** for
+vehicle occupants, across run-off, head-on/loss-of-control, head-on/overtaking and
+intersection crashes — every VO crash type, which is why the scope is `total`.
+
+Holding quality at "adequate" on both sides isolates the sealed/unsealed effect from the
+*condition* effect, which this registry does not model. Weight is ln(1.0) − ln(3.0) over
+a proportion moving 0 → 1.
+
+The largest weight after speed, and it should be: an unsealed road is priced at three
+times the risk of a sealed one. Covers vehicle occupants only, not pedestrian crashes.
+Motorcyclist factors are higher again (4.0 unsealed).
+
+*Units:* proportion of the segment sealed, 0 to 1.
+
 ---
 
-## Still uncited — 14 factors
+## Still uncited — 13 of 21 factors
 
 Each factor's `notes` in `factors.yaml` records its own reason. Summary:
 
@@ -341,7 +402,7 @@ Each factor's `notes` in `factors.yaml` records its own reason. Summary:
 | `junction_density` | HSM models intersections as separate entities with their own SPFs; iRAP prices intersection type per intersection. Neither prices junction *frequency* along a segment. |
 | `curve_density` | Both sources price curve *severity* via radius, not curve *frequency* per km. |
 | `ramp_density` | **Deliberate.** The sign inverts on M51 and is not diagnosable on one corridor. Sourcing a weight before the sign is understood would lend false confidence to a term known to behave badly. |
-| `lanes` | Both sources price lane *width*, not *count*. |
+| `lanes` | The HSM prices lane *width*, not *count*. iRAP **does** price count (1 lane 1.00 → 2 lanes 0.02) but for head-on-*overtaking* crashes only, where more lanes means less overtaking into oncoming traffic. Our factor is a volume proxy for total crashes expecting the opposite sign. Two mechanisms in one column — the fix is separating exposure from risk, not picking a sign. |
 | `median_present` | **Best next candidate.** HSM Chapter 11 divided/undivided SPFs, and iRAP prices median type directly. |
 | `sidewalk_present` | FHWA and iRAP both price this for *pedestrian* crashes. Enters with scope `pedestrian`, which needs a severity-aware index first. |
 | `roadside_object_density` | iRAP prices roadside severity as *nearest object* and *distance to it*, not object density per km. A mapping decision, not a lookup. |
