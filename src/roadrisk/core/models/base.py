@@ -67,11 +67,35 @@ class FitResult:
     pearson_dispersion: float | None = None
     fitted_values: pd.Series | None = None
     failure_reason: str | None = None
+
+    #: Units the standard errors were clustered over, when they were. ``None`` means
+    #: the fit treats every row as an independent observation.
+    n_clusters: int | None = None
+    #: Per coefficient, how much wider the clustered standard error is than the naive
+    #: one. This is the number rung 2 exists to produce: how much too certain the
+    #: independent-rows fit was.
+    cluster_widening: dict[str, float] = field(default_factory=dict)
+    #: The standard error rung 1 would have reported, per coefficient. Kept so the
+    #: report can print what the reader would have been told beside what is true — a
+    #: correction nobody can see the size of is a correction nobody believes.
+    naive_std_errors: dict[str, float] = field(default_factory=dict)
+    #: What the model layer needs the reader to know about this fit.
+    notes: tuple[str, ...] = ()
+
     raw: Any = field(default=None, repr=False, compare=False)
 
     @property
     def factor_names(self) -> list[str]:
         return [c.factor for c in self.coefficients]
+
+    @property
+    def is_clustered(self) -> bool:
+        return bool(self.cluster_widening)
+
+    @property
+    def worst_widening(self) -> float:
+        """The most over-confident coefficient's inflation factor, or 1.0."""
+        return max(self.cluster_widening.values(), default=1.0)
 
     def coefficient(self, factor: str) -> Coefficient | None:
         return next((c for c in self.coefficients if c.factor == factor), None)

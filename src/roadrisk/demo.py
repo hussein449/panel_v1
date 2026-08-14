@@ -47,6 +47,7 @@ def synthetic_panel(
     alpha: float = 0.6,
     effects: dict[str, float] | None = None,
     segment_length_km: float = 0.5,
+    unit_dispersion: float = 0.5,
     crash_rows_only: bool = False,
 ) -> pd.DataFrame:
     """Build a panel with known coefficients.
@@ -60,6 +61,14 @@ def synthetic_panel(
         alpha: NB2 dispersion. Variance is ``mu + alpha * mu^2``.
         effects: Override the true coefficients. Defaults to :data:`TRUE_EFFECTS`.
         segment_length_km: Length of every unit.
+        unit_dispersion: Standard deviation of a per-unit random effect on the log
+            rate, held constant across every period of that unit.
+
+            Real segments carry unobserved persistent traits — a bad junction layout, a
+            school, poor drainage — so repeated observations of one segment are
+            correlated. This panel drew its overdispersion per *row* until rung 2 was
+            built, which made every observation independent and let every model fitted
+            to it look better than it would on a road. Set to zero to get that back.
         crash_rows_only: Drop the zero-crash rows, producing a panel that Mode A must
             refuse. Used to exercise check 1.
 
@@ -96,6 +105,14 @@ def synthetic_panel(
             continue
         transformed = _transform(panel[name].to_numpy(dtype=float), _TRANSFORMS[name])
         linear = linear + beta * (transformed - transformed.mean())
+
+    if unit_dispersion > 0:
+        # Mapped by unit id rather than repeated positionally, so the effect stays with
+        # its segment however the frame is later ordered.
+        heterogeneity = dict(
+            zip(unit_ids, rng.normal(0.0, unit_dispersion, n_units), strict=True)
+        )
+        linear = linear + panel["unit_id"].map(heterogeneity).to_numpy(dtype=float)
 
     mu = exposure.to_numpy(dtype=float) * np.exp(linear)
     panel["n_crashes"] = _negative_binomial(rng, mu, alpha)

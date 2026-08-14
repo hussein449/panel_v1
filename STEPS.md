@@ -295,10 +295,67 @@ The network layer is injectable, so all 34 tests run without touching it.
 
 | | Step | Deliverable | Done when |
 |---|---|---|---|
-| `[ ]` | **3.1** NB GLMM | Random intercept per unit, via Bambi/PyMC | Standard errors widen versus plain NB2 |
+| `[~]` | **3.1** NB GLMM | Panel-clustered standard errors **done** — up to 3.9x wider, two factors lose significance. The random-intercept GLMM itself is deferred to 3.3, see below | Standard errors widen versus plain NB2 ✅ |
 | `[ ]` | **3.2** GAM diagnostic | Spline on geometry, hunts the U-shape | Produces the diagnostic plot, never ships a number |
 | `[ ]` | **3.3** Bayesian hierarchical + spatial | CAR/BYM, `expected_sign` encoded as prior | Credible intervals replace p-values in the report |
 | `[ ]` | **3.4** Out-of-sample validation | Spatial CV, CURE plots, calibration on held-out units | Reported by default, including when bad |
+
+### 3.1 — the panel correction, and what is deferred
+
+```bash
+roadrisk demo
+```
+
+**Why it matters more here than in most panels.** Every factor is *unit-constant* —
+curvature, gradient, lane count, every density is a property of a segment, repeated
+unchanged down every period. A 120-unit corridor over 24 months has 5,760 rows and
+**120 independent observations of each covariate**. Rung 1 computes its intervals as
+though it had 5,760.
+
+Measured on a panel with realistic segment-level heterogeneity:
+
+| | Naive p | Clustered p | Interval |
+|---|---|---|---|
+| `access_density` | < 0.0001 | **0.65** | 3.86× wider |
+| `junction_density` | < 0.0001 | **0.05** | 2.90× wider |
+| `curve_density` | < 0.0001 | 0.03 | 3.00× wider |
+
+Two factors lose their significance. They were never significant — the first fit was
+counting one segment forty-eight times. This is the brief's warning, reproduced:
+*"this alone may change the geometry p-value."*
+
+**The demo panel was fixed to make this visible.** It drew its overdispersion per *row*,
+so every observation of a segment was independent — not what a panel is, and the
+correction had nothing to find. Segments now carry persistent character by default;
+`--unit-dispersion 0` restores the old behaviour.
+
+**The coefficients do not move.** Only the covariance changes, so the report prints both
+standard errors side by side with the ratio between them — a correction nobody can see
+the size of is a correction nobody believes.
+
+```
+factor              β        SE naive   SE panel      ×
+access_density   +0.0645       0.0370     0.1429   3.86
+```
+
+**The intervals are honest, and that is measured rather than asserted.** The synthetic
+panel's coefficients are planted, so coverage is testable: across 60 panels, rung 1's
+95% intervals contained the truth **70%** of the time and rung 2's contained it **95%**.
+On data with genuinely independent rows rung 1 was already at 94% and the correction
+does not inflate it. `python tools/validate_coverage.py`.
+
+**Below 20 units the correction is declined, not silently applied.** The sandwich
+estimator is consistent in the number of *clusters*; below a couple of dozen it is biased
+downwards and would report intervals that are still too small while appearing to have
+fixed the problem. The M51 corridor, with seven units, sits squarely in that zone — the
+run says so, and estimates how wrong the uncorrected intervals are.
+
+**What is deferred, and why.** This is not the random-intercept GLMM the step names. A
+random intercept models the unobserved heterogeneity between segments and changes the
+*estimates* as well as their spread; clustering corrects the spread only. The brief calls
+rung 2 a *"cheap upgrade"*, and MCMC is not cheap — it would add PyMC, convergence
+diagnostics and minutes per run. That dependency is already required by **3.3**, so the
+GLMM belongs there, where it is paid for once and reported properly.
 
 ---
 

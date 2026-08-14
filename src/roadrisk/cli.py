@@ -179,6 +179,17 @@ def demo(
         bool,
         typer.Option("--crash-rows-only", help="Drop zero-crash rows, to see Mode A refuse."),
     ] = False,
+    unit_dispersion: Annotated[
+        float,
+        typer.Option(
+            "--unit-dispersion",
+            help=(
+                "How much persistent unobserved character each segment has. Set 0 for "
+                "independent rows — unrealistic, and the panel correction then has "
+                "nothing to find."
+            ),
+        ),
+    ] = 0.5,
     facility_type: FacilityOption = FacilityType.ANY,
     region: RegionOption = Region.GLOBAL,
     severity: SeverityOption = Severity.ALL,
@@ -190,7 +201,10 @@ def demo(
     from roadrisk.demo import synthetic_panel
 
     panel = synthetic_panel(
-        n_units=units, n_periods=periods, crash_rows_only=crash_rows_only
+        n_units=units,
+        n_periods=periods,
+        crash_rows_only=crash_rows_only,
+        unit_dispersion=unit_dispersion,
     )
     console.print(
         f"[dim]Synthetic panel — {len(panel):,} rows, "
@@ -888,7 +902,14 @@ def _render_coefficients(assessment: Assessment) -> None:
     )
     table.add_column("Factor")
     table.add_column("β", justify="right")
-    table.add_column("SE", justify="right")
+    if fit.is_clustered:
+        # Both, side by side. The correction is invisible in the estimates, so the only
+        # way a reader can judge its size is to see what they would have been told.
+        table.add_column("SE naive", justify="right", style="dim")
+        table.add_column("SE panel", justify="right")
+        table.add_column("×", justify="right")
+    else:
+        table.add_column("SE", justify="right")
     table.add_column("z", justify="right")
     table.add_column("p", justify="right")
     table.add_column("95% CI", justify="right")
@@ -898,7 +919,11 @@ def _render_coefficients(assessment: Assessment) -> None:
         table.add_row(
             Text("(intercept)", style="dim"),
             f"{fit.intercept.estimate:+.4f}",
-            f"{fit.intercept.std_error:.4f}",
+            *(
+                ["—", f"{fit.intercept.std_error:.4f}", "—"]
+                if fit.is_clustered
+                else [f"{fit.intercept.std_error:.4f}"]
+            ),
             f"{fit.intercept.z_value:.2f}",
             f"{fit.intercept.p_value:.3f}",
             f"[{fit.intercept.ci_low:+.3f}, {fit.intercept.ci_high:+.3f}]",
@@ -911,10 +936,19 @@ def _render_coefficients(assessment: Assessment) -> None:
             want == "-" and coefficient.sign < 0
         )
         style = "green" if agrees else "bold red"
+        naive = fit.naive_std_errors.get(coefficient.factor)
         table.add_row(
             Text(coefficient.factor, style=style),
             Text(f"{coefficient.estimate:+.4f}", style=style),
-            f"{coefficient.std_error:.4f}",
+            *(
+                [
+                    f"{naive:.4f}" if naive is not None else "—",
+                    f"{coefficient.std_error:.4f}",
+                    _widening_cell(fit.cluster_widening.get(coefficient.factor)),
+                ]
+                if fit.is_clustered
+                else [f"{coefficient.std_error:.4f}"]
+            ),
             f"{coefficient.z_value:.2f}",
             f"{coefficient.p_value:.3f}",
             f"[{coefficient.ci_low:+.3f}, {coefficient.ci_high:+.3f}]",
@@ -922,6 +956,7 @@ def _render_coefficients(assessment: Assessment) -> None:
         )
 
     console.print(table)
+    _render_panel_correction(fit)
 
     stats = []
     if fit.alpha is not None:
@@ -938,6 +973,38 @@ def _render_coefficients(assessment: Assessment) -> None:
             )
     if stats:
         console.print(f"[dim]{'  ·  '.join(stats)}[/dim]")
+    console.print()
+
+
+def _widening_cell(factor: float | None) -> Text:
+    """How much the panel correction widened this interval."""
+    if factor is None:
+        return Text("—", style="dim")
+    style = "bold red" if factor >= 2.0 else "yellow" if factor >= 1.3 else "dim"
+    return Text(f"{factor:.2f}", style=style)
+
+
+def _render_panel_correction(fit) -> None:
+    """What rung 2 did to the certainty, and what it could not do.
+
+    The panel correction is invisible in the coefficients — they do not move — so if it
+    is not said here it is not said anywhere.
+    """
+    if not fit.notes:
+        return
+
+    console.print(
+        Panel(
+            "\n\n".join(fit.notes),
+            title=(
+                f"Panel correction — standard errors clustered over "
+                f"{fit.n_clusters} unit(s)"
+                if fit.is_clustered
+                else "Panel correction — NOT applied"
+            ),
+            border_style="cyan" if fit.is_clustered else "red",
+        )
+    )
     console.print()
 
 

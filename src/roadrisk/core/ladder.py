@@ -32,7 +32,8 @@ from roadrisk.core.gates import (
     check_convergence,
     check_crashes_per_parameter,
 )
-from roadrisk.core.models import FitResult, fit_negative_binomial, fit_poisson
+from roadrisk.core.models import FitResult, fit_poisson
+from roadrisk.core.models.glm import fit_negative_binomial_panel
 from roadrisk.core.registry import Factor, Registry
 from roadrisk.core.runlog import RunLog
 
@@ -116,6 +117,7 @@ def walk_ladder(
     factors: list[Factor],
     contract: ContractReport,
     dispersion: DispersionReport,
+    unit_ids: pd.Series,
     log: RunLog,
 ) -> LadderResult:
     """Walk down the rungs and stop at the first that passes every gate.
@@ -127,6 +129,7 @@ def walk_ladder(
         factors: Factors present in ``design``.
         contract: Summary of the accepted panel.
         dispersion: Pre-fit variance-to-mean report; refined by the Poisson reference fit.
+        unit_ids: Unit id per row. The clusters rung 2 corrects the standard errors over.
         log: Run log, appended in place.
 
     Returns:
@@ -192,7 +195,9 @@ def walk_ladder(
 
         subset = design[[f.name for f in selected]]
         poisson = fit_poisson(counts, subset, log_exposure)
-        shipped, note = _fit_shipped(counts, subset, log_exposure, poisson, dispersion)
+        shipped, note = _fit_shipped(
+            counts, subset, log_exposure, poisson, dispersion, unit_ids
+        )
 
         convergence = check_convergence(
             shipped is not None and shipped.converged,
@@ -220,6 +225,9 @@ def walk_ladder(
 
         if note:
             log.warning(STAGE, "family_fallback", note, rung=spec.rung.value)
+
+        for panel_note in shipped.notes:
+            log.warning(STAGE, "panel_standard_errors", panel_note, rung=spec.rung.value)
 
         log.info(
             STAGE,
@@ -293,15 +301,23 @@ def _fit_shipped(
     log_exposure: pd.Series,
     poisson: FitResult,
     dispersion: DispersionReport,
+    unit_ids: pd.Series,
 ) -> tuple[FitResult | None, str | None]:
     """Fit the model that may reach a client.
 
-    NB2 is the shipped baseline. Poisson is a reference fit and is normally never
-    reported — the one exception is an NB2 that fails to converge on data showing no
-    overdispersion, where NB2 is trying to estimate a dispersion parameter that is
-    genuinely near zero. That substitution is logged, never silent.
+    Rung 2 — NB2 with standard errors clustered by unit — is the shipped baseline, and
+    the coefficients are identical to rung 1's. Clustering is declined, loudly, on a
+    corridor with too few units for the estimator to be trustworthy; the fit that comes
+    back is then rung 1's, carrying a note saying how much too certain it is.
+
+    Poisson is a reference fit and is normally never reported. The one exception is an
+    NB2 that fails to converge on data showing no overdispersion, where NB2 is trying to
+    estimate a dispersion parameter that is genuinely near zero. That substitution is
+    logged, never silent.
     """
-    negative_binomial = fit_negative_binomial(counts, design, log_exposure)
+    negative_binomial = fit_negative_binomial_panel(
+        counts, design, log_exposure, unit_ids
+    )
     if negative_binomial.converged:
         return negative_binomial, None
 

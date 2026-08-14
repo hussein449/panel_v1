@@ -15,7 +15,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
 | **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
-| Stage 3 — model depth (GLMM, GAM, Bayesian) | Not started |
+| **Stage 3 — model depth** | Started. Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. GAM, Bayesian and out-of-sample validation outstanding. |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
 
@@ -215,6 +215,16 @@ intersection crashes. Mode B scores each crash type separately and combines them
 cited distribution, so a run-off-only weight is not applied as though it moved every
 crash on the road. A weight scoped to *all* crashes still enters every type, so nothing
 that was already correct changes.
+
+**The same segment measured twelve times is not twelve observations.** Every factor here
+is a property of a segment, repeated unchanged down every period, so a 120-unit corridor
+over 24 months carries 5,760 rows and 120 independent observations of each covariate.
+Standard errors are clustered by unit to say so, and the report prints the uncorrected
+one beside it: on a realistic panel the intervals widen up to 3.9× and two factors lose
+their significance. Measured against planted truth, the uncorrected 95% intervals
+contained the true value **70%** of the time and the corrected ones **95%**. Where there
+are too few units for the correction to be trustworthy it is declined rather than
+silently applied, and the run says how wrong the intervals are instead.
 
 **A contradicted sign is flagged, never quietly reported.** Every factor declares an
 `expected_sign`. A fitted coefficient pointing the other way triggers the diagnostics

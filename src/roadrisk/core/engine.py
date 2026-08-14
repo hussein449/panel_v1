@@ -315,6 +315,7 @@ def assess(
         factors=available,
         contract=contract,
         dispersion=dispersion,
+        unit_ids=unit_ids,
         log=log,
     )
     descent_receipt = _descent_receipt(ladder, available)
@@ -591,6 +592,10 @@ def _fit_as_dict(fit: FitResult | None) -> dict[str, Any] | None:
         "bic": fit.bic,
         "alpha": fit.alpha,
         "pearson_dispersion": fit.pearson_dispersion,
+        "n_clusters": fit.n_clusters,
+        "cluster_widening": fit.cluster_widening,
+        "naive_std_errors": fit.naive_std_errors,
+        "panel_notes": list(fit.notes),
         "intercept": _coefficient_as_dict(fit.intercept),
         "coefficients": [_coefficient_as_dict(c) for c in fit.coefficients],
     }

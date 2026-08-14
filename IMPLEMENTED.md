@@ -5,7 +5,137 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-14 (latest) — Step 2.9: the geographic cache
+## 2026-08-14 (latest) — Step 3.1: standard errors that account for the panel
+
+**Delivered:** rung 2 — NB2 with standard errors clustered by unit. On a panel with
+realistic segment-level heterogeneity the intervals widen by up to **3.9×** and two
+factors lose their significance.
+
+```bash
+roadrisk demo --unit-dispersion 0.5
+```
+
+**Verified:** 495 tests pass (17 new), `ruff check` clean.
+
+### Why this matters more here than in most panels
+
+Every factor is **unit-constant**. Curvature, gradient, lane count, every density — each
+is a property of a segment, repeated unchanged down every period of that segment. A
+120-unit corridor over 24 months has 5,760 rows and **120 independent observations of
+each covariate**. Rung 1 computed its intervals as though it had 5,760.
+
+`panel.py` has said so since Stage 2 — *"the effective sample size for such a factor is
+the number of units, not the number of rows; plain NB2 does not know that, which is the
+argument for the random-intercept rung"* — and this is that rung.
+
+| | Naive p | Clustered p | Interval |
+|---|---|---|---|
+| `access_density` | < 0.0001 | **0.65** | 3.86× wider |
+| `junction_density` | < 0.0001 | **0.05** | 2.90× wider |
+| `curve_density` | < 0.0001 | 0.03 | 3.00× wider |
+
+`access_density` moving from p < 0.0001 to p = 0.65 is the brief's warning reproduced
+exactly: *"this alone may change the geometry p-value."* It was never significant. The
+first fit was counting one segment forty-eight times.
+
+### The coefficients do not move, and that is the point
+
+Only the covariance changes, so the report prints **both standard errors side by side**
+with the ratio between them:
+
+```
+factor              β        SE naive   SE panel      ×
+access_density   +0.0645       0.0370     0.1429   3.86
+junction_density +0.2848       0.0501     0.1456   2.90
+```
+
+A correction nobody can see the size of is a correction nobody believes. Rung 1's
+standard errors are kept on the result for exactly this, and a test pins the arithmetic:
+the ratio of the two columns is the widening factor.
+
+It also means the correction can neither create nor hide a sign reversal, so the sign
+guard is untouched. Its diagnostic refits deliberately still use the uncorrected fit —
+they read point estimates only, which clustering does not move, so the clustered fit
+would cost a second optimisation to return identical answers. Every p-value the guard
+*reports* comes from the shipped, corrected fit.
+
+### The intervals are honest, and that is measured rather than asserted
+
+The obvious objection to any correction that widens intervals is that it might just be
+widening them. The synthetic panel's coefficients are *planted*, so the question is
+answerable: a 95% interval promises that across many datasets the true value lands inside
+it 95% of the time.
+
+Sixty panels, both models, counting how often the planted truth was inside:
+
+| | rung 1 | rung 2 |
+|---|---|---|
+| Segments have character (realistic) | **70%** | **95%** |
+| Segments all alike (nothing to fix) | 94% | 91% |
+
+The first row is the defect quantified: rung 1 promised to be wrong 5% of the time and
+was wrong 30% of the time. `poi_density` was inside its own 95% interval on **57%** of
+panels while printing p < 0.0001.
+
+The second row is the control. Where the rows genuinely are independent, rung 1 was
+already honest and the correction does not inflate it past nominal — a correction that
+widened regardless would show up there as coverage climbing above 95%, intervals too
+wide, which is its own kind of wrong.
+
+Kept as `tools/validate_coverage.py`, and as three tests that fail if rung 1 ever stops
+being overconfident or rung 2 ever stops delivering its 95%.
+
+### Below twenty units the correction is declined, loudly
+
+The sandwich estimator is consistent in the number of *clusters*, not of rows. Below a
+couple of dozen units it is biased downwards: it would report intervals that are still
+too small while appearing to have fixed the problem, and the caveat would become
+invisible — which is worse than not applying it at all.
+
+So it is refused, and refusing is not a reason to stop describing the problem. The run
+states the effective sample size, estimates how much too narrow the intervals are, and
+says significance on that corridor is unproven. **The M51, with seven units, is exactly
+this case** — the corridor this project keeps referring back to, and now the one the gate
+was written for.
+
+Between twenty and forty clusters the correction is applied and declared unreliable.
+
+### A fixture weakness this exposed
+
+`synthetic_panel` drew its overdispersion **per row**. That makes each observation of a
+segment independent, which is not what a panel is — and on that fixture rung 2 correctly
+found almost nothing to correct, widening intervals by 1.0×.
+
+Real segments carry persistent unobserved traits: a bad junction layout, a school, poor
+drainage. A fixture without them lets every model fitted to it look better than it would
+on a road.
+
+**It is now on by default**, and the caution about flipping it turned out to be
+unfounded: all 495 tests pass either way. The estimates still recover their planted
+values, the signs are still correct, and the sign guard is still clean — the NB
+dispersion parameter simply rises from 0.64 to 1.13 as it absorbs some of the
+segment-level variance. `--unit-dispersion 0` restores the old behaviour, and on that
+setting the correction correctly finds almost nothing.
+
+One recovery gets visibly worse: `access_density` is planted at +0.20 and comes back at
++0.06. That is not a regression, it is the point — with 120 segments and realistic
+heterogeneity that effect is not identifiable, and the clustered p-value of 0.65 says so.
+The old fixture reported it as p < 0.0001.
+
+### What is deferred, and why
+
+This is **not** the random-intercept GLMM the step names. A random intercept models the
+heterogeneity between segments and changes the *estimates* as well as their spread;
+clustering corrects the spread only.
+
+The brief calls rung 2 a *"cheap upgrade"* and MCMC is not cheap — PyMC, convergence
+diagnostics, minutes per run, and a whole reporting surface for posterior summaries.
+Step **3.3** already requires that dependency for the Bayesian hierarchical model, so the
+GLMM belongs there, paid for once. The step stays `[~]` rather than being declared done.
+
+---
+
+## 2026-08-14 — Step 2.9: the geographic cache
 
 **Delivered:** `roadrisk.geo.cache` and `.cached`. A second corridor in the same region
 costs **1.2 seconds against 55.5**, validated live on two real Cyprus roads.
