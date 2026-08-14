@@ -60,7 +60,7 @@ being worked around — it is the shape of the product.
 | `[x]` | **2.6** Tier A adapters | 12 factors behind one adapter contract, from three sources: centreline geometry, one OSM call, two COG rasters | Each returns value + source + tier + licence |
 | `[x]` | **2.7** Fusion + agreement | Registry chain decides the winner; agreement scored where two sources overlap; client data enters as the first link | Confidence tier emitted per factor per unit |
 | `[x]` | **2.8** Tier B adapters | Both named deliverables done and validated live: graph-centrality traffic proxy with a window-artefact gate, Mapillary detections. `mapillary_vision` and `dem_viewshed` are further Tier B factors, listed below rather than in this step | Never labelled `aadt` — asserted by test |
-| `[ ]` | **2.9** PostGIS + geographic cache | Persistence, and content-addressed caching by adapter + quantised bbox | Second corridor in the same country hits cache |
+| `[~]` | **2.9** PostGIS + geographic cache | Cache **done** and validated live — a second corridor in the same region costs 1.2 s against 55.5 s. PostGIS persistence deliberately deferred, see below | Second corridor in the same country hits cache ✅ |
 
 **Try it:**
 
@@ -76,6 +76,49 @@ network.
 69 OSM fragments → one 25.01 km centreline → 50 units → 1,200 panel rows → 99.8% snap
 rate → Mode A. Details and the two defects it exposed in
 [`IMPLEMENTED.md`](IMPLEMENTED.md).
+
+### 2.9 — the cache, and why PostGIS is not in it yet
+
+```bash
+roadrisk corridor --ref B9 --bbox 34.80,32.80,35.05,33.05 --osm --traffic --cache .cache
+```
+
+Measured live on two real Cyprus roads into a fresh cache:
+
+| | Time | |
+|---|---|---|
+| B9, cold cache | **55.5 s** | the first corridor pays |
+| E601 — a *different* road, same region | **1.2 s** | cache hit |
+| B9 again | **1.1 s** | cache hit |
+
+**The rounding lives in the adapter, not the cache.** The strategic-network query is
+built from a half-degree grid cell rather than from the corridor's own bounding box, so
+two roads through the same county produce a byte-identical query and share an entry
+without the cache having to be clever. An earlier version rewrote the bounding box
+inside the query text as it passed through the cache; that worked, and it meant a cached
+run fetched a different region from an uncached one — a cache that changes the answer is
+not a cache.
+
+**The half-degree grid is a measured choice, and it has a cost.** At a tenth of a degree
+the second corridor missed entirely: B9 and E601 are a few kilometres apart and their
+padded boxes still differed by more than one cell. Half a degree shares, and the price is
+that the first corridor fetches a 1° × 1° region instead of a snug one — 55.5 s against
+the 11.8 s a tight box took. That is the trade the brief asks for: *"a second corridor in
+the same country is nearly free"* is a claim about the second corridor, not the first.
+
+**A cache must never make a run look fresher than it is.** Every entry records when it
+was fetched, every hit is counted, and the age of the oldest thing used goes into the
+run's warnings. Past a fortnight the note stops being a date and starts being an
+instruction to clear the cache. Expiry is per source, because OpenStreetMap changes daily
+and Mapillary changes when somebody drives past with a camera.
+
+**PostGIS is deliberately not built.** The other half of this step is persistence, and
+the step's own note already says why it moved here from 2.1: *persistence is a Stage 5
+concern*. Nothing in the pipeline needs a database today — a corridor fits in memory, the
+CLI is single-user, and there is no multi-tenant story until 5.4. Building a schema and a
+migration now would be guessing at what the web layer wants, and it would add a service
+dependency to a package whose whole shape is "runs with no network and no API key".
+It lands with 5.1, against real API requirements.
 
 ### 2.8 — the traffic proxy, and the gate that stops it lying
 

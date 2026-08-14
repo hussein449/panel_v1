@@ -5,7 +5,82 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Step 2.8: Tier B, and a gate against measuring the window
+## 2026-08-14 (latest) — Step 2.9: the geographic cache
+
+**Delivered:** `roadrisk.geo.cache` and `.cached`. A second corridor in the same region
+costs **1.2 seconds against 55.5**, validated live on two real Cyprus roads.
+
+```bash
+roadrisk corridor --ref B9 --bbox 34.80,32.80,35.05,33.05 --osm --traffic --cache .cache
+```
+
+**Verified:** 478 tests pass (31 new), `ruff check` clean, and the step's own done-when
+demonstrated end to end by `tools/validate_cache.py`.
+
+| | Time | |
+|---|---|---|
+| B9, cold cache | 55.5 s | the first corridor pays |
+| E601 — a *different* road, same region | 1.2 s | cache hit |
+| B9 again | 1.1 s | cache hit |
+
+### The rounding belongs to the adapter, not the cache
+
+The first version rewrote the bounding box inside the Overpass query text as it passed
+through the caching wrapper. It worked, and it was wrong in a way worth recording: it
+meant a run *with* a cache fetched a different region from a run without one. **A cache
+that changes the answer is not a cache** — it is a second code path nobody tests. It also
+put string-parsing of somebody else's query language into the caching layer.
+
+The strategic-network query is now built from a grid cell in the first place. Two
+corridors in the same county produce a byte-identical query on their own, cached or not,
+and `cached.py` went back to being a dictionary with a clock.
+
+### The grid size was measured, and it is a real trade
+
+At a tenth of a degree the second corridor **missed**. B9 and E601 are a few kilometres
+apart and, with the 20 km margin already applied, their padded boxes still differed by
+more than one cell. That is the whole failure mode of quantisation: too fine and nothing
+ever collides.
+
+Half a degree shares. The price is that the first corridor fetches a 1° × 1° region
+rather than a snug one — 55.5 s against the 11.8 s a tight box took. That is the trade
+the brief asks for in as many words: *"a second corridor in the same country is nearly
+free"* is a claim about the second corridor, not the first. It is also mildly good for
+the measure itself, since a wider network cuts off fewer of the through-routes
+betweenness is trying to count.
+
+### A cache must never make a run look fresher than it is
+
+Everything else in this package exists to stop a number looking more certain than it is,
+and a silent cache is the same failure in different clothes: a run quietly built on a
+three-month-old road network while presenting itself as today's assessment.
+
+So every entry records when it was fetched, every hit is counted, and the age of the
+oldest thing used travels into the run's warnings next to the values it produced. Past a
+fortnight the note stops being a date and becomes an instruction to clear the cache.
+Expiry is per source, because the sources age differently — OpenStreetMap changes daily,
+Mapillary changes when somebody drives past with a camera, and Copernicus DEM is a fixed
+product that will never change again.
+
+### A defect a test caught before the network could
+
+`FileCache.put` called `mkdir` outside its `try`, so a cache directory that could not be
+created — a read-only volume, a file already sitting at that path — raised and killed the
+run. A cache that cannot write should cost a run its speed and nothing else. Found by the
+test asserting exactly that, and fixed by moving one line.
+
+### PostGIS is deliberately not built
+
+The other half of this step is persistence, and the step's own note already explains why
+it moved here from 2.1: *persistence is a Stage 5 concern*. Nothing in the pipeline needs
+a database today — a corridor fits in memory, the CLI is single-user, and there is no
+multi-tenant story until 5.4. A schema written now would be guessing at what the API
+wants, and it would put a service dependency into a package whose entire shape is "runs
+with no network and no API key". It lands with 5.1, against real requirements.
+
+---
+
+## 2026-08-10 — Step 2.8: Tier B, and a gate against measuring the window
 
 **Delivered:** `traffic_proxy` from graph centrality, with a window-artefact gate, and
 `roadside_object_density` from Mapillary detections.

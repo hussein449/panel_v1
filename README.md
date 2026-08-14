@@ -98,6 +98,20 @@ GDAL, which is quarantined in its own extra:
 pip install "roadrisk-panel[raster]"
 ```
 
+### Making the second corridor cheap
+
+```bash
+roadrisk corridor --ref B9 --bbox 34.80,32.80,35.05,33.05 --osm --traffic --cache .cache
+```
+
+Remote fetches are remembered by *geography*, not by corridor: the road-network request
+is built from a half-degree grid cell, so two different roads through the same county
+ask an identical question and the second one never leaves the disk. Measured on two real
+Cyprus roads — **55.5 s cold, 1.2 s for the next corridor in the same region.**
+
+The cache never lets a run look fresher than it is. Every hit is reported with the date
+of the data it served, and past a fortnight the report tells you to clear it.
+
 ### Supplying your own data
 
 Anything you have already measured goes in as a CSV keyed by `unit_id`, one row per unit:
@@ -213,6 +227,11 @@ it fills; the tier and licence attached to its values come from *that declaratio
 adapter can promote itself to Tier A or attach a licence the registry never agreed to —
 and those are exactly the claims a client relies on.
 
+**A cache never makes a run look fresher than it is.** Every stored fetch records when it
+was taken, every hit is reported with that date, and past a fortnight the report stops
+describing the age and starts telling you to clear it. A silent cache is the same failure
+as a confident number: a result that looks like today's and is not.
+
 **A derived quantity is refused when it is mostly a picture of the analysis window.**
 Betweenness centrality is computed over the graph you supply, so a badly chosen window
 produces a peak in the middle of the corridor that looks exactly like a town. The
@@ -289,6 +308,8 @@ src/roadrisk/
 │   │   ├── mapillary.py     roadside fixed objects from pre-extracted detections
 │   │   ├── client.py        whatever the client measured — first link in every chain
 │   │   └── fusion.py        one value per factor, agreement, confidence per unit
+│   ├── cache.py             remember fetches by geography, and report their age
+│   ├── cached.py            the caching wrappers round each network client
 │   └── pipeline.py          the orchestrator
 ├── demo.py                  synthetic panels for tests and demonstration
 └── cli.py                   mode banner, refusal receipt, descent receipt

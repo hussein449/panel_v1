@@ -75,6 +75,7 @@ from roadrisk.geo.adapters.base import (
 )
 from roadrisk.geo.adapters.osm_tags import maxspeed_kmh
 from roadrisk.geo.adapters.osmdata import NODE_PRECISION_M
+from roadrisk.geo.cache import quantise_bbox
 from roadrisk.geo.corridor import Corridor
 from roadrisk.geo.errors import CorridorError
 from roadrisk.geo.osm import HttpOverpassClient, OverpassClient
@@ -101,6 +102,18 @@ STRATEGIC_CLASSES: tuple[str, ...] = (
 #: worst. See the module docstring for what three margins actually produced on Cyprus
 #: B9 — the answer is not flattering, and it is why the artefact gate exists.
 DEFAULT_NETWORK_MARGIN_M = 20_000.0
+
+#: Grid the network box is snapped to before it is requested.
+#:
+#: Half a degree is roughly 55 km, chosen so two corridors anywhere in the same county
+#: round to one box. A finer grid does not share: measured on Cyprus, B9 and E601 are a
+#: few kilometres apart, and with a 20 km margin their padded boxes still differed by
+#: more than a tenth of a degree — at 0.1 the second corridor missed the cache entirely.
+#:
+#: The cost is a larger fetch on a cold cache. That is the trade this step exists to
+#: make: the brief's rule is "a second corridor in the same country is nearly free",
+#: which is a claim about the second corridor, not the first.
+NETWORK_GRID_DEG = 0.5
 
 #: Free-flow speeds in km/h by highway class, used to weight the graph where OSM does
 #: not state a limit. Shortest paths on travel time route the way drivers do; shortest
@@ -185,15 +198,27 @@ def build_network_query(
     corridor: Corridor,
     *,
     margin_m: float = DEFAULT_NETWORK_MARGIN_M,
+    grid_deg: float = NETWORK_GRID_DEG,
     timeout_s: int = 180,
 ) -> str:
-    """Overpass QL for the strategic network in a box around the corridor.
+    """Overpass QL for the strategic network in a grid-aligned box around the corridor.
 
     A box, not the ``around`` ribbon the other OSM adapters use. Through traffic routes
     through an *area*; a ribbon-shaped graph has nowhere else to go and manufactures the
     very centrality peak this adapter has to be trusted not to invent.
+
+    **Snapped to a grid, which is what makes it cacheable across corridors.** Two roads
+    through the same county have different bounding boxes and would otherwise ask two
+    different questions; rounded out to a half-degree cell they ask one, and the second
+    corridor never leaves the disk. The snapping lives here rather than in the cache so
+    that a run with a cache and a run without fetch exactly the same region — a cache
+    that changes the answer is not a cache.
+
+    The rounding only ever grows the box, and for this measure a wider region is mildly
+    *better*: it cuts off fewer of the through-routes betweenness is trying to count.
     """
     south, west, north, east = _padded_box(corridor, margin_m)
+    west, south, east, north = quantise_bbox((west, south, east, north), grid_deg)
     classes = "|".join(STRATEGIC_CLASSES)
     return (
         f"[out:json][timeout:{timeout_s}];"
@@ -208,6 +233,7 @@ def fetch_network(
     *,
     client: OverpassClient | None = None,
     margin_m: float = DEFAULT_NETWORK_MARGIN_M,
+    grid_deg: float = NETWORK_GRID_DEG,
     max_nodes: int = MAX_GRAPH_NODES,
 ) -> RoadGraph:
     """Fetch the surrounding strategic network and contract it to a routable graph.
@@ -216,7 +242,9 @@ def fetch_network(
         CorridorError: Overpass failed, or the region is larger than ``max_nodes``.
     """
     active = client if client is not None else HttpOverpassClient(timeout_s=180.0)
-    payload = active(build_network_query(corridor, margin_m=margin_m))
+    payload = active(
+        build_network_query(corridor, margin_m=margin_m, grid_deg=grid_deg)
+    )
 
     elements = payload.get("elements", [])
     # Sorted by OSM id so node numbering — and therefore the sampled sources — does not
@@ -665,6 +693,7 @@ __all__ = [
     "DEFAULT_NETWORK_MARGIN_M",
     "DEFAULT_SOURCE_SAMPLE",
     "MAX_GRAPH_NODES",
+    "NETWORK_GRID_DEG",
     "SLOTS",
     "SOURCE_SEED",
     "STRATEGIC_CLASSES",

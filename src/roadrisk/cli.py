@@ -281,6 +281,17 @@ def corridor(
             ),
         ),
     ] = False,
+    cache_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--cache",
+            help=(
+                "Remember remote fetches here between runs. A second corridor in the "
+                "same region reuses the first one's network fetch. Every hit is "
+                "reported with the age of the data it served."
+            ),
+        ),
+    ] = None,
     client_path: Annotated[
         Path | None,
         typer.Option(
@@ -324,6 +335,7 @@ def corridor(
             landcover_sampler,
         )
         from roadrisk.geo.adapters.mapillary import HttpMapillaryClient
+        from roadrisk.geo.cache import FileCache
         from roadrisk.geo.demo import (
             monthly_periods,
             synthetic_centreline,
@@ -408,6 +420,7 @@ def corridor(
             landcover=landcover_sampler() if with_rasters else None,
             network_client=HttpOverpassClient(timeout_s=240.0) if with_traffic else None,
             mapillary_client=HttpMapillaryClient() if with_mapillary else None,
+            cache=FileCache(directory=cache_dir) if cache_dir is not None else None,
             client_values=client_values,
             client_source=(
                 f"Supplied by the client in {client_path.name}, one value per unit."

@@ -46,6 +46,9 @@ from roadrisk.geo.adapters import (
     read_client_values,
     read_tags,
 )
+from roadrisk.geo.cache import Cache, CacheReport, NullCache
+from roadrisk.geo.cache import collect_notes as collect_cache_notes
+from roadrisk.geo.cached import cached_mapillary, cached_overpass
 from roadrisk.geo.corridor import Corridor
 from roadrisk.geo.errors import CorridorError
 from roadrisk.geo.geometry import CurvatureResult, compute_curvature
@@ -76,6 +79,7 @@ class CorridorPanel:
     curvature: CurvatureResult | None = None
     adapters: list[AdapterResult] = field(default_factory=list)
     fusion: FusionResult = field(default_factory=FusionResult)
+    cache: CacheReport = field(default_factory=CacheReport)
     factor_columns: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -150,6 +154,7 @@ def build_corridor_panel(
     network: RoadGraph | None = None,
     network_client: OverpassClient | None = None,
     mapillary_client: MapillaryClient | None = None,
+    cache: Cache | None = None,
     latitude_column: str = "latitude",
     longitude_column: str = "longitude",
     period_column: str = "period",
@@ -195,6 +200,10 @@ def build_corridor_panel(
         mapillary_client: Client for the Mapillary map-features API. Supplying it runs
             the roadside-object adapter; the default implementation needs a free access
             token in ``$MAPILLARY_ACCESS_TOKEN``.
+        cache: Where to remember remote answers between runs. Every network client is
+            wrapped in it, the strategic-network request is rounded to a grid so a second
+            corridor in the same region reuses the first one's fetch, and every hit is
+            reported with the age of what it served.
         latitude_column, longitude_column, period_column, time_slot_column: Column
             names in ``crashes``.
 
@@ -203,6 +212,19 @@ def build_corridor_panel(
         :func:`roadrisk.core.assess`.
     """
     active_registry = registry if registry is not None else load_registry()
+    store = cache if cache is not None else NullCache()
+    cache_report = CacheReport()
+
+    if osm_client is not None:
+        osm_client = cached_overpass(osm_client, store, report=cache_report, label="ribbon")
+    if network_client is not None:
+        # Plain query-text caching is enough here: the network query is built from a
+        # grid cell, so two corridors in the same county already ask the same question.
+        network_client = cached_overpass(
+            network_client, store, report=cache_report, label="network"
+        )
+    if mapillary_client is not None:
+        mapillary_client = cached_mapillary(mapillary_client, store, report=cache_report)
 
     corridor = Corridor.from_latlon(points, name=name)
     segmentation = segment(corridor, target_length_m=target_length_m)
@@ -303,6 +325,9 @@ def build_corridor_panel(
     # `CorridorPanel.skipped`, and a reason worth reading is worth reading once.
     warnings.extend(collect_notes(results, include_skipped=False))
     warnings.extend(fusion.notes)
+    # Last, and never omitted when the cache was used: a reader has to be able to see
+    # that the result rests on stored data, and how old that data was.
+    warnings.extend(collect_cache_notes([cache_report]))
 
     return CorridorPanel(
         panel=panel,
@@ -313,6 +338,7 @@ def build_corridor_panel(
         curvature=curvature,
         adapters=results,
         fusion=fusion,
+        cache=cache_report,
         factor_columns=fusion.columns,
         warnings=warnings,
     )
