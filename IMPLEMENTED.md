@@ -5,7 +5,187 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-10 (latest) — Step 2.7: fusion, agreement, and a confidence tier
+## 2026-08-10 (latest) — Step 2.8: Tier B, and a gate against measuring the window
+
+**Delivered:** `traffic_proxy` from graph centrality, with a window-artefact gate, and
+`roadside_object_density` from Mapillary detections.
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --osm --traffic --mapillary
+```
+
+**Verified:** 436 tests pass (35 new), `ruff check` clean, traffic proxy validated live
+on Cyprus B9 at three margins. Mapillary is **not** validated — see below.
+
+### The window is the trap, and the gate is the deliverable
+
+Betweenness is computed over the graph you supply. A graph shaped like a ribbon around
+the corridor produces a parabola peaking in the middle of the ribbon — an artefact of
+the query, and indistinguishable at a glance from a town on the road. Two defences:
+
+**Fetch a region, not a ribbon.** This is the one OSM fetch in the package that uses a
+bounding box rather than the corridor-following `around` filter, and the reason is
+methodological rather than cost: through traffic routes through an *area*, and a ribbon
+graph has nowhere else to go.
+
+**Then test for the artefact anyway.** The finished proxy is correlated against a
+symmetric parabola centred on the corridor. A real town peaks wherever the town is; the
+artefact peaks dead centre by construction. Above 0.7 the run says so; above 0.9 the
+factor is withheld.
+
+Measured on Cyprus B9:
+
+| Margin | Junctions | Artefact correlation | Peak unit (of 49) |
+|---|---|---|---|
+| 5 km | 114 | 0.38 | 1 |
+| 10 km | 277 | 0.69 | 26 |
+| 20 km | 592 | 0.41 | 19 |
+
+**The honest reading is not flattering: the along-corridor pattern is not stable under a
+change of window.** It is not that the artefact decays with width — it does not, on this
+road — but that an arbitrary analysis choice moves both the shape and where it peaks.
+That is the most useful thing this adapter can report about its own output, and it is
+why `traffic_proxy` stays uncited and the notes are as loud as they are. The margin
+defaults to the widest of the three on the methodological ground that it cuts off fewest
+through-routes, not because the number looked better.
+
+The gate is not theoretical: driven through the CLI on a synthetic grid corridor it
+refuses at **0.99** and says why.
+
+### A defect the live run exposed: contraction was contracting nothing
+
+The first version walked each OSM way and closed a run at that way's last vertex. That
+looks like junction contraction and achieves almost none of it, because OSM splits a
+road at arbitrary points — a surface change, a bridge, an editor's convenience — so the
+shared ends of consecutive ways are not junctions at all.
+
+Measured: the Cyprus B9 region came back as **483 ways contracted to 480 junctions and
+506 links** — one link per way, no contraction whatsoever, while the module's own
+docstring claimed contraction was what made betweenness affordable.
+
+Fixed by building the vertex graph first and collapsing chains of degree-two vertices
+wherever they run, across way boundaries rather than within them. The same region now
+contracts to **114 junctions and 140 links**, a four-fold reduction, and a road split
+into fifteen ways collapses to one link — pinned by a test.
+
+This also moved the artefact numbers, which is why the table above supersedes the one
+measured before the fix.
+
+### Mapillary: validated against the live API, and it took three defects to get there
+
+Every other source here is keyless, so every other adapter was validated on a real road
+straight away. Mapillary needs a free access token, which this environment does not
+have — so it was validated by a human running `tools/validate_mapillary.py`, and the
+three rounds that took are worth recording because each one hid the next.
+
+**1 · The bounding box was too large.** A 25 km corridor's box is 0.053 x 0.137 degrees,
+and the map-features endpoint refuses it. The adapter now tiles *along the corridor* —
+not as a grid over the bounding box, because a road is a line and gridding would spend
+four requests in five on ground the road never touches. Tile length is computed from
+latitude, since a degree of longitude shrinks as you go north.
+
+**2 · The failure said nothing, and my error handling said something wrong.** Mapillary
+answers an oversized request with `HTTP 500 "An unknown error occurred"`. The adapter
+caught every exception, printed the *type* and guessed `"check the token is valid"` —
+sending a real user to look in exactly the wrong place. Twice, in fact: the same habit
+then hid a second cause. The client now reads the API's own message out of the response
+body, and distinguishes a refusal from a transport failure.
+
+**3 · An empty result is not an empty world.** With a token lacking the `read` scope,
+every query returns `HTTP 200 {"data":[]}` — Meta's Graph APIs return empty rather than
+erroring on a missing scope. That is indistinguishable from a rural road with no
+imagery, which is exactly what the corridor under test *was*. It took a control query
+over central Amsterdam to separate the two, and that control is now part of the tool:
+`python tools/validate_mapillary.py amsterdam`.
+
+**What the live data then confirmed.** `object--street-light` and
+`object--support--utility-pole` come back exactly as spelled in `HAZARD_OBJECTS`;
+`object--trash-can` appears and is correctly not counted; geometry is
+`{"coordinates": [lon, lat]}`, which is the order the parser assumes; ids are strings,
+which is what the de-duplicator keys on. Had any of those been wrong the adapter would
+have counted zero on every corridor on earth while looking like it worked.
+
+**And one more thing the live data taught.** The real limit is the volume of the
+*answer*, not the area of the *question* — Mapillary's words are "Please reduce the
+amount of data you're asking for". So the same tile that is comfortable through farmland
+is refused in a city centre. A refused tile now halves itself and retries, up to three
+times, rather than the alternative of sizing every tile for Manhattan and firing a
+thousand requests at a free API for a rural road.
+
+**What the layer actually contains, versus what the registry hoped.** The registry note
+said "poles, trees, walls". Only the first is true: map features are *point* detections
+of manufactured objects, because those are what a detector can localise to a point.
+Trees and walls are segmentation classes with no point geometry and are not in this
+layer at any price. The note is corrected and the objects counted are named in the
+source string rather than implied.
+
+### Then the validated run changed the factor's definition twice
+
+Run on the Dutch N200 into Amsterdam — a real arterial in a country with dense coverage —
+the chain works end to end: 3,959 features fetched, 1,245 roadside objects, a median of
+**93 objects per km** varying 0 to 142 between units, at `medium` confidence throughout
+because fusion reads Tier B and caps it without being asked. Ten of the eleven class
+names are now confirmed against live data.
+
+But the *first* validated run, over central Amsterdam, produced two corrections that no
+synthetic test could have found.
+
+**Signage was 54% of the column, and signage is not a struck object.** Of 1,088
+detections, 591 were `object--sign--store`, `object--sign--advertisement`,
+`object--sign--information` and `object--banner`. Those hang on building facades or
+frangible posts — nothing a vehicle leaving the carriageway hits. What they measure is
+shopfront density, which is `poi_density`. Counting them would have shipped two columns
+measuring the same thing under different names, **collinear by construction** — the exact
+trap the junction/access/ramp partition was built to avoid, walked into somewhere else.
+Mapillary cannot distinguish a freestanding billboard on a steel post from a sign screwed
+to a wall, so the group is excluded whole rather than half-counted.
+
+**The radius was three times too wide.** At 50 m the factor reported a median of 136
+objects per kilometre — one every seven metres, which describes a neighbourhood rather
+than a verge, because in a city a 50 m band sweeps the parallel streets. 50 m is right
+for POIs and buildings, which measure activity and genuinely extend a block back. It is
+wrong for *what you would hit*: the AASHTO clear zone is about 9-10 m. Narrowed to
+**15 m** — clear zone plus positional error.
+
+Both corrections are pinned by tests that cite the measured numbers as their reason.
+
+### One limitation this cannot fix from here
+
+A unit reporting zero means *no detections*, which is either an empty verge or an
+unphotographed one. Telling those apart needs a second query against the imagery
+endpoint to ask whether a camera ever passed. That is not built, so a zero is reported at
+the same coverage as any other value and the notes say plainly that it must not be read
+as a safe roadside.
+
+### One factor deliberately not derived
+
+The registry declares `mapillary_detections` against `roadside_hazard_score` too. It is
+not implemented, on purpose, and the adapter emits a skip entry saying so on every run.
+
+That factor's units are the HSM roadside hazard rating: an integer 1 to 7 whose cited
+weight is meaningless on any other scale — the registry says so in its own note.
+Mapping poles-per-kilometre onto that scale is a modelling decision requiring a study
+that relates the two. Inventing it here would put a fabricated number behind a cited
+weight, which is the single worst thing this package could do.
+
+### Tier B is capped at medium confidence, by construction
+
+Nobody stated these values; a model inferred them. Fusion already reads the tier and
+tiers anything Tier B as `inferred`, so `roadside_object_density` comes out medium on
+every unit without this module asking for it. That is the 2.7 machinery working on the
+first factor that needed it.
+
+### Two Tier B factors remain, neither in this step's deliverable
+
+`mapillary_vision` — our own inference on sampled frames, the main cost trap in the
+pipeline at 50-150 USD per corridor, and the adapter that would need the poles-to-RHR
+mapping study before its output means anything. And `dem_viewshed` for
+`sight_distance_proxy`, now cheap to attempt because the elevation sampler from 2.6
+already exists.
+
+---
+
+## 2026-08-10 — Step 2.7: fusion, agreement, and a confidence tier
 
 **Delivered:** `roadrisk.geo.adapters.fusion` and `.client`. One value per factor per
 unit, the losing source kept and compared, and a confidence tier with a reason for every

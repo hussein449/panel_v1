@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 
@@ -26,14 +27,20 @@ from roadrisk.geo.adapters import (
     OSM_GEOMETRY_ADAPTER,
     AdapterResult,
     FusionResult,
+    MapillaryClient,
     OsmExtract,
     PointSampler,
+    RoadGraph,
     collect_notes,
     compute_grade,
     compute_landcover,
+    compute_object_density,
+    compute_traffic_proxy,
     count_densities,
     curvature_adapter,
     fetch_extract,
+    fetch_features,
+    fetch_network,
     fuse,
     provenance_frame,
     read_client_values,
@@ -140,6 +147,9 @@ def build_corridor_panel(
     landcover: PointSampler | None = None,
     client_values: pd.DataFrame | None = None,
     client_source: str | None = None,
+    network: RoadGraph | None = None,
+    network_client: OverpassClient | None = None,
+    mapillary_client: MapillaryClient | None = None,
     latitude_column: str = "latitude",
     longitude_column: str = "longitude",
     period_column: str = "period",
@@ -177,6 +187,14 @@ def build_corridor_panel(
             the client slot first — and where an open source covered the same factor,
             the two are compared and the units they differ on are named.
         client_source: Provenance text for that table, e.g. "2024 asset inventory".
+        network: A pre-fetched strategic road network for the traffic proxy.
+        network_client: Overpass client for that fetch. Deliberately separate from
+            ``osm_client``: the ribbon fetch and the wide regional fetch are different
+            queries with very different costs, and a caller may want one without the
+            other.
+        mapillary_client: Client for the Mapillary map-features API. Supplying it runs
+            the roadside-object adapter; the default implementation needs a free access
+            token in ``$MAPILLARY_ACCESS_TOKEN``.
         latitude_column, longitude_column, period_column, time_slot_column: Column
             names in ``crashes``.
 
@@ -247,6 +265,25 @@ def build_corridor_panel(
             compute_landcover(segmentation, landcover, registry=active_registry)
         )
 
+    graph = network
+    if graph is None and network_client is not None:
+        graph, network_warnings = _fetch_network(corridor, network_client)
+        warnings.extend(network_warnings)
+    if graph is not None:
+        results.append(
+            compute_traffic_proxy(segmentation, graph, registry=active_registry)
+        )
+
+    if mapillary_client is not None:
+        features, mapillary_warnings = _fetch_features(corridor, mapillary_client)
+        warnings.extend(mapillary_warnings)
+        if features is not None:
+            results.append(
+                compute_object_density(
+                    segmentation, features, registry=active_registry
+                )
+            )
+
     if client_values is not None:
         results.append(
             read_client_values(
@@ -299,6 +336,38 @@ def _fetch_extract(
             "The OSM attribute fetch failed, so every OSM-derived factor is absent from "
             f"this panel: {exc} Curvature and the crash counts are unaffected. Re-run "
             "to pick the factors up."
+        ]
+
+
+def _fetch_network(
+    corridor: Corridor,
+    client: OverpassClient,
+) -> tuple[RoadGraph | None, list[str]]:
+    """Fetch the regional network, degrading loudly rather than losing the run.
+
+    This is by far the largest query the pipeline makes — a whole region rather than a
+    ribbon — so it is the one most likely to meet a busy mirror.
+    """
+    try:
+        return fetch_network(corridor, client=client), []
+    except CorridorError as exc:
+        return None, [
+            f"The strategic network fetch failed, so traffic_proxy is absent: {exc} "
+            "Every other factor is unaffected."
+        ]
+
+
+def _fetch_features(
+    corridor: Corridor,
+    client: MapillaryClient,
+) -> tuple[Any | None, list[str]]:
+    """Fetch Mapillary detections, degrading loudly."""
+    try:
+        return fetch_features(corridor, client=client), []
+    except CorridorError as exc:
+        return None, [
+            f"The Mapillary fetch failed, so roadside_object_density is absent: {exc} "
+            "Every other factor is unaffected."
         ]
 
 

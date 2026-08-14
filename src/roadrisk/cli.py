@@ -261,6 +261,26 @@ def corridor(
             ),
         ),
     ] = False,
+    with_traffic: Annotated[
+        bool,
+        typer.Option(
+            "--traffic/--no-traffic",
+            help=(
+                "Estimate a traffic proxy from betweenness on the surrounding road "
+                "network. A second, much wider OSM fetch. Never AADT."
+            ),
+        ),
+    ] = False,
+    with_mapillary: Annotated[
+        bool,
+        typer.Option(
+            "--mapillary/--no-mapillary",
+            help=(
+                "Count roadside fixed objects from Mapillary detections. Needs a free "
+                "access token in $MAPILLARY_ACCESS_TOKEN."
+            ),
+        ),
+    ] = False,
     client_path: Annotated[
         Path | None,
         typer.Option(
@@ -303,6 +323,7 @@ def corridor(
             elevation_sampler,
             landcover_sampler,
         )
+        from roadrisk.geo.adapters.mapillary import HttpMapillaryClient
         from roadrisk.geo.demo import (
             monthly_periods,
             synthetic_centreline,
@@ -366,6 +387,13 @@ def corridor(
             "[dim]Sampling the Copernicus DEM and ESA WorldCover along the corridor…"
             "[/dim]"
         )
+    if with_traffic:
+        console.print(
+            "[dim]Fetching the surrounding strategic network for the traffic proxy — "
+            "this is the largest query the pipeline makes…[/dim]"
+        )
+    if with_mapillary:
+        console.print("[dim]Fetching Mapillary roadside detections…[/dim]")
 
     try:
         built = build_corridor_panel(
@@ -378,6 +406,8 @@ def corridor(
             osm_client=HttpOverpassClient() if with_osm else None,
             elevation=elevation_sampler() if with_rasters else None,
             landcover=landcover_sampler() if with_rasters else None,
+            network_client=HttpOverpassClient(timeout_s=240.0) if with_traffic else None,
+            mapillary_client=HttpMapillaryClient() if with_mapillary else None,
             client_values=client_values,
             client_source=(
                 f"Supplied by the client in {client_path.name}, one value per unit."
@@ -390,7 +420,13 @@ def corridor(
         _print_rejection(exc)
         raise typer.Exit(EXIT_REJECTED) from exc
 
-    _render_corridor(built, with_osm=with_osm, with_rasters=with_rasters)
+    _render_corridor(
+        built,
+        with_osm=with_osm,
+        with_rasters=with_rasters,
+        with_traffic=with_traffic,
+        with_mapillary=with_mapillary,
+    )
 
     assessment = assess(
         built.panel,
@@ -496,7 +532,12 @@ def _read_corridor_inputs(
 
 
 def _render_corridor(
-    built, *, with_osm: bool = False, with_rasters: bool = False
+    built,
+    *,
+    with_osm: bool = False,
+    with_rasters: bool = False,
+    with_traffic: bool = False,
+    with_mapillary: bool = False,
 ) -> None:
     console.print(
         Panel(built.summary(), title="Corridor built", border_style="cyan")
@@ -535,6 +576,10 @@ def _render_corridor(
             "--rasters for gradient from the Copernicus DEM and roadside land use from "
             "ESA WorldCover"
         )
+    if not with_traffic:
+        offered.append("--traffic for a graph-centrality traffic proxy")
+    if not with_mapillary:
+        offered.append("--mapillary for roadside fixed objects")
     if offered:
         console.print(
             "[dim]Not every source ran. Pass "

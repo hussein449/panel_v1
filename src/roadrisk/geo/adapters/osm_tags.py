@@ -151,7 +151,7 @@ class _TagSpec:
     notes: tuple[str, ...] = ()
 
 
-def _maxspeed_kmh(tags: Mapping[str, str]) -> float | None:
+def maxspeed_kmh(tags: Mapping[str, str]) -> float | None:
     """Posted limit in km/h, or None where OSM does not state a number.
 
     ``maxspeed=RO:urban`` and friends encode a national default rather than a sign.
@@ -247,7 +247,7 @@ _SPECS: tuple[_TagSpec, ...] = (
     _TagSpec(
         factor="speed_limit",
         adapter="osm_maxspeed",
-        read=_maxspeed_kmh,
+        read=maxspeed_kmh,
         source=(
             "OpenStreetMap `maxspeed` on the ways carrying the corridor, sampled every "
             f"{SAMPLE_INTERVAL_M:.0f} m and averaged over the tagged part of each unit. "
@@ -670,6 +670,7 @@ __all__ = [
     "CarrierMatch",
     "carrier_candidates",
     "match_carriers",
+    "maxspeed_kmh",
     "read_tags",
     "sample_points",
 ]

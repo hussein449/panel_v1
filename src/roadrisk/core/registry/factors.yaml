@@ -634,6 +634,17 @@ factors:
       UNCITED. iRAP's roadside severity attributes price the nearest object and its
       distance rather than object density per km; sourcing this needs the Methodology
       Reference Guide and a mapping decision.
+      UNITS: rigid point objects within 15 m of the centreline, per km, both sides.
+      Fifteen metres is the clear zone plus positional error — this factor prices what a
+      vehicle leaving the carriageway would HIT, not what is in the neighbourhood, which
+      is why its radius is a third of the one poi_density and building_density use.
+      Trees and walls are NOT included and cannot be — they are segmentation classes
+      with no point geometry, so the column under-reports roadside hazard on a treed or
+      walled corridor.
+      Signage is excluded deliberately. Measured over central Amsterdam, shop and
+      advertisement signs were 54% of all detections; they hang on building facades
+      rather than standing in the verge, so counting them would make this a noisier
+      duplicate of poi_density and collinear with it by construction.
     adapters:
       - name: client_inventory
         tier: D
@@ -641,7 +652,10 @@ factors:
       - name: mapillary_detections
         tier: B
         licence: CC-BY-SA
-        notes: Poles, trees, walls. Pre-extracted — no inference cost.
+        notes: >
+          Poles, street lights, sign supports. Pre-extracted point detections, so no
+          inference cost — but coverage is contributed, not global, and a low count can
+          mean a clear roadside or an unphotographed one.
 
   - name: building_density
     label: Building density (per km)

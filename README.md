@@ -14,7 +14,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 | Stage | State |
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
-| **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, and fusion — client data outranks open data, disagreements are named, and every factor carries a confidence tier per unit. Tier B and persistence outstanding. |
+| **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
 | Stage 3 — model depth (GLMM, GAM, Bayesian) | Not started |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
@@ -87,6 +87,7 @@ That takes the panel from two factor columns to twelve, from three sources:
 | Centreline geometry | arithmetic | `curve_radius_min`, `curve_density` |
 | OpenStreetMap, one Overpass call | one request | `speed_limit`, `lanes`, `lit`, `surface_paved`, `sidewalk_present`, `median_present`, `junction_density`, `access_density`, `ramp_density`, `poi_density`, `building_density` |
 | Copernicus DEM, ESA WorldCover | COG windows | `grade_pct`, `landuse_urban` |
+| OSM graph centrality, Mapillary *(Tier B)* | shortest paths, a free token | `traffic_proxy`, `roadside_object_density` |
 
 Each value is printed with the adapter, tier, licence and coverage behind it, and every
 factor the data could not support is listed separately with the coverage that failed.
@@ -212,6 +213,17 @@ it fills; the tier and licence attached to its values come from *that declaratio
 adapter can promote itself to Tier A or attach a licence the registry never agreed to —
 and those are exactly the claims a client relies on.
 
+**A derived quantity is refused when it is mostly a picture of the analysis window.**
+Betweenness centrality is computed over the graph you supply, so a badly chosen window
+produces a peak in the middle of the corridor that looks exactly like a town. The
+traffic proxy is correlated against that window's own shape and withheld when it matches
+— a factor that is really measuring the bounding box is worse than no factor.
+
+**A number is never mapped onto a cited scale by assumption.** Mapillary can count poles
+per kilometre; `roadside_hazard_score` is measured on the HSM 1-to-7 roadside hazard
+rating. Converting one to the other needs a study, so the adapter refuses and says so on
+every run, rather than putting a guess behind a published weight.
+
 **Client data outranks open data because the registry says so, not because the code
 does.** A factor declares an ordered chain of adapters and the first one that resolves
 wins. There is no branch anywhere that prefers client input; reordering the YAML
@@ -273,6 +285,8 @@ src/roadrisk/
 │   │   ├── sampling.py      stations along the corridor, and beside it
 │   │   ├── grade.py         gradient from the DEM, over an error-budget baseline
 │   │   ├── landcover.py     built-up share of the roadside, sampled off the line
+│   │   ├── graph.py         traffic proxy from betweenness, and the artefact gate
+│   │   ├── mapillary.py     roadside fixed objects from pre-extracted detections
 │   │   ├── client.py        whatever the client measured — first link in every chain
 │   │   └── fusion.py        one value per factor, agreement, confidence per unit
 │   └── pipeline.py          the orchestrator

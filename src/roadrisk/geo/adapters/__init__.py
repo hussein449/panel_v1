@@ -27,9 +27,18 @@ Factor                  Registry adapter            Module
 ``landuse_urban``       ``esa_worldcover``          :mod:`.landcover`
 ======================  ==========================  ============================
 
-Three sources, three costs. Curvature is arithmetic on the centreline. The nine OSM
+And two Tier B factors — open data, but real compute rather than a lookup:
+
+==========================  =========================  ==========================
+``traffic_proxy``           ``osm_graph_centrality``   :mod:`.graph`
+``roadside_object_density`` ``mapillary_detections``   :mod:`.mapillary`
+==========================  =========================  ==========================
+
+Four sources, four costs. Curvature is arithmetic on the centreline. The nine Tier A OSM
 factors are one Overpass call. The two raster factors are COG window reads over HTTPS,
-and are the only ones that need GDAL — hence the separate ``raster`` extra.
+and are the only ones that need GDAL — hence the separate ``raster`` extra. The traffic
+proxy is a second, much wider Overpass fetch plus a few seconds of shortest-path work,
+and Mapillary needs a free access token.
 
 ``population_density`` is the one Tier A factor in the brief with no adapter here, and
 the reason is delivery format rather than data: WorldPop's global mosaic ignores HTTP
@@ -67,7 +76,20 @@ from roadrisk.geo.adapters.fusion import (
     provenance_frame,
 )
 from roadrisk.geo.adapters.grade import compute_grade
+from roadrisk.geo.adapters.graph import (
+    RoadGraph,
+    compute_traffic_proxy,
+    edge_betweenness,
+    fetch_network,
+)
 from roadrisk.geo.adapters.landcover import compute_landcover
+from roadrisk.geo.adapters.mapillary import (
+    HttpMapillaryClient,
+    MapillaryClient,
+    MapillaryFeatures,
+    compute_object_density,
+    fetch_features,
+)
 from roadrisk.geo.adapters.osm_density import count_densities, count_per_unit
 from roadrisk.geo.adapters.osm_tags import CarrierMatch, match_carriers, read_tags
 from roadrisk.geo.adapters.osmdata import (
@@ -100,11 +122,15 @@ __all__ = [
     "FactorValues",
     "FusedFactor",
     "FusionResult",
+    "HttpMapillaryClient",
+    "MapillaryClient",
+    "MapillaryFeatures",
     "OsmExtract",
     "OsmNode",
     "OsmWay",
     "PointSampler",
     "RasterProduct",
+    "RoadGraph",
     "SkippedFactor",
     "SourceAgreement",
     "Stations",
@@ -113,11 +139,16 @@ __all__ = [
     "collect_notes",
     "compute_grade",
     "compute_landcover",
+    "compute_object_density",
+    "compute_traffic_proxy",
     "count_densities",
     "count_per_unit",
     "curvature_adapter",
+    "edge_betweenness",
     "elevation_sampler",
     "fetch_extract",
+    "fetch_features",
+    "fetch_network",
     "fuse",
     "landcover_sampler",
     "match_carriers",

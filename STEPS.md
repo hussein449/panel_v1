@@ -59,7 +59,7 @@ being worked around — it is the shape of the product.
 | `[x]` | **2.5** Crash snapping | Project to centreline within tolerance, chainage → unit, period → cell | Every drop counted with a reason; `SnapReport` activates gate check 6 |
 | `[x]` | **2.6** Tier A adapters | 12 factors behind one adapter contract, from three sources: centreline geometry, one OSM call, two COG rasters | Each returns value + source + tier + licence |
 | `[x]` | **2.7** Fusion + agreement | Registry chain decides the winner; agreement scored where two sources overlap; client data enters as the first link | Confidence tier emitted per factor per unit |
-| `[ ]` | **2.8** Tier B adapters | Mapillary detections, graph centrality traffic proxy | Never labelled `aadt` |
+| `[x]` | **2.8** Tier B adapters | Both named deliverables done and validated live: graph-centrality traffic proxy with a window-artefact gate, Mapillary detections. `mapillary_vision` and `dem_viewshed` are further Tier B factors, listed below rather than in this step | Never labelled `aadt` — asserted by test |
 | `[ ]` | **2.9** PostGIS + geographic cache | Persistence, and content-addressed caching by adapter + quantised bbox | Second corridor in the same country hits cache |
 
 **Try it:**
@@ -76,6 +76,74 @@ network.
 69 OSM fragments → one 25.01 km centreline → 50 units → 1,200 panel rows → 99.8% snap
 rate → Mode A. Details and the two defects it exposed in
 [`IMPLEMENTED.md`](IMPLEMENTED.md).
+
+### 2.8 — the traffic proxy, and the gate that stops it lying
+
+```bash
+roadrisk corridor centreline.csv --crashes crashes.csv --osm --traffic
+```
+
+Betweenness centrality over the surrounding strategic network: the estimated share of
+all shortest paths that use each unit. **Never AADT** — the column is `traffic_proxy`,
+the notes say so in capitals, and the factor stays uncited because the HSM's AADT
+exponent is estimated on measured volumes and does not transfer to a unitless score.
+
+**The window is the trap.** Betweenness is computed over the graph you supply, so a
+ribbon-shaped graph produces a parabola peaking in the middle of the ribbon — an
+artefact of the query, indistinguishable at a glance from a town on the corridor. Two
+defences: fetch a *region* rather than a ribbon (this is the one OSM fetch in the
+package that uses a bounding box, deliberately), then test the finished proxy against a
+symmetric parabola anyway and withhold it above 0.9.
+
+Measured on Cyprus B9:
+
+| Margin | Junctions | Artefact correlation | Peak unit (of 49) |
+|---|---|---|---|
+| 5 km | 114 | 0.38 | 1 |
+| 10 km | 277 | 0.69 | 26 |
+| 20 km | 592 | 0.41 | 19 |
+
+Read honestly: **the along-corridor pattern is not stable under a change of window.**
+An arbitrary analysis choice moves both the shape and where it peaks. That is the most
+useful thing the adapter can say about its own output, and the reason `traffic_proxy`
+stays uncited.
+
+**Mapillary detections** are built and validated end to end on the Dutch N200: a median
+of 93 rigid roadside objects per km, varying 0 to 142 between units, at `medium`
+confidence throughout.
+
+```bash
+python tools/validate_mapillary.py amsterdam   # needs a token with the read scope
+```
+
+Getting there took five defects, each hiding the next — three in the plumbing (the
+corridor box is too large for the endpoint, my error handling reported the wrong cause,
+and a token without the `read` scope returns `200 {"data":[]}` indistinguishably from a
+road with no imagery) and **two in the factor's own definition**: signage was 54% of the
+count and is not a struck-object hazard, and the 50 m radius was measuring the
+neighbourhood rather than the verge. Details in
+[`IMPLEMENTED.md`](IMPLEMENTED.md).
+
+Do not validate on B9 — it has no street-level imagery at all, so it exercises the
+refusal and nothing else, and cannot tell a corridor with no poles from a bug that drops
+every pole.
+
+**Two Tier B factors from the brief are still unbuilt**, and neither belongs to this
+step's deliverable:
+
+- **`mapillary_vision`** — our own inference on sampled frames, feeding
+  `roadside_hazard_score` and a `surface_paved` cross-check. This is the main cost trap
+  in the pipeline at 50-150 USD of VLM calls per corridor, and it is also the one that
+  needs the poles-to-RHR mapping study before its output means anything.
+- **`dem_viewshed`** — `sight_distance_proxy` by marching the line of sight along the
+  alignment against terrain. Cheap to attempt now that the elevation sampler from 2.6
+  exists; crude by nature, since a DEM sees terrain but not vegetation, walls or parked
+  vehicles.
+
+`roadside_hazard_score` is **deliberately not derived** from those detections even
+though the registry declares the adapter against it. Its units are the HSM roadside
+hazard rating, 1 to 7, and mapping poles-per-km onto that scale needs a study — putting
+a guess behind a cited weight is the worst thing this package could do.
 
 ### 2.7 — done
 
