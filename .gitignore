@@ -19,6 +19,10 @@ htmlcov/
 # Runs and data
 runs/
 data/
+# Fetched-data caches. `--cache DIR` stores gzipped API responses keyed by query;
+# they are reproducible from the network, they carry their own age, and they are not
+# ours to redistribute.
+.cache*/
 *.gpkg
 *.tif
 *.pbf

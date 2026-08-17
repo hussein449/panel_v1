@@ -10,7 +10,8 @@ run all travel together.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
@@ -31,6 +32,7 @@ from roadrisk.core.diagnostics import (
     zero_variance_columns,
 )
 from roadrisk.core.errors import WeightNotSourced
+from roadrisk.core.gam import DEFAULT_RESAMPLES, ShapeDiagnostic, hunt_shape
 from roadrisk.core.gates import GateReport, SnapReport, run_pre_fit_gates
 from roadrisk.core.ladder import LadderResult, Mode, Rung, walk_ladder
 from roadrisk.core.models import FitResult, IndexResult, score_index
@@ -75,6 +77,10 @@ class Assessment:
     refusal_receipt: str | None = None
     descent_receipt: str | None = None
     index_refusal: str | None = None
+    #: Rung 3 splines the caller asked for by name. Contradicting factors get one
+    #: automatically and it lives on the sign guard finding instead. Both are reference
+    #: material: they carry a shape and a plot and, by type, no client number.
+    shapes: list[ShapeDiagnostic] = field(default_factory=list)
 
     @property
     def is_mode_a(self) -> bool:
@@ -145,6 +151,10 @@ class Assessment:
             "fit": _fit_as_dict(self.fit),
             "index": _index_as_dict(self.index),
             "sign_guard": _sign_guard_as_dict(self.sign_guard),
+            # Under "reference", never under "fit". The brief files rung 3 as reference
+            # only, never in the client report, and the serialised shape says so before
+            # a consumer has to know what a GAM is.
+            "reference": {"shapes": [s.as_dict() for s in self.shapes]},
             "receipts": {
                 "refusal": self.refusal_receipt,
                 "descent": self.descent_receipt,
@@ -163,6 +173,8 @@ def assess(
     snap: SnapReport | None = None,
     correlation_threshold: float = DEFAULT_CORRELATION_THRESHOLD,
     max_leave_one_out: int = DEFAULT_MAX_LEAVE_ONE_OUT,
+    shape_factors: Sequence[str] = (),
+    shape_resamples: int = DEFAULT_RESAMPLES,
 ) -> Assessment:
     """Assess one panel end to end.
 
@@ -176,6 +188,13 @@ def assess(
         correlation_threshold: Minimum |r| for a factor to count as a correlated partner
             in the sign guard's follow-up diagnostics.
         max_leave_one_out: Cap on leave-one-unit-out refits per contradicting factor.
+        shape_factors: Factors to put the rung 3 spline on whatever their sign does. A
+            contradicting factor always gets one; this is for the brief's instruction to
+            *run it early*, before there is a reversal to explain. Names that are not in
+            the fitted specification are reported, not silently ignored.
+        shape_resamples: Corridors resampled by unit inside each spline diagnostic, to
+            test whether the shape survives. Zero skips it and costs the diagnostic its
+            only defence against reading a bend in noise.
 
     Raises:
         ContractViolation: The panel breaks the input contract. The job is rejected.
@@ -343,6 +362,7 @@ def assess(
         log=log,
         correlation_threshold=correlation_threshold,
         max_leave_one_out=max_leave_one_out,
+        shape_resamples=shape_resamples,
     )
 
     return Assessment(
@@ -355,11 +375,92 @@ def assess(
         fit=ladder.fit,
         sign_guard=sign_guard,
         descent_receipt=descent_receipt,
+        shapes=_requested_shapes(
+            shape_factors,
+            counts=counts,
+            design=design[[f.name for f in ladder.factors]],
+            log_exposure=log_exposure,
+            unit_ids=unit_ids,
+            factors=ladder.factors,
+            fit=ladder.fit,
+            sign_guard=sign_guard,
+            n_resamples=shape_resamples,
+            log=log,
+        ),
         **common,  # type: ignore[arg-type]
     )
 
 
 # ---- internals ---------------------------------------------------------------
+
+
+def _requested_shapes(
+    names: Sequence[str],
+    *,
+    counts: pd.Series,
+    design: pd.DataFrame,
+    log_exposure: pd.Series,
+    unit_ids: pd.Series,
+    factors: list[Factor],
+    fit: FitResult,
+    sign_guard: SignGuardReport,
+    n_resamples: int,
+    log: RunLog,
+) -> list[ShapeDiagnostic]:
+    """Run the rung 3 spline on factors the caller named.
+
+    A factor that already contradicted has one on its sign guard finding; that one is
+    reused rather than refitted, so asking for it costs nothing and the two can never
+    disagree.
+    """
+    if not names:
+        return []
+
+    already = {
+        finding.factor: finding.shape
+        for finding in sign_guard.findings
+        if finding.shape is not None
+    }
+    by_name = {f.name: f for f in factors}
+    diagnostics: list[ShapeDiagnostic] = []
+
+    for name in dict.fromkeys(names):
+        if name in already:
+            diagnostics.append(already[name])
+            continue
+        factor = by_name.get(name)
+        if factor is None:
+            log.warning(
+                STAGE,
+                "shape_factor_not_fitted",
+                (
+                    f"A shape diagnostic was requested for '{name}', which is not in "
+                    "the fitted specification — it was never supplied, was dropped on "
+                    "the way down the ladder, or is not a registry factor. No spline "
+                    "was fitted."
+                ),
+                factor=name,
+            )
+            continue
+        diagnostics.append(
+            hunt_shape(
+                factor=name,
+                counts=counts,
+                design=design,
+                log_exposure=log_exposure,
+                unit_ids=unit_ids,
+                alpha=fit.alpha,
+                expected_sign=factor.expected_sign,
+                linear_estimate=(
+                    fit.coefficient(name).estimate
+                    if fit.coefficient(name) is not None
+                    else None
+                ),
+                n_resamples=n_resamples,
+                log=log,
+            )
+        )
+    return diagnostics
 
 
 def _resolve_factors(
@@ -701,6 +802,7 @@ def _sign_guard_as_dict(report: SignGuardReport | None) -> dict[str, Any] | None
                     if f.leave_one_out
                     else None
                 ),
+                "shape": f.shape.as_dict() if f.shape else None,
             }
             for f in report.findings
         ],

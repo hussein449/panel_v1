@@ -5,7 +5,263 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-14 (latest) — Step 3.1: standard errors that account for the panel
+## 2026-08-17 (latest) — A second corridor, and what it proved was not enough
+
+**Delivered:** `tools/validate_corridor.py`, a named registry of real roads the pipeline
+can be re-run against, and **the second corridor** — Dutch **N201** — chosen by
+measurement against the criterion `STEPS.md` has carried since Stage 2.
+
+```bash
+python tools/validate_corridor.py          # N201, the second corridor
+python tools/validate_corridor.py B9       # the first one, as a control
+python tools/validate_corridor.py --list
+```
+
+### Chosen by measuring, not off a map
+
+The criterion was already written down: *"pick one where access density and ramp density
+separate — the M51 ramp/RAF inversion is not diagnosable on a single corridor."* That is
+a measurable property, so five real roads were fetched and measured against it.
+
+| Road | Units | access only | ramp only | both | r |
+|---|---|---|---|---|---|
+| **N201** (NL) | 67 | **18** | **15** | 5 | **−0.06** |
+| JO 15 (Jordan) | 107 | 13 | 33 | 7 | −0.06 |
+| A1 (CY, divided) | 137 | 8 | 34 | 14 | +0.14 |
+| N247 (NL) | 52 | 28 | 1 | 4 | +0.08 |
+| B9 (CY) — the first corridor | 50 | **36** | **0** | 1 | −0.03 |
+
+**B9 could never have settled it.** Zero units carry a ramp and no access; one unit of
+fifty has a ramp near it at all. `ramp_density` is very nearly constant there, and a
+constant column is dropped before fitting. The open decision was right, and now it is
+right with a number attached.
+
+N201 wins on the units in the *single-mechanism* cells — 18 with accesses and no ramp,
+15 with a ramp and no access. It runs from open polder into the edge of Amsterdam, so
+the two mechanisms genuinely occur apart from each other. Measured on the corridor,
+**VIF 1.00 and 1.00**: as close to orthogonal as real data offers.
+
+**And VIF is the wrong test here, which the tool found out by getting it wrong.** B9
+also scores 1.00 and 1.00 — because `ramp_density` barely varies there, and a column
+that barely varies is uncorrelated with everything. A near-constant column is not an
+independent one. The counts in the single-mechanism cells are the honest test, so that
+is what decides, and the tool now prints `SEPARATES` or `DOES NOT SEPARATE` and refuses
+to read anything into a VIF of 1 next to an empty cell.
+
+Jordan's Desert Highway separates nearly as well and is in the actual target market. It
+was not chosen because OSM carries no `maxspeed` along it, so the panel loses
+`speed_limit` — but it is kept in the registry with that written down, because a
+corridor that exposes a coverage gap in the target region is worth more than a tidy one
+once there is crash data to go with it.
+
+### The live run
+
+```
+810 vertices  ->  33.50 km  ->  67 units  ->  1,608 panel rows
+snapped 506 of 600 (84.3%)
+11 of 13 factors resolved
+MODE A — FITTED FROM YOUR DATA · 5 factors · 506 crashes   (rung A-reduced)
+```
+
+Two factors refused and said why: `sidewalk_present` (10% of the corridor tagged,
+below the 50% floor) and `median_present` (no way states the tag anywhere). Flat country
+after a mountain road, and 67 units against B9's 50 — the pipeline handled a corridor of
+a completely different character without a change.
+
+### What the second corridor proved, and what it did not
+
+It proved the separation exists. Then it produced a finding nobody was looking for:
+
+```
+ramp_density did NOT reach the fit, and the reason matters:
+  Attempted A-full. Failed crash count: 506 available, 700 required.
+  Stepped to A-reduced (5 factors). Dropped: building_density, lit,
+  ramp_density, curve_radius_min, poi_density — by registry priority.
+  'ramp_density' is 8 of 10 by the registry's declared drop_priority (50).
+```
+
+**`ramp_density` is eighth. A-full keeps seven.** So on a corridor where every
+higher-priority factor resolves, `ramp_density` is shed before fitting *at every rung of
+the ladder* — not for want of crashes, but because the registry ranks seven other
+factors above it and A-full stops at seven.
+
+That is a real limit on the open decision and it was invisible with one corridor.
+**Separation in the data is necessary and not sufficient.** To diagnose the ramp/access
+inversion, all three have to hold: a corridor that separates them (N201 does), enough
+crashes to buy the terms (real data, not these), and a specification that actually
+carries `ramp_density` — which today means fitting it deliberately rather than waiting
+for the ladder to include it.
+
+### The crashes are synthetic, and the run says so three times
+
+Nobody has given us a police extract for the N201. What this validates is the geometry
+and adapter path — fetch, stitch, project, segment, snap, twelve Tier A factors, fusion,
+provenance — and the shape of the design matrix that comes out. The sign guard reports
+contradictions on three factors, and the tool states plainly that this is expected: the
+synthetic crashes carry no true effect, so every fitted sign is noise and about half
+point the wrong way. The mode banner is a statement about the pipeline, not the road.
+
+**The critical path has moved, not closed.** It is no longer "find a second corridor".
+It is "get real crash data for one".
+
+---
+
+## 2026-08-17 — Step 3.2: the spline that hunts the U-shape
+
+**Delivered:** rung 3. A penalised spline on any one factor, everything else linear,
+producing a shape, a plot and a verdict — and structurally incapable of producing a
+number that could reach a client.
+
+```bash
+roadrisk demo --u-shape curve_density
+roadrisk assess panel.csv --shape curve_density
+```
+
+**Verified:** 545 tests pass (46 new), `ruff check` clean.
+
+### The mechanism, and why the other four diagnostics cannot see it
+
+The sign guard has hunted contradictions since 1.6 with four diagnostics — the factor
+alone, the factor beside each correlated partner, the correlation matrix,
+leave-one-unit-out. Every one of them hunts the brief's **first** suspect, confounding:
+they ask which *other term* the wrong sign lives with.
+
+None of them can see the third. A linear term forced through a U-shape has no
+correlated partner to blame — the specification itself is the fault, and every one of
+those four diagnostics comes back clean. The brief puts the mechanism plainly:
+
+> Reality is plausibly a U-shape: dead-straight is dangerous (speed, fatigue), gentle
+> curve is fine, sharp curve is dangerous. **A linear fit through a U-shape can return a
+> negative coefficient — exactly the M51 symptom.**
+
+Now the guard runs the spline on every contradiction, and the answer is one of two
+useful things: *this is why*, or *this is not why, look at the other two suspects*.
+
+### The defect it had, and how it was caught
+
+The first version chose its smoothing penalty by AIC. On a panel whose curvature effect
+was **planted linear**, it drew an inverted U and reported it.
+
+That is the worst failure this module could have. A diagnostic that finds a bend
+whenever it is asked would "explain" every sign reversal ever put to it, and it is worse
+than no diagnostic, because its answer is the one that stops people looking.
+
+The grid told the truth even when AIC did not:
+
+| Penalty | Linear panel (truth: monotonic) | Planted U (truth: a U) |
+|---|---|---|
+| 0.1 | **inverted U** ← AIC's pick | U |
+| 1 | increasing | U |
+| 10 | increasing | U |
+| 100 | increasing | decreasing |
+| 1000 | increasing | decreasing |
+
+One penalty of five found a bend in noise; three of five found a U that was really
+there. **So the headline is the shape the grid agrees on**, the curve drawn is the
+best-fitting fit that agrees with it, and every penalty's answer is reported either way.
+
+A cluster-aware information criterion was tried first — charging `ln(units)` per
+parameter instead of 2, on the reasoning that AIC over a panel over-fits for the same
+reason rung 1's intervals were too narrow. It was measured and abandoned: the effective
+degrees of freedom differ by ~3 between penalties while the deviances differ by 20–100,
+so it changed the chosen penalty on **none** of the test panels. The problem was never
+the accounting.
+
+### The band is a cluster bootstrap, because 3.1 said so
+
+A spline's nominal confidence band would be too narrow here for exactly the reason rung
+1's intervals were: every factor is a property of a segment repeated down every period.
+Having paid for that correction three days ago, drawing a naive band now would be
+undoing it in a new place.
+
+So the band comes from resampling **units** with replacement and refitting, and it
+produces a better headline than a band: *the same shape came back on 40 of 40 corridors
+resampled by unit*. A turn that a majority of resamples do not reproduce is refused as
+an explanation — `explains_contradiction` requires it, and a test pins that.
+
+### An interaction between the two rungs worth recording
+
+On the planted-U panel, `curve_density` fits **−0.203**. Naively that is p < 0.001. With
+3.1's clustering it is **p = 0.16**.
+
+Both rungs are right, and together they say something neither says alone: 120 units
+cannot resolve this effect, *and* the reason the linear term points the wrong way is
+that the relationship bends. The sign guard keys on the sign rather than on
+significance, so the spline still runs — which is correct. A wrong sign that cannot be
+dismissed as noise and cannot be confirmed either is precisely when the shape is worth
+knowing.
+
+### What the fixture taught
+
+`synthetic_panel(u_shaped=...)` plants a genuine bowl. Where the bowl's vertex sits
+turned out to be a real trade-off rather than a free parameter:
+
+| Vertex at | Linear coefficient | Shape found |
+|---|---|---|
+| 60th percentile | −0.05 | U |
+| **65th** | **−0.16** | **U** |
+| 70th | −0.46 | decreasing |
+| 80th | −0.90 | decreasing |
+
+**The more lopsided the bowl, the stronger the reversal it produces and the less
+visible the U becomes.** At the 80th percentile four fifths of the corridor sits on one
+arm and "decreasing" is the honest reading of the curve. The diagnostic and the defect
+it hunts get harder to see together, which is worth knowing before trusting a clean
+result on a real road.
+
+### What it refuses
+
+- **Fewer than 20 distinct values.** `speed_limit` takes five on a demo panel; five
+  points is not a curve. Every factor here is unit-constant, so this is a statement
+  about how many units the corridor has, and it is said that way.
+- **A factor not in the fitted specification.** Named in a warning, never ignored.
+- **A turn inside the outer 15% of the range**, or one whose arms recover less than a
+  quarter of the curve's span. Splines are least constrained at their edges and will
+  turn up there for free.
+
+### The plot is text, deliberately
+
+```
+        partial effect on ln(crash rate), centred
+  +1.01 |.
+        |..
+        |*****...                             ..
+        |......**..                       ...*****
+   0.00 |----------**----------------****---------
+        |           .***.........****...
+  -0.53 |               .........
+        +-----------------------------------------
+         0.20              1.03               1.86
+         curve_density, transformed scale
+```
+
+`core` depends on pandas and statsmodels and nothing else, the CLI is the only surface
+this project has, and a plot nobody can see without installing a plotting stack is not a
+plot. The curve travels as data on `ShapeCurve` — x, y, and the bootstrap band — which
+is the seam the HTML report in 4.1 will draw a real chart from.
+
+### It cannot ship a number, and that is asserted
+
+`ShapeDiagnostic` has no coefficient, no standard error, no p-value, no predicted count
+and no interval. Not by convention — by type, the same guarantee `IndexResult` gives in
+the other direction. `linear_estimate` is the shipped fit's own number, carried for
+comparison and never computed here. A test enumerates the forbidden attribute names and
+fails the moment one appears, and the serialised payload puts the curve under
+`reference`, never under `fit`.
+
+### What is deferred
+
+The brief's rung 3 has a second half: *"use to diagnose, then convert the finding into
+an interpretable term for the shipped model."* The conversion is **not built**. When the
+spline finds a U the verdict names the fix — split the factor at the turning point, or
+carry it as two terms — and a human does it. Automating that means letting a diagnostic
+rewrite the specification it was checking, which needs the turning point to be stable
+enough to define a breakpoint on; on 120 units it is not, and the resampling is what
+says so.
+
+---
+
+## 2026-08-14 — Step 3.1: standard errors that account for the panel
 
 **Delivered:** rung 2 — NB2 with standard errors clustered by unit. On a panel with
 realistic segment-level heterogeneity the intervals widen by up to **3.9×** and two
@@ -15,7 +271,7 @@ factors lose their significance.
 roadrisk demo --unit-dispersion 0.5
 ```
 
-**Verified:** 495 tests pass (17 new), `ruff check` clean.
+**Verified:** 499 tests pass (21 new), `ruff check` clean.
 
 ### Why this matters more here than in most panels
 
@@ -111,7 +367,7 @@ drainage. A fixture without them lets every model fitted to it look better than 
 on a road.
 
 **It is now on by default**, and the caution about flipping it turned out to be
-unfounded: all 495 tests pass either way. The estimates still recover their planted
+unfounded: all 499 tests pass either way. The estimates still recover their planted
 values, the signs are still correct, and the sign guard is still clean — the NB
 dispersion parameter simply rises from 0.64 to 1.13 as it absorbs some of the
 segment-level variance. `--unit-dispersion 0` restores the old behaviour, and on that

@@ -80,6 +80,16 @@ def assess_panel(
     facility_type: FacilityOption = FacilityType.ANY,
     region: RegionOption = Region.GLOBAL,
     severity: SeverityOption = Severity.ALL,
+    shape: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--shape",
+            help=(
+                "Run the rung 3 spline on this factor and draw the curve. Repeatable. "
+                "A factor whose sign contradicts gets one automatically."
+            ),
+        ),
+    ] = None,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the assessment as JSON and nothing else.")
     ] = False,
@@ -97,7 +107,9 @@ def assess_panel(
     )
 
     try:
-        assessment = assess(panel, registry=registry, context=context)
+        assessment = assess(
+            panel, registry=registry, context=context, shape_factors=shape or ()
+        )
     except RoadRiskError as exc:
         _print_rejection(exc)
         raise typer.Exit(EXIT_REJECTED) from exc
@@ -190,9 +202,24 @@ def demo(
             ),
         ),
     ] = 0.5,
+    u_shape: Annotated[
+        str | None,
+        typer.Option(
+            "--u-shape",
+            help=(
+                "Give this factor a genuinely U-shaped effect instead of a linear one, "
+                "so the sign guard fires and the rung 3 spline has something real to "
+                "find. Try 'curve_density'."
+            ),
+        ),
+    ] = None,
     facility_type: FacilityOption = FacilityType.ANY,
     region: RegionOption = Region.GLOBAL,
     severity: SeverityOption = Severity.ALL,
+    shape: Annotated[
+        list[str] | None,
+        typer.Option("--shape", help="Run the rung 3 spline on this factor. Repeatable."),
+    ] = None,
     out: Annotated[
         Path | None, typer.Option("--out", "-o", help="Write the generated panel to CSV.")
     ] = None,
@@ -205,6 +232,7 @@ def demo(
         n_periods=periods,
         crash_rows_only=crash_rows_only,
         unit_dispersion=unit_dispersion,
+        u_shaped=u_shape,
     )
     console.print(
         f"[dim]Synthetic panel — {len(panel):,} rows, "
@@ -223,6 +251,7 @@ def demo(
             context=RunContext(
                 facility_type=facility_type, region=region, severity=severity
             ),
+            shape_factors=shape or (),
         )
     )
 
@@ -778,6 +807,7 @@ def _render(assessment: Assessment) -> None:
     if assessment.is_mode_a:
         _render_coefficients(assessment)
         _render_sign_guard(assessment)
+        _render_shapes(assessment)
     else:
         _render_index(assessment)
 
@@ -1050,11 +1080,55 @@ def _render_sign_guard(assessment: Assessment) -> None:
                 f"{louo.n_sign_flips} sign flip(s)"
             )
 
+        if finding.shape is not None:
+            lines.extend(["", *_shape_lines(finding.shape)])
+
         console.print(
             Panel(
                 "\n".join(lines),
                 title=f"⚠  Sign contradiction — {finding.factor}",
                 border_style="red",
+            )
+        )
+    console.print()
+
+
+def _shape_lines(diagnostic) -> list[str]:
+    """The rung 3 spline, as the reader should meet it: the plot, then the reading."""
+    if not diagnostic.available:
+        return [f"Rung 3 spline: not run — {diagnostic.refusal}"]
+
+    header = f"Rung 3 spline — the curve {diagnostic.shape.describe()}"
+    if diagnostic.explains_contradiction:
+        header += "  [bold]← this explains the sign[/bold]"
+    lines = [header, ""]
+    if diagnostic.curve is not None:
+        lines.append(diagnostic.curve.render())
+        lines.append("")
+    lines.append(diagnostic.verdict)
+    lines.extend(f"[dim]{note}[/dim]" for note in diagnostic.notes)
+    return lines
+
+
+def _render_shapes(assessment: Assessment) -> None:
+    """Splines the caller asked for by name, rather than ones a reversal forced."""
+    contradicting = {
+        f.factor
+        for f in (
+            assessment.sign_guard.contradictions if assessment.sign_guard else []
+        )
+    }
+    requested = [s for s in assessment.shapes if s.factor not in contradicting]
+    if not requested:
+        return
+
+    for diagnostic in requested:
+        console.print(
+            Panel(
+                "\n".join(_shape_lines(diagnostic)),
+                title=f"Shape diagnostic — {diagnostic.factor}",
+                subtitle="[dim]reference only — never a client number[/dim]",
+                border_style="cyan",
             )
         )
     console.print()

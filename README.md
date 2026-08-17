@@ -15,7 +15,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
 | **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
-| **Stage 3 — model depth** | Started. Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. GAM, Bayesian and out-of-sample validation outstanding. |
+| **Stage 3 — model depth** | Half done. Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. And a spline diagnostic hunts the U-shape behind a wrong sign — reporting only the shape the smoothing grid agrees on, because the first version drew a bend in noise. Bayesian and out-of-sample validation outstanding. |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
 
@@ -48,6 +48,19 @@ watch the engine refuse Mode A on a crash-only panel:
 ```bash
 roadrisk demo --crash-rows-only
 ```
+
+To watch the sign guard catch a wrong sign and the rung 3 spline explain it — a panel
+where curvature is genuinely safest in the middle of its range, so a straight line
+through it comes back negative:
+
+```bash
+roadrisk demo --u-shape curve_density
+```
+
+The spline runs automatically on any contradiction. `--shape FACTOR` runs it on demand,
+before there is a reversal to explain. It reports only the shape the smoothing grid
+agrees on and only turns that survive resampling the corridor by unit — the first
+version chose its penalty by AIC and drew a bend in pure noise.
 
 To see the declared factors and their weight status:
 
@@ -97,6 +110,23 @@ GDAL, which is quarantined in its own extra:
 ```bash
 pip install "roadrisk-panel[raster]"
 ```
+
+### The corridors this has been run against
+
+```bash
+python tools/validate_corridor.py --list
+python tools/validate_corridor.py          # N201, the second corridor
+```
+
+Two real roads, deliberately unalike: Cyprus **B9** through the Troodos (25 km, windy,
+mountainous) and Dutch **N201** (33.5 km, flat, polder into the edge of Amsterdam). The
+second was chosen by measurement rather than off a map — `access_density` and
+`ramp_density` had to *separate*, and on N201 they do, at VIF 1.00 and 1.00. On B9 they
+cannot: one unit of fifty has a ramp anywhere near it.
+
+Crash data for these roads is synthetic, so what the runs validate is the geometry and
+adapter path, not any road. **A real police extract is now worth more than a third
+corridor.**
 
 ### Making the second corridor cheap
 

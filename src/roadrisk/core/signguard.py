@@ -13,6 +13,13 @@ rather than quietly reported.
 On contradiction the guard automatically runs the diagnostics that found the original
 problem: the factor alone, the factor alongside each correlated partner, the correlation
 matrix, and leave-one-unit-out.
+
+Since step 3.2 it also runs the rung 3 spline. The first four diagnostics all hunt the
+brief's *first* suspect, confounding — they ask which other term the sign lives with.
+None of them can see the third suspect, because a linear term forced through a U-shape
+has no correlated partner to blame; it is the specification itself that is wrong. The
+spline is the only diagnostic here that can return "the shape is why", and it is also
+the only one that can rule that out and hand the question back to the other two.
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from roadrisk.core.diagnostics import Family, correlated_partners, correlation_matrix
+from roadrisk.core.gam import DEFAULT_RESAMPLES, ShapeDiagnostic, hunt_shape
 from roadrisk.core.models import FitResult, fit_negative_binomial, fit_poisson
 from roadrisk.core.registry import Factor, Sign
 from roadrisk.core.runlog import RunLog
@@ -79,6 +87,9 @@ class SignFinding:
     pairwise: list[PairwiseRefit] = field(default_factory=list)
     correlations: list[tuple[str, float]] = field(default_factory=list)
     leave_one_out: LeaveOneOutReport | None = None
+    #: The rung 3 spline on this factor. Reference only — it carries a shape and a
+    #: plot, and by construction no number that could reach a client report.
+    shape: ShapeDiagnostic | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +112,15 @@ class SignGuardReport:
         """The ones that matter most — a wrong sign that is also statistically firm."""
         return [f for f in self.contradictions if f.significant]
 
+    @property
+    def explained_by_shape(self) -> list[SignFinding]:
+        """Contradictions the spline accounts for: a straight line through a bend."""
+        return [
+            f
+            for f in self.contradictions
+            if f.shape is not None and f.shape.explains_contradiction
+        ]
+
 
 def run_sign_guard(
     *,
@@ -113,11 +133,14 @@ def run_sign_guard(
     log: RunLog,
     correlation_threshold: float = DEFAULT_CORRELATION_THRESHOLD,
     max_leave_one_out: int = DEFAULT_MAX_LEAVE_ONE_OUT,
+    shape_resamples: int = DEFAULT_RESAMPLES,
+    seed: int = 0,
 ) -> SignGuardReport:
     """Compare every fitted coefficient against its declared ``expected_sign``.
 
     The follow-up diagnostics are expensive and only run for factors that actually
-    contradict, which is rare by design.
+    contradict, which is rare by design. ``shape_resamples = 0`` skips the resampling
+    inside the spline diagnostic, which is the bulk of that cost.
     """
     by_name = {f.name: f for f in factors}
     fit_fn = _fit_fn_for(fit.family)
@@ -185,6 +208,19 @@ def run_sign_guard(
                 factor.name,
                 cap=max_leave_one_out,
             ),
+            shape=hunt_shape(
+                factor=factor.name,
+                counts=counts,
+                design=design,
+                log_exposure=log_exposure,
+                unit_ids=unit_ids,
+                alpha=fit.alpha,
+                expected_sign=factor.expected_sign,
+                linear_estimate=coefficient.estimate,
+                n_resamples=shape_resamples,
+                seed=seed,
+                log=log,
+            ),
         )
         findings.append(finding)
 
@@ -202,6 +238,14 @@ def run_sign_guard(
             expected_sign=factor.expected_sign.value,
             univariate_estimate=finding.univariate_estimate,
             correlated_with=[name for name, _ in partners],
+            shape=(
+                finding.shape.shape.value
+                if finding.shape is not None and finding.shape.shape is not None
+                else None
+            ),
+            explained_by_shape=(
+                finding.shape is not None and finding.shape.explains_contradiction
+            ),
         )
 
     if not any(f.contradicts for f in findings):

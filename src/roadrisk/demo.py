@@ -49,6 +49,9 @@ def synthetic_panel(
     segment_length_km: float = 0.5,
     unit_dispersion: float = 0.5,
     crash_rows_only: bool = False,
+    u_shaped: str | None = None,
+    u_vertex_quantile: float = 0.65,
+    u_strength: float = 1.2,
 ) -> pd.DataFrame:
     """Build a panel with known coefficients.
 
@@ -71,9 +74,32 @@ def synthetic_panel(
             to it look better than it would on a road. Set to zero to get that back.
         crash_rows_only: Drop the zero-crash rows, producing a panel that Mode A must
             refuse. Used to exercise check 1.
+        u_shaped: Give this factor a genuinely **non-monotonic** effect instead of its
+            linear one: safest in the middle of its range, worse at both ends.
+
+            This is the M51 mechanism planted deliberately. The brief's third suspect
+            behind ``ln(GF) = -0.730`` is that a linear term was being forced through a
+            U-shape, and a fixture is the only place that suspicion can be checked
+            against a known answer — on a real corridor nobody can say what the truth
+            was. A panel built this way makes the sign guard fire and gives the rung 3
+            spline something real to find.
+        u_vertex_quantile: Where the safest value sits in the factor's own
+            distribution. Above the middle, so most of the corridor lies on the falling
+            arm and the linear coefficient comes back *negative* — the reversal, rather
+            than a symmetric bowl that averages to no slope at all.
+
+            It cannot go much higher, and finding that out was worth the trip: the more
+            lopsided the bowl, the stronger the reversal it produces and the *less*
+            visible the U becomes, until at 0.80 four fifths of the corridor is on one
+            arm and the honest reading of the curve is "decreasing". A diagnostic and
+            the defect it hunts get harder to see together.
+        u_strength: How deep the bowl is, on the log crash-rate scale.
 
     Returns:
         A contract-valid panel, unless ``crash_rows_only`` is set.
+
+    Raises:
+        KeyError: ``u_shaped`` names a factor this generator does not produce.
     """
     rng = np.random.default_rng(seed)
     betas = dict(TRUE_EFFECTS if effects is None else effects)
@@ -98,12 +124,21 @@ def synthetic_panel(
     panel["length_km"] = segment_length_km
     panel["duration_hours"] = hours_per_cell
 
+    if u_shaped is not None and u_shaped not in unit_factors:
+        raise KeyError(
+            f"'{u_shaped}' is not one of the factors this generator produces: "
+            f"{', '.join(sorted(unit_factors))}"
+        )
+
     exposure = panel["length_km"] * panel["duration_hours"]
     linear = np.full(len(panel), float(intercept))
     for name, beta in betas.items():
         if name not in panel.columns:
             continue
         transformed = _transform(panel[name].to_numpy(dtype=float), _TRANSFORMS[name])
+        if name == u_shaped:
+            linear = linear + _bowl(transformed, u_vertex_quantile, u_strength)
+            continue
         linear = linear + beta * (transformed - transformed.mean())
 
     if unit_dispersion > 0:
@@ -144,6 +179,18 @@ def _unit_factors(rng: np.random.Generator, n_units: int) -> dict[str, np.ndarra
         "poi_density": rng.gamma(shape=2.0, scale=2.5, size=n_units),
         "lit": rng.uniform(0.0, 1.0, size=n_units),
     }
+
+
+def _bowl(transformed: np.ndarray, vertex_quantile: float, strength: float) -> np.ndarray:
+    """A quadratic bowl on the transformed scale, centred so it adds no baseline.
+
+    ``strength`` is per squared unit of the transformed factor, so the depth of the
+    bowl depends on how wide that factor's range is — which is the honest way round.
+    A factor that barely varies cannot be given a dramatic shape it has no room for.
+    """
+    vertex = float(np.quantile(transformed, vertex_quantile))
+    bowl = strength * (transformed - vertex) ** 2
+    return bowl - bowl.mean()
 
 
 def _transform(values: np.ndarray, kind: str) -> np.ndarray:

@@ -72,10 +72,16 @@ Add `--osm` for the road's own tags and its conflict-point densities, and `--ras
 for gradient and roadside land use. Without either flag the pipeline never touches the
 network.
 
-**Validated on a real road, 2026-08-10.** Cyprus B9 through the Troodos mountains:
-69 OSM fragments → one 25.01 km centreline → 50 units → 1,200 panel rows → 99.8% snap
-rate → Mode A. Details and the two defects it exposed in
+**Validated on two real roads.** Cyprus B9 through the Troodos, 2026-08-10: 69 OSM
+fragments → one 25.01 km centreline → 50 units → 1,200 panel rows → 99.8% snap rate →
+Mode A. Dutch N201, 2026-08-17: 810 vertices → 33.50 km → 67 units → 1,608 rows → 84.3%
+snap → Mode A, 11 of 13 factors resolved. Flat country after a mountain road, and the
+pipeline needed no change for it. Details, and the defects each exposed, in
 [`IMPLEMENTED.md`](IMPLEMENTED.md).
+
+```bash
+python tools/validate_corridor.py --list
+```
 
 ### 2.9 — the cache, and why PostGIS is not in it yet
 
@@ -296,9 +302,45 @@ The network layer is injectable, so all 34 tests run without touching it.
 | | Step | Deliverable | Done when |
 |---|---|---|---|
 | `[~]` | **3.1** NB GLMM | Panel-clustered standard errors **done** — up to 3.9x wider, two factors lose significance. The random-intercept GLMM itself is deferred to 3.3, see below | Standard errors widen versus plain NB2 ✅ |
-| `[ ]` | **3.2** GAM diagnostic | Spline on geometry, hunts the U-shape | Produces the diagnostic plot, never ships a number |
+| `[x]` | **3.2** GAM diagnostic | Spline on geometry, hunts the U-shape | Produces the diagnostic plot, never ships a number ✅ |
 | `[ ]` | **3.3** Bayesian hierarchical + spatial | CAR/BYM, `expected_sign` encoded as prior | Credible intervals replace p-values in the report |
 | `[ ]` | **3.4** Out-of-sample validation | Spatial CV, CURE plots, calibration on held-out units | Reported by default, including when bad |
+
+### 3.2 — the spline, and the bend it refuses to invent
+
+```bash
+roadrisk demo --u-shape curve_density
+roadrisk assess panel.csv --shape curve_density
+```
+
+The sign guard's four existing diagnostics all hunt the brief's *first* suspect,
+confounding — they ask which other term a wrong sign lives with. None can see the third:
+a linear term forced through a U-shape has no correlated partner to blame. The spline is
+the only diagnostic here that can say **this is why**, and the only one that can say
+**this is not why** and hand the question back.
+
+**The first version invented a bend.** Choosing the smoothing penalty by AIC, it drew an
+inverted U on a panel whose curvature effect was planted *linear* — the worst failure
+this module could have, because its answer is the one that stops people looking. Across
+the penalty grid the truth was visible: one penalty of five found that bend, while a
+genuine planted U held at three of five. So the headline is now the shape the grid
+agrees on, and every penalty's answer is reported either way.
+
+**The band is a cluster bootstrap, not the spline's own standard errors** — step 3.1
+established that these rows are not independent, and drawing a naive band would undo
+that correction in a new place. It yields a better headline than a band anyway: *the
+same shape came back on 40 of 40 corridors resampled by unit*. A turn a majority of
+resamples do not reproduce is refused as an explanation.
+
+**It cannot ship a number.** `ShapeDiagnostic` has no coefficient, no p-value, no
+predicted count and no interval — by type, not by convention. A test enumerates the
+forbidden names and fails the moment one appears.
+
+Deferred: the brief's *"convert the finding into an interpretable term"*. When the
+spline finds a U the verdict names the fix and a human applies it. Automating it means
+letting a diagnostic rewrite the specification it was checking, and the turning point is
+not stable enough on 120 units to define a breakpoint — which the resampling is what
+tells you.
 
 ### 3.1 — the panel correction, and what is deferred
 
@@ -440,7 +482,21 @@ Things that need a human call, not a code change.
    candidate and would need a new adapter declared); wait for the content-addressed
    cache in 2.9 and pay the download once per region; or drop the factor and let
    `landuse_urban` and `building_density` carry urban context between them.
-4. **Second corridor.** Still the critical path. Pick one where access density and ramp
-   density separate — the M51 ramp/RAF inversion is not diagnosable on a single corridor.
+4. ~~**Second corridor.**~~ **DONE, and it moved the problem, 2026-08-17.** Five real
+   roads were measured against this decision's own criterion; **Dutch N201** wins with
+   18 units carrying accesses and no ramp, 15 carrying a ramp and no access, and VIF
+   1.00/1.00 between them. B9 could never have settled it — zero units of fifty carry a
+   ramp and no access. Re-runnable as `python tools/validate_corridor.py`.
+
+   **What it exposed.** `ramp_density` is *eighth* by `drop_priority` and A-full keeps
+   seven, so on a corridor where the higher-priority factors all resolve it is shed
+   before fitting at every rung. Separation in the data is necessary and not sufficient.
+   Three things have to hold together: a corridor that separates them (N201 does),
+   enough crashes to buy the terms, and a specification that carries `ramp_density` at
+   all — which today means fitting it deliberately.
+
+   **The critical path is now crash data, not geography.** Every corridor run so far
+   uses synthetic crashes, which validate the geometry and adapter path and nothing
+   about a road. A single real police extract is worth more than a third corridor.
 4. **Rung 4 engine.** PyMC/NumPyro keeps one language; R + INLA is materially faster for
    CAR/BYM at panel scale. Defer until MCMC actually hurts.
