@@ -303,8 +303,109 @@ The network layer is injectable, so all 34 tests run without touching it.
 |---|---|---|---|
 | `[~]` | **3.1** NB GLMM | Panel-clustered standard errors **done** — up to 3.9x wider, two factors lose significance. The random-intercept GLMM itself is deferred to 3.3, see below | Standard errors widen versus plain NB2 ✅ |
 | `[x]` | **3.2** GAM diagnostic | Spline on geometry, hunts the U-shape | Produces the diagnostic plot, never ships a number ✅ |
-| `[ ]` | **3.3** Bayesian hierarchical + spatial | CAR/BYM, `expected_sign` encoded as prior | Credible intervals replace p-values in the report |
+| `[~]` | **3.3** Bayesian hierarchical + spatial | Random-intercept GLMM **done** — credible intervals replace p-values, and σ_u is estimated at last. Registry-weights-as-priors and CAR/BYM outstanding, see below | Credible intervals replace p-values in the report ✅ |
 | `[ ]` | **3.4** Out-of-sample validation | Spatial CV, CURE plots, calibration on held-out units | Reported by default, including when bad |
+
+### 3.3 — credible intervals, and the two halves still outstanding
+
+```bash
+roadrisk demo --units 40 --periods 12 --bayes
+roadrisk assess panel.csv --bayes
+```
+
+**Delivered: the random-intercept GLMM, with credible intervals.** A p-value answers
+"how surprising would this data be if the effect were exactly zero", which is nobody's
+question. A credible interval answers "where is the effect, given this data". The result
+type carries **no p-value at all** — not by convention, by construction, and a test
+enumerates the forbidden fields.
+
+It also estimates **σ_u**, the between-segment spread on the log rate. Rungs 1 and 2
+could not measure that quantity at all: clustering corrects the *spread* of the
+estimates, a random intercept models the thing causing it and changes the estimates too.
+
+**An inference ladder, because the fast method has a measured limit.** Laplace with an
+importance check first, MCMC only when that check fails, refusal when neither can be
+believed — the same shape as the mode ladder and the rung ladder, receipts included.
+
+| Specification | Dims | Outcome |
+|---|---|---|
+| 3 factors | 6 | Laplace, **~4 s** |
+| A-reduced, 5 factors | 8 | Laplace, **~12 s** |
+| A-full, 8 factors | 11 | Laplace refuses → MCMC, minutes |
+
+Importance sampling loses efficiency exponentially with dimension; nine proposal
+variants were tried on the eleven-dimensional case and none rescued it. Both validated
+corridors — B9 and N201 — land on A-reduced, the side of that line answered in seconds.
+
+**The honesty check is part of the fit, not a separate ritual.** The importance weights
+police the approximation on every run: even weights mean it held, one weight carrying
+everything means it did not. Two gates, Pareto k̂ ≤ 0.7 and ≥ 400 effective draws,
+because k̂ says the *shape* was right and says nothing about whether enough draws
+survived to place an interval endpoint. Neither threshold is negotiable to make a fit
+pass.
+
+`python tools/validate_posterior.py` runs both rungs on the same planted panel and puts
+them side by side, the way `validate_coverage.py` proved rung 2's intervals honest.
+
+**`--bayes` chooses how, never what.** `assess()` still exposes no way to force a mode or
+a rung, and a test asserts the same panel returns the same mode, rung and factor list
+under either estimator. NB2 stays on the result beside the posterior — it is the
+comparison every reviewer expects to see cited.
+
+### 3.3b — registry weights as priors *(not built)*
+
+The priors today are weakly informative `Normal(0, 1)` on the log-rate scale, and they
+are **not** the registry's cited weights. The brief's unifying idea is that they should
+be:
+
+> A prior is what we believed before seeing data. **Mode B weights are priors.** Mode A
+> is those priors updated by data.
+
+`core/weights.py` already does the hard half — it selects a weight by facility type,
+region and severity and reports what it reached for. Wiring those in as prior means
+turns the ladder into one continuum instead of two products, and makes a sign reversal
+reportable as *"the data fought the prior and won"*.
+
+**The trap to avoid when it is built.** `expected_sign` must enter as a *soft* prior,
+never a hard constraint. Truncating a coefficient to its expected sign would make the
+sign guard structurally incapable of ever firing again — the posterior would be positive
+because negative was forbidden. The replacement statistic already exists on the result:
+`P(β has the wrong sign | data)`.
+
+### 3.3c — spatial CAR/BYM *(not built, and blocked in a specific way)*
+
+Segment 47 and segment 48 are neighbours, not strangers, and nothing in the engine knows
+that yet.
+
+**Why the current implementation cannot be extended to it.** The Bayesian rung is fast
+because it *integrates the random intercepts out* — one small independent integral per
+unit. That factorisation is the whole trick, and it works only because each unit's
+effect is independent of every other unit's given the hyperparameters. A CAR/BYM field
+is the exact opposite: neighbours are coupled by construction, the integral stops
+factorising, and the trick evaporates. This is not a defect to be fixed in the quadrature
+— it is what the quadrature *is*.
+
+**Three ways out, in order of appeal:**
+
+1. **Laplace on the joint latent field.** The Laplace machinery already built does
+   generalise — approximating a coupled latent Gaussian field at its mode is precisely
+   what it is for, and it is what INLA actually does. A corridor is a *chain*, so the
+   CAR precision matrix is tridiagonal: sparse, cheap, and none of the awkward areal
+   cases (islands, disconnected components) arise. This keeps everything in pure Python.
+   Most of the work is the joint mode-finding, not the algebra.
+2. **A machine that can run PyMC.** `pm.ICAR` exists and is well tested. Blocked here
+   because PyTensor needs a C compiler and the Numba fallback is blocked by a Windows
+   Application Control policy — see the note in `IMPLEMENTED.md`. WSL2 would sidestep
+   both without weakening any security setting.
+3. **Drop it**, and say in the report that spatial correlation is unmodelled. Defensible
+   only if the honest answer turns out to be that it is not identifiable anyway.
+
+**The caveat that applies whichever route is taken.** A spatial field and a per-unit
+random intercept both live at unit level and compete to explain the same variance. The
+BYM2 mixing parameter that splits them is hard to pin down on 50–120 units, which is
+every corridor validated so far. The honest deliverable may well be *"ρ is not
+identified, here is the prior sensitivity"* rather than a number — and that is a fine
+result, but it should be expected rather than discovered late.
 
 ### 3.2 — the spline, and the bend it refuses to invent
 

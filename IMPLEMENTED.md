@@ -5,7 +5,187 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-17 (latest) — A second corridor, and what it proved was not enough
+## 2026-08-17 (latest) — Step 3.3a: credible intervals, and a wrong diagnosis caught late
+
+**Delivered:** the Bayesian rung. A negative-binomial GLMM with a random intercept per
+unit, reporting **credible intervals instead of p-values**, and estimating σ_u — the
+between-segment spread rungs 1 and 2 could not measure at all.
+
+```bash
+roadrisk demo --units 40 --periods 12 --bayes
+roadrisk assess panel.csv --bayes
+python tools/validate_posterior.py
+```
+
+**Verified:** 573 tests pass (28 new), `ruff check` clean.
+
+### What the environment forced, and what it did not
+
+PyMC was the chosen engine and it installed cleanly. It cannot **sample** here: there is
+no C++ compiler, so PyTensor falls back to pure Python, and a 320-row toy model did not
+finish 200 draws in ten minutes. The usual escape — PyTensor's Numba backend — is
+blocked by a Windows **Smart App Control** policy that refuses unsigned native DLLs.
+`nutpie` and JAX ship native binaries and would meet the same wall.
+
+Turning that policy off was declined, correctly: it cannot be re-enabled without
+reinstalling Windows. So the requirement — credible intervals, non-negotiable — had to
+be met in pure Python, and it was.
+
+Two side-findings worth keeping. The same policy blocked `rasterio` earlier in the
+session and cleared about twenty minutes later once Microsoft's reputation service
+caught up, so **`--rasters` has been intermittently broken on this machine**. And this
+repository lives in a OneDrive-synced folder, which locks files mid-sync; that corrupted
+numpy during an install (repaired) and left stale git worktree metadata that would not
+delete.
+
+### The method: integrate the segments out, approximate what is left
+
+A 120-unit corridor has 120 random intercepts, which is a 130-dimensional problem.
+Integrating each one out by Gauss-Hermite quadrature — one 1-D integral per unit, all
+independent given the hyperparameters — leaves about ten parameters. That is the
+strategy INLA is built on, and the brief names INLA as acceptable for this rung.
+
+What remains is small enough for a Laplace approximation: find the posterior mode, take
+the curvature there, draw from the resulting Gaussian, and re-weight the draws by the
+true posterior. **The weights are also the honesty meter** — even weights mean the
+approximation held, one weight carrying everything means it did not. Pareto-smoothed
+importance sampling and its k-hat statistic, so the check is part of the fit rather than
+a ritual somebody has to remember.
+
+### An inference ladder, with receipts
+
+Same shape as the mode ladder and the rung ladder: try the cheap good thing, test it,
+descend, and say so.
+
+1. **Laplace + importance check**, escalating quadrature nodes — seconds
+2. **MCMC**, warm-started from the Laplace mode *and its covariance* — minutes
+3. **Refuse** — nothing reported
+
+Two gates on step 1, not one: k-hat ≤ 0.7 *and* ≥ 400 effective draws. k-hat says the
+shape was right and says nothing about whether enough draws survived to place an
+interval endpoint. A fit at k-hat 0.67 kept 256 draws of 4,000 and its 2.5% endpoints
+visibly disagreed with a long MCMC run whose means it matched to 0.02. A mean is easy; a
+tail is what the draws are for.
+
+### The wrong diagnosis, recorded because it nearly shipped
+
+Step 1 refused every wide panel — k-hat 0.76–0.84 at eleven parameters against 0.58 at
+eight. The obvious reading was **dimension**: importance sampling really does lose
+efficiency exponentially as dimension grows, the numbers fit that story, and nine
+combinations of proposal degrees of freedom and scale inflation failed to rescue the
+eleven-dimensional case. It was about to be written into the docstring as a property of
+the method, with a table.
+
+It was **quadrature error**. Every one of those runs used twelve nodes.
+
+| | k-hat, 12 nodes | k-hat, laddered |
+|---|---|---|
+| A-reduced, 5 factors (8 dims) | 0.58 | **0.24** |
+| A-full, 8 factors (11 dims) | 0.76–0.84 | **0.07–0.32** |
+
+Dimension was never the binding constraint. The marginal likelihood settles to the eye
+long before it settles to the precision importance weights need — a weight is a ratio of
+two log-posteriors, so error invisible in the fit is not invisible in the weights, and
+it accumulates across units.
+
+**The tell was there and I read past it: more data made things worse.** Dimension does
+not explain that. Accumulating per-unit error does. A plausible mechanism that predicts
+the observed numbers is not therefore the mechanism — which is the same lesson this
+package's sign guard exists to teach about coefficients.
+
+The node count is now the first thing the ladder escalates, because adding nodes costs
+seconds and descending to MCMC costs minutes. Step 2 now almost never runs. It stays,
+because "almost never" is not "never".
+
+### Verified against a slower method that fails differently
+
+k-hat is a good meter, not a perfect one: it measures whether the importance weights
+behave, not whether the answer is right. So `tools/validate_posterior.py` runs both
+rungs on the same planted panel:
+
+```
+Laplace + importance sampling: 6.0s    k-hat 0.18, 5,295 effective draws of 8,000
+MCMC reference, 16,000 draws:  330s    R-hat 1.002, 18,224 effective draws
+
+term              planted      MCMC   Laplace    diff           Laplace 95%  truth
+speed_limit        +0.900   +0.3734   +0.3652  -0.008  [-0.415, +1.152]  IN
+curve_density      +0.250   +0.4179   +0.4196  +0.002  [-0.152, +0.996]  IN
+junction_density   +0.300   +0.4083   +0.4069  -0.001  [-0.198, +0.979]  IN
+sigma_u            +0.500   +0.6584   +0.6686  +0.010  [+0.493, +0.896]  IN
+alpha              +0.600   +0.5960   +0.5965  +0.000  [+0.407, +0.819]  IN
+
+Largest disagreement between the two rungs: 0.0101
+Planted values outside the fast rung's 95% interval: 0 of 5
+The fast rung was 55x quicker.
+```
+
+**The reference is pinned to the fast rung's quadrature node count**, which is not a
+detail. Node count defines *which* marginal posterior is being approximated, so a
+reference run at a different one is answering a slightly different question and any
+disagreement is partly its own doing. The first version of this tool compared 24 nodes
+against 48 and would have blamed the approximation for the difference.
+
+`fit_mcmc_reference()` exists for exactly this and is deliberately not wired into the
+engine: now that the node ladder makes step 1 succeed on everything tried, the ordinary
+entry point never reaches step 2, and a caller who wanted slower, noisier answers with
+the same intervals would be choosing badly.
+
+### The log posterior got a third faster, and the validator stopped timing out
+
+Chasing why the validator could not finish inside a ten-minute window turned up two
+things in the hot loop, both worth fixing on their own merits — that array is
+`walkers x rows x nodes` and it is the whole cost of the slowest path.
+
+**Three transcendental functions where one would do.** `mu` was `exp(eta + offset)`, then
+both negative-binomial terms took their own logarithm. But `exp(a + b)` is
+`exp(a) * exp(b)`, so the exponential can run over `(walkers, rows)` and
+`(walkers, nodes)` separately and their product is a multiply; and `log(mu)` never needs
+recovering from `mu`, because `eta + offset` *is* `log(mu)` and it is already in hand.
+Both NB terms are then differences against a single `log(r + mu)`. Verified identical to
+the old spelling to 2.3e-13 on values of order 1,000 — machine precision.
+
+**A fixed chunk of 16 walkers.** An ensemble of 24 went through as 16 and then 8, and the
+second call paid nearly a full call's overhead for half a call's work. The batch is now
+split by an element budget instead, so a short corridor does its whole ensemble in one
+call and a long one is still bounded.
+
+| | per iteration | 16,000 draws |
+|---|---|---|
+| before | 41.7 ms | 11.1 min |
+| one transcendental instead of three | 34.0 ms | 9.1 min |
+| plus element-budget chunking | **27.4 ms** | **7.3 min** |
+
+Every Bayesian fit is a third quicker, and the validation tool now completes in the
+foreground rather than being killed part-way through its reference run.
+
+### The dispersion trap, closed by a test
+
+PyMC parameterises the negative binomial as `var = mu + mu²/alpha`; statsmodels and this
+package use `var = mu + alpha·mu²`. Passing one for the other produces a dispersion
+wrong by a factor of `alpha²` and nothing complains. The convention is asserted by a
+test on a panel with a planted α, not trusted to a comment.
+
+### `--bayes` chooses how, never what
+
+`assess()` still exposes no way to force a mode or a rung — that rule is about data
+adequacy, and a caller who could overrule it would. Choosing an estimator is a different
+question, and a test keeps it different: the same panel returns the same mode, the same
+rung and the same factor list under either. NB2 stays on the result beside the
+posterior, because it is the comparison every reviewer expects to see cited.
+
+### What is not built
+
+- **3.3b — registry weights as priors.** The priors are weakly informative `Normal(0,1)`
+  today, not the registry's cited weights. `core/weights.py` already does the hard half.
+  The trap when it lands: `expected_sign` must be a *soft* prior, never a constraint, or
+  the sign guard becomes structurally incapable of firing.
+- **3.3c — spatial CAR/BYM.** Blocked in a specific way, written up in `STEPS.md`: the
+  quadrature works *because* units are independent, and a spatial field couples them.
+  The Laplace machinery generalises to it; the quadrature cannot.
+
+---
+
+## 2026-08-17 — A second corridor, and what it proved was not enough
 
 **Delivered:** `tools/validate_corridor.py`, a named registry of real roads the pipeline
 can be re-run against, and **the second corridor** — Dutch **N201** — chosen by

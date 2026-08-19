@@ -8,11 +8,34 @@ raw fit is kept alongside for diagnostics, but nothing downstream depends on it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 import pandas as pd
 
 from roadrisk.core.diagnostics import Family
+
+
+class Estimator(StrEnum):
+    """How Mode A's numbers are arrived at. **Not** which mode or rung is used.
+
+    The distinction matters, because ``assess`` deliberately exposes no way to force a
+    mode or a rung and a test asserts it never grows one. That rule is about *data
+    adequacy*: whether a panel can support seven terms or three is the engine's call,
+    never the caller's, because a caller who could overrule it would overrule it.
+
+    This is a different question. The ladder still decides the mode, the rung and the
+    terms, identically either way; this only decides how the coefficients on those
+    terms are estimated. A test pins that: the same panel returns the same mode, rung
+    and factor list under both estimators.
+    """
+
+    #: Negative binomial with unit-clustered standard errors. The shipped default and
+    #: the comparison every reviewer expects to see cited.
+    NB2 = "nb2"
+    #: Bayesian NB GLMM with a random intercept per unit. Credible intervals rather
+    #: than p-values, and it changes the estimates rather than only their spread.
+    BAYES = "bayes"
 
 
 @dataclass(frozen=True)
@@ -101,4 +124,4 @@ class FitResult:
         return next((c for c in self.coefficients if c.factor == factor), None)
 
 
-__all__ = ["Coefficient", "FitResult"]
+__all__ = ["Coefficient", "Estimator", "FitResult"]

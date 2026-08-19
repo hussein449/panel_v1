@@ -35,7 +35,14 @@ from roadrisk.core.errors import WeightNotSourced
 from roadrisk.core.gam import DEFAULT_RESAMPLES, ShapeDiagnostic, hunt_shape
 from roadrisk.core.gates import GateReport, SnapReport, run_pre_fit_gates
 from roadrisk.core.ladder import LadderResult, Mode, Rung, walk_ladder
-from roadrisk.core.models import FitResult, IndexResult, score_index
+from roadrisk.core.models import (
+    Estimator,
+    FitResult,
+    IndexResult,
+    PosteriorFit,
+    fit_bayesian_glmm,
+    score_index,
+)
 from roadrisk.core.registry import Factor, Registry, load_registry
 from roadrisk.core.runlog import RunLog, RunManifest, build_manifest
 from roadrisk.core.signguard import (
@@ -81,6 +88,11 @@ class Assessment:
     #: automatically and it lives on the sign guard finding instead. Both are reference
     #: material: they carry a shape and a plot and, by type, no client number.
     shapes: list[ShapeDiagnostic] = field(default_factory=list)
+    #: The Bayesian fit, when one was asked for. It sits **beside** ``fit`` rather than
+    #: replacing it: NB2 stays as the comparison every reviewer expects to see cited,
+    #: and the two can be read against each other. Present and unconverged is a real
+    #: outcome — it means no rung of the inference ladder could be believed.
+    posterior: PosteriorFit | None = None
 
     @property
     def is_mode_a(self) -> bool:
@@ -155,6 +167,7 @@ class Assessment:
             # only, never in the client report, and the serialised shape says so before
             # a consumer has to know what a GAM is.
             "reference": {"shapes": [s.as_dict() for s in self.shapes]},
+            "posterior": self.posterior.as_dict() if self.posterior else None,
             "receipts": {
                 "refusal": self.refusal_receipt,
                 "descent": self.descent_receipt,
@@ -175,6 +188,7 @@ def assess(
     max_leave_one_out: int = DEFAULT_MAX_LEAVE_ONE_OUT,
     shape_factors: Sequence[str] = (),
     shape_resamples: int = DEFAULT_RESAMPLES,
+    estimator: Estimator = Estimator.NB2,
 ) -> Assessment:
     """Assess one panel end to end.
 
@@ -195,6 +209,10 @@ def assess(
         shape_resamples: Corridors resampled by unit inside each spline diagnostic, to
             test whether the shape survives. Zero skips it and costs the diagnostic its
             only defence against reading a bend in noise.
+        estimator: How Mode A's coefficients are estimated. This does **not** choose the
+            mode or the rung — the ladder decides those identically either way, and a
+            test pins that. ``BAYES`` adds a random-intercept GLMM with credible
+            intervals alongside the NB2 fit; NB2 remains on the result either way.
 
     Raises:
         ContractViolation: The panel breaks the input contract. The job is rejected.
@@ -387,11 +405,74 @@ def assess(
             n_resamples=shape_resamples,
             log=log,
         ),
+        posterior=_posterior(
+            estimator,
+            counts=counts,
+            design=design[[f.name for f in ladder.factors]],
+            log_exposure=log_exposure,
+            unit_ids=unit_ids,
+            fit=ladder.fit,
+            log=log,
+        ),
         **common,  # type: ignore[arg-type]
     )
 
 
 # ---- internals ---------------------------------------------------------------
+
+
+def _posterior(
+    estimator: Estimator,
+    *,
+    counts: pd.Series,
+    design: pd.DataFrame,
+    log_exposure: pd.Series,
+    unit_ids: pd.Series,
+    fit: FitResult,
+    log: RunLog,
+) -> PosteriorFit | None:
+    """Fit the Bayesian rung beside the frequentist one, when it was asked for."""
+    if estimator is not Estimator.BAYES:
+        return None
+
+    start = {c.factor: c.estimate for c in fit.coefficients}
+    if fit.intercept is not None:
+        start["intercept"] = fit.intercept.estimate
+    if fit.alpha is not None:
+        start["alpha"] = fit.alpha
+
+    posterior = fit_bayesian_glmm(
+        counts, design, log_exposure, unit_ids, start=start
+    )
+    for step in posterior.descent:
+        log.info("bayes", "inference_step", step)
+
+    if not posterior.converged:
+        log.refusal(
+            "bayes",
+            "posterior_refused",
+            (
+                "The Bayesian rung produced no reportable intervals. "
+                f"{posterior.failure_reason} The NB2 fit is unaffected and is what this "
+                "assessment reports."
+            ),
+        )
+        return posterior
+
+    log.info(
+        "bayes",
+        "posterior_fitted",
+        (
+            f"Bayesian GLMM fitted by {posterior.method.value} over "
+            f"{posterior.n_units:,} units. Between-segment SD "
+            f"{posterior.sigma_u.mean:.3f} on the log rate "  # type: ignore[union-attr]
+            f"[{posterior.sigma_u.hdi_low:.3f}, "  # type: ignore[union-attr]
+            f"{posterior.sigma_u.hdi_high:.3f}] — the persistent character rungs 1 "  # type: ignore[union-attr]
+            "and 2 could not measure at all."
+        ),
+        method=posterior.method.value,
+    )
+    return posterior
 
 
 def _requested_shapes(

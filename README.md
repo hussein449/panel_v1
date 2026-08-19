@@ -15,7 +15,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
 | **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
-| **Stage 3 — model depth** | Half done. Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. And a spline diagnostic hunts the U-shape behind a wrong sign — reporting only the shape the smoothing grid agrees on, because the first version drew a bend in noise. Bayesian and out-of-sample validation outstanding. |
+| **Stage 3 — model depth** | Mostly done. Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. A spline diagnostic hunts the U-shape behind a wrong sign, reporting only the shape the smoothing grid agrees on. And `--bayes` fits a random-intercept GLMM that reports **credible intervals instead of p-values** and estimates how much segments differ from one another — in pure Python, seconds per fit, policing its own approximation on every run. Registry-weights-as-priors, spatial CAR/BYM and out-of-sample validation outstanding. |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
 
@@ -61,6 +61,22 @@ The spline runs automatically on any contradiction. `--shape FACTOR` runs it on 
 before there is a reversal to explain. It reports only the shape the smoothing grid
 agrees on and only turns that survive resampling the corridor by unit — the first
 version chose its penalty by AIC and drew a bend in pure noise.
+
+To get credible intervals instead of p-values, and an estimate of how much segments
+differ from one another:
+
+```bash
+roadrisk demo --units 40 --periods 12 --bayes
+```
+
+A negative-binomial GLMM with a random intercept per segment. It runs in seconds rather
+than minutes because the segment effects are integrated out and only the handful of
+parameters left is approximated — the INLA strategy — and it **checks its own
+approximation on every run**, descending to MCMC or refusing outright rather than
+reporting an interval it cannot vouch for. Pure Python: no compiler, no MCMC toolchain.
+
+`--bayes` chooses how the numbers are arrived at, never which mode or rung the engine
+picks. A test asserts the same panel returns the same mode, rung and factors either way.
 
 To see the declared factors and their weight status:
 

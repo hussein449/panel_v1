@@ -25,6 +25,7 @@ from roadrisk.core.engine import Assessment, assess
 from roadrisk.core.errors import RoadRiskError
 from roadrisk.core.gates import CheckStatus
 from roadrisk.core.ladder import Mode
+from roadrisk.core.models import Estimator
 from roadrisk.core.registry import (
     FacilityType,
     Region,
@@ -90,6 +91,17 @@ def assess_panel(
             ),
         ),
     ] = None,
+    bayes: Annotated[
+        bool,
+        typer.Option(
+            "--bayes",
+            help=(
+                "Also fit the Bayesian GLMM: a random intercept per segment, and "
+                "credible intervals instead of p-values. Seconds on a narrow "
+                "specification; minutes if the approximation is refused."
+            ),
+        ),
+    ] = False,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the assessment as JSON and nothing else.")
     ] = False,
@@ -108,7 +120,11 @@ def assess_panel(
 
     try:
         assessment = assess(
-            panel, registry=registry, context=context, shape_factors=shape or ()
+            panel,
+            registry=registry,
+            context=context,
+            shape_factors=shape or (),
+            estimator=Estimator.BAYES if bayes else Estimator.NB2,
         )
     except RoadRiskError as exc:
         _print_rejection(exc)
@@ -220,6 +236,16 @@ def demo(
         list[str] | None,
         typer.Option("--shape", help="Run the rung 3 spline on this factor. Repeatable."),
     ] = None,
+    bayes: Annotated[
+        bool,
+        typer.Option(
+            "--bayes",
+            help=(
+                "Also fit the Bayesian GLMM: a random intercept per segment, and "
+                "credible intervals instead of p-values."
+            ),
+        ),
+    ] = False,
     out: Annotated[
         Path | None, typer.Option("--out", "-o", help="Write the generated panel to CSV.")
     ] = None,
@@ -252,6 +278,7 @@ def demo(
                 facility_type=facility_type, region=region, severity=severity
             ),
             shape_factors=shape or (),
+            estimator=Estimator.BAYES if bayes else Estimator.NB2,
         )
     )
 
@@ -806,6 +833,7 @@ def _render(assessment: Assessment) -> None:
 
     if assessment.is_mode_a:
         _render_coefficients(assessment)
+        _render_posterior(assessment)
         _render_sign_guard(assessment)
         _render_shapes(assessment)
     else:
@@ -1035,6 +1063,67 @@ def _render_panel_correction(fit) -> None:
             border_style="cyan" if fit.is_clustered else "red",
         )
     )
+    console.print()
+
+
+def _render_posterior(assessment: Assessment) -> None:
+    """The Bayesian rung — credible intervals, and no p-value column anywhere."""
+    posterior = assessment.posterior
+    if posterior is None:
+        return
+
+    if not posterior.converged:
+        console.print(
+            Panel(
+                "\n".join([*posterior.descent, "", posterior.failure_reason or ""]),
+                title="Bayesian rung — refused",
+                subtitle="[dim]the NB2 fit above is unaffected[/dim]",
+                border_style="yellow",
+            )
+        )
+        console.print()
+        return
+
+    table = Table(
+        title=(
+            f"{posterior.specification} — {int(posterior.hdi_probability * 100)}% "
+            "credible intervals"
+        ),
+        header_style="bold",
+        title_justify="left",
+    )
+    table.add_column("Factor")
+    table.add_column("Posterior mean", justify="right")
+    table.add_column("SD", justify="right")
+    table.add_column(f"{int(posterior.hdi_probability * 100)}% credible", justify="right")
+    table.add_column("P(direction)", justify="right")
+
+    by_name = {f.name: f for f in assessment.available_factors}
+    for summary in posterior.coefficients:
+        factor = by_name.get(summary.name)
+        expected = factor.expected_sign.as_int if factor else summary.sign
+        probability = summary.probability_of_sign(expected)
+        # Not a significance star. It is the posterior's own answer to "does this point
+        # the way the registry says", which is the question the sign guard asks.
+        style = "green" if probability >= 0.95 else "yellow" if probability >= 0.8 else "red"
+        table.add_row(
+            summary.name,
+            f"{summary.mean:+.4f}",
+            f"{summary.sd:.4f}",
+            f"[{summary.hdi_low:+.3f}, {summary.hdi_high:+.3f}]",
+            Text(f"{probability:.2f}", style=style),
+        )
+
+    console.print(table)
+
+    if posterior.sigma_u is not None:
+        console.print(
+            f"[bold]Between-segment SD[/bold] σ_u = {posterior.sigma_u.mean:.3f} "
+            f"[{posterior.sigma_u.hdi_low:.3f}, {posterior.sigma_u.hdi_high:.3f}] "
+            "on the log rate — the persistent character rungs 1 and 2 could not "
+            "measure at all."
+        )
+    console.print(f"[dim]{' · '.join(posterior.descent)}[/dim]")
     console.print()
 
 
