@@ -5,7 +5,105 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-19 (latest) — Step 3.3b: the registry's weights become the priors
+## 2026-08-19 (latest) — Step 3.4: does it predict road it has not seen
+
+**Delivered:** cross-validation over contiguous stretches of corridor, CURE plots, and
+calibration on held-out units. **Reported on every Mode A run, pass or fail** — there is
+no flag that enables it and none that disables it, and a test asserts no such parameter
+ever appears.
+
+**Verified:** 622 tests pass (22 new), `ruff check` clean.
+
+### Held-out stretches, not held-out rows
+
+Adjacent segments share their terrain, their design standard, their traffic and the
+persistent unobserved character step 3.3a exists to estimate. A random fold leaves a
+segment's own neighbours in the training set, so the model half-remembers the answer.
+Both schemes are computed and printed together, because the optimism of the easy one
+should be visible rather than something a reader takes on trust.
+
+| Scheme | Observed | Predicted | Ratio | MAD |
+|---|---|---|---|---|
+| contiguous stretches | 2,803 | 2,756 | 1.02 | 1.044 |
+| random units | 2,803 | 2,722 | 1.03 | 1.042 |
+
+On the synthetic panel the gap is small, which is itself worth knowing: the generator
+draws each segment's character independently, so neighbours are *not* alike and the
+spatial concern does not bite. On a real corridor it will. The number is reported either
+way, and it is the only honest way to find out which case a corridor is in.
+
+### CURE plots say where a factor is wrong
+
+Calibration says whether the model is wrong on average. Cumulative residuals against a
+factor say *where* on its range — the question no single number answers.
+
+```
+curve_density: outside its bounds over 22% of the range, worst around 0.25.
+          cumulative residual, with ±2σ bounds
+     +220 |        .....................
+          |  ###********                .......
+          | ...         * ****                 ...
+          |.             *    ***                 .#
+        0 |**--------------------*----------------*.
+          |.                      **              .
+          | ...                     ** ****    ...
+          |    ....                   * ...**#####
+     -220 |        .....................
+```
+
+This is step 3.2's defect seen from the other side, and the verdict says so: CURE finds
+*where*, the spline explains *what shape*. Stage 3's two diagnostics now point at each
+other.
+
+### The bounds needed rung 2's correction, and finding that out was the work
+
+The textbook CURE band assumes every residual is an independent draw. This panel's
+residuals are not: each factor is a segment property repeated down every period, so a
+segment the model fits badly contributes a *run* of same-signed residuals and the
+cumulative sum wanders far beyond an independent-increment band.
+
+The first implementation therefore condemned a correctly specified model. Measured on
+the synthetic panel, whose effects are **planted linear**:
+
+| Per-unit heterogeneity | Share of curve outside bounds |
+|---|---|
+| none | 0–6%, correctly nothing |
+| 0.25 | 7–23% |
+| 0.5, the realistic default | **16–60%, every bit of it spurious** |
+
+Three of four correctly specified factors were being reported as mis-specified. This is
+step 3.1's defect — *the same segment measured eighteen times is not eighteen
+observations* — arriving somewhere new, and it would have been easy to accept as a real
+finding about the model.
+
+**The fix:** residuals are summed within a segment before anything accumulates, which
+removes the correlation inside a unit, and the remaining inflation is *measured* rather
+than assumed — the variance of the standardised unit residuals, 6.42× on the realistic
+panel. The band is widened by it and the factor is reported.
+
+**The correction did not just widen until nothing fires**, which was the obvious way to
+get a green light and would have been worthless. A planted U-shape still reads 22%
+outside its bounds and still names **only** the guilty factor, with the other three
+clean. Both halves are pinned by tests, because a diagnostic that never fires and one
+that always fires are equally useless.
+
+### Declined below 25 units
+
+Five folds of five segments measure noise. The run says so, states what is missing —
+*any evidence that it predicts road it has not seen* — and is careful not to imply the
+fit above it is worse than it is. The same reasoning as rung 2's twenty-cluster floor.
+
+### What it cannot do, said in the run rather than left to be inferred
+
+It validates the specification against the corridor's own crash data. It cannot say
+whether that crash data is any good, and on synthetic crashes it is measuring the
+generator. Position along the corridor is taken from the sort order of `unit_id`, which
+is how the segmentation numbers them — a panel whose ids do not sort into corridor order
+would get folds that are contiguous in name only, and that assumption is recorded.
+
+---
+
+## 2026-08-19 — Step 3.3b: the registry's weights become the priors
 
 **Delivered:** the brief's unifying idea, implemented. Mode B's cited weights are Mode
 A's prior means, and every factor is reported three ways — what the literature says, what

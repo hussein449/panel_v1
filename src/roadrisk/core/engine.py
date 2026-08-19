@@ -54,6 +54,7 @@ from roadrisk.core.signguard import (
     run_sign_guard,
 )
 from roadrisk.core.transforms import build_design
+from roadrisk.core.validation import ValidationReport, validate
 
 STAGE = "engine"
 
@@ -101,6 +102,10 @@ class Assessment:
     #: Textbook, corridor and mixture side by side, with the share of each answer that
     #: came from the literature and the one the engine designates.
     evidence: EvidenceReport | None = None
+    #: Out-of-sample validation. Always present on a Mode A run — there is no flag that
+    #: turns it on and none that turns it off, because a model that fails it is a
+    #: finding the report must carry rather than a computation a caller may decline.
+    validation: ValidationReport | None = None
 
     @property
     def is_mode_a(self) -> bool:
@@ -180,6 +185,7 @@ class Assessment:
                 self.posterior_data_only.as_dict() if self.posterior_data_only else None
             ),
             "evidence": self.evidence.as_dict() if self.evidence else None,
+            "validation": self.validation.as_dict() if self.validation else None,
             "receipts": {
                 "refusal": self.refusal_receipt,
                 "descent": self.descent_receipt,
@@ -406,6 +412,14 @@ def assess(
         fit=ladder.fit,
         sign_guard=sign_guard,
         descent_receipt=descent_receipt,
+        validation=_validate(
+            counts=counts,
+            design=design[[f.name for f in ladder.factors]],
+            log_exposure=log_exposure,
+            unit_ids=unit_ids,
+            fit=ladder.fit,
+            log=log,
+        ),
         shapes=_requested_shapes(
             shape_factors,
             counts=counts,
@@ -435,6 +449,44 @@ def assess(
 
 
 # ---- internals ---------------------------------------------------------------
+
+
+def _validate(
+    *,
+    counts: pd.Series,
+    design: pd.DataFrame,
+    log_exposure: pd.Series,
+    unit_ids: pd.Series,
+    fit: FitResult,
+    log: RunLog,
+) -> ValidationReport:
+    """Cross-validate the fitted specification, and log the result whatever it is."""
+    report = validate(
+        counts=counts,
+        design=design,
+        log_exposure=log_exposure,
+        unit_ids=unit_ids,
+        alpha=fit.alpha,
+    )
+    if not report.available:
+        log.warning(
+            "validation",
+            "not_validated",
+            (
+                "This corridor was not cross-validated: "
+                f"{report.refusal} Nothing above is retracted; what is absent is any "
+                "evidence that it predicts road it has not seen."
+            ),
+        )
+        return report
+
+    level = log.info if report.passed else log.flag
+    level("validation", "out_of_sample", report.summary())
+    for note in report.notes:
+        log.info("validation", "validation_note", note)
+    for curve in report.drifting_factors:
+        log.flag("validation", "cure_drift", curve.describe(), factor=curve.factor)
+    return report
 
 
 def _bayesian(

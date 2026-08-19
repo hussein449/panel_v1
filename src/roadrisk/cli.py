@@ -856,6 +856,7 @@ def _render(assessment: Assessment) -> None:
 
     if assessment.is_mode_a:
         _render_coefficients(assessment)
+        _render_validation(assessment)
         _render_evidence(assessment)
         _render_posterior(assessment)
         _render_sign_guard(assessment)
@@ -1087,6 +1088,81 @@ def _render_panel_correction(fit) -> None:
             border_style="cyan" if fit.is_clustered else "red",
         )
     )
+    console.print()
+
+
+def _render_validation(assessment: Assessment) -> None:
+    """Out-of-sample validation. Printed on every Mode A run, pass or fail."""
+    report = assessment.validation
+    if report is None:
+        return
+
+    if not report.available:
+        console.print(
+            Panel(
+                report.refusal or "",
+                title="Out-of-sample validation — not run",
+                border_style="yellow",
+            )
+        )
+        console.print()
+        return
+
+    table = Table(
+        title="Out-of-sample validation — held-out stretches of this corridor",
+        header_style="bold",
+        title_justify="left",
+    )
+    table.add_column("Scheme")
+    table.add_column("Observed", justify="right")
+    table.add_column("Predicted", justify="right")
+    table.add_column("Ratio", justify="right")
+    table.add_column("MAD", justify="right")
+
+    for calibration in (report.spatial, report.random):
+        if calibration is None:
+            continue
+        ratio = calibration.factor
+        style = "green" if calibration.calibrated else "red"
+        table.add_row(
+            calibration.scheme,
+            f"{calibration.observed:,.0f}",
+            f"{calibration.predicted:,.0f}",
+            Text(f"{ratio:.2f}" if ratio else "—", style=style),
+            f"{calibration.mean_absolute_deviation:.3f}",
+        )
+    console.print(table)
+
+    if report.optimism is not None:
+        console.print(
+            f"[dim]Random folds look {report.optimism:+.3f} crashes per cell better "
+            "than contiguous ones — adjacent segments share their character, so a "
+            "random fold leaves a segment's own neighbours in the training set.[/dim]"
+        )
+
+    drifting = report.drifting_factors
+    if drifting:
+        lines = []
+        for curve in drifting:
+            lines.extend([curve.describe(), "", curve.render(), ""])
+        console.print(
+            Panel(
+                "\n".join(lines).rstrip(),
+                title=f"⚠  CURE drift — {len(drifting)} factor(s) mis-specified",
+                border_style="red",
+            )
+        )
+    else:
+        console.print(
+            Panel(
+                "Cumulative residuals stay inside their bounds for every factor. The "
+                "model is not systematically wrong anywhere along any factor's range.",
+                title="CURE — clean",
+                border_style="green",
+            )
+        )
+    for note in report.notes:
+        console.print(f"[dim]{note}[/dim]")
     console.print()
 
 

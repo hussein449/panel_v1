@@ -299,12 +299,15 @@ The network layer is injectable, so all 34 tests run without touching it.
 
 ## Stage 3 — Model depth
 
+Three of four steps done. Only the spatial field remains, and it is blocked in a
+specific way recorded under 3.3c.
+
 | | Step | Deliverable | Done when |
 |---|---|---|---|
 | `[~]` | **3.1** NB GLMM | Panel-clustered standard errors **done** — up to 3.9x wider, two factors lose significance. The random-intercept GLMM itself is deferred to 3.3, see below | Standard errors widen versus plain NB2 ✅ |
 | `[x]` | **3.2** GAM diagnostic | Spline on geometry, hunts the U-shape | Produces the diagnostic plot, never ships a number ✅ |
 | `[~]` | **3.3** Bayesian hierarchical + spatial | Random-intercept GLMM **done** — credible intervals replace p-values, σ_u estimated at last. `expected_sign` encoded as a prior **done** — the registry's cited weights are the prior means, with the share of each answer they account for reported per factor. CAR/BYM outstanding, see below | Credible intervals replace p-values in the report ✅ · `expected_sign` encoded as prior ✅ |
-| `[ ]` | **3.4** Out-of-sample validation | Spatial CV, CURE plots, calibration on held-out units | Reported by default, including when bad |
+| `[x]` | **3.4** Out-of-sample validation | Spatial CV over contiguous stretches, CURE plots with a measured design effect, calibration on held-out units | Reported by default, including when bad ✅ |
 
 ### 3.3 — credible intervals, and the two halves still outstanding
 
@@ -351,6 +354,77 @@ them side by side, the way `validate_coverage.py` proved rung 2's intervals hone
 a rung, and a test asserts the same panel returns the same mode, rung and factor list
 under either estimator. NB2 stays on the result beside the posterior — it is the
 comparison every reviewer expects to see cited.
+
+### 3.4 — does it predict road it has not seen
+
+```bash
+roadrisk demo --units 80 --periods 18
+roadrisk demo --units 80 --periods 18 --u-shape curve_density   # watch it fail
+```
+
+Runs on every Mode A assessment. **There is no flag that turns it on and none that turns
+it off** — a model failing its own validation is a finding the report carries, not a
+computation a caller may decline. A test asserts no such parameter ever appears.
+
+**The folds are contiguous stretches, not random rows.** Adjacent segments share their
+terrain, their design standard and the unobserved character rung 2 exists to model, so a
+random fold leaves a segment's own neighbours in the training set and the model
+half-remembers the answer. Both schemes are computed and printed side by side, so the
+optimism of the easy one is visible rather than asserted.
+
+| Scheme | Observed | Predicted | Ratio | MAD |
+|---|---|---|---|---|
+| contiguous stretches | 2,803 | 2,756 | 1.02 | 1.044 |
+| random units | 2,803 | 2,722 | 1.03 | 1.042 |
+
+**CURE plots say *where* a factor is wrong**, which no single number can. Cumulative
+residuals against each factor, with a Brownian-bridge band; drifting outside it over a
+stretch means the model is systematically over- or under-predicting for segments in that
+band.
+
+```
+curve_density: outside its bounds over 22% of the range, worst around 0.25.
+          cumulative residual, with ±2σ bounds
+     +220 |        .....................
+          |  ###********                .......
+          | ...         * ****                 ...
+          |.             *    ***                 .#
+        0 |**--------------------*----------------*.
+          |.                      **              .
+          | ...                     ** ****    ...
+          |    ....                   * ...**#####
+     -220 |        .....................
+```
+
+That is the rung 3 spline's defect seen from the other side, and the verdict says so:
+CURE finds *where*, the spline explains *what shape*.
+
+**The CURE bounds needed the same correction the standard errors did, and that was
+measured.** The textbook band assumes independent residuals. On this panel every factor
+is a segment property repeated down every period, so a badly fitted segment contributes a
+run of same-signed residuals and the cumulative sum wanders much further than an
+independent-increment band allows. Uncorrected, on a panel whose effects are *planted
+linear*:
+
+| Per-unit heterogeneity | Share of curve outside |
+|---|---|
+| none | 0–6%, correctly nothing |
+| 0.25 | 7–23% |
+| 0.5 (realistic) | **16–60%, all of it spurious** |
+
+Residuals are now summed within a segment before anything accumulates, and the remaining
+inflation — measured as the variance of the standardised unit residuals, 6.4× on the
+realistic panel — widens the band and is reported. The correction did not simply widen
+until nothing fires: a planted U-shape still reads 22% outside and **still names only the
+guilty factor**.
+
+**Below 25 units it is declined, not estimated badly.** Five folds of five segments
+measure noise. The run says so, and says what is missing rather than implying the fit is
+worse than it is.
+
+**What it cannot do.** It validates the specification against the corridor's own crash
+data. It cannot say whether that crash data is any good, and on synthetic crashes it is
+measuring the generator. Both are stated in the run rather than left to be worked out.
 
 ### 3.3b — registry weights as priors *(done)*
 
