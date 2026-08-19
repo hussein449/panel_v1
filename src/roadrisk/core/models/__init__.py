@@ -21,6 +21,7 @@ from roadrisk.core.models.bayes import (
 )
 from roadrisk.core.models.glm import INTERCEPT, fit_negative_binomial, fit_poisson
 from roadrisk.core.models.index import IndexResult, IndexTerm, score_index
+from roadrisk.core.models.spatial import SpatialReport, fit_spatial_glmm
 
 __all__ = [
     "INTERCEPT",
@@ -34,7 +35,9 @@ __all__ = [
     "Method",
     "PosteriorFit",
     "PosteriorSummary",
+    "SpatialReport",
     "fit_bayesian_glmm",
+    "fit_spatial_glmm",
     "fit_negative_binomial",
     "fit_poisson",
     "score_index",

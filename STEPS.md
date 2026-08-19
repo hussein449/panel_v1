@@ -299,14 +299,15 @@ The network layer is injectable, so all 34 tests run without touching it.
 
 ## Stage 3 — Model depth
 
-Three of four steps done. Only the spatial field remains, and it is blocked in a
-specific way recorded under 3.3c.
+**Complete.** Panel-clustered standard errors, the spline diagnostic, the Bayesian
+random-intercept GLMM, the registry's weights as priors, the spatial field, and
+out-of-sample validation.
 
 | | Step | Deliverable | Done when |
 |---|---|---|---|
 | `[~]` | **3.1** NB GLMM | Panel-clustered standard errors **done** — up to 3.9x wider, two factors lose significance. The random-intercept GLMM itself is deferred to 3.3, see below | Standard errors widen versus plain NB2 ✅ |
 | `[x]` | **3.2** GAM diagnostic | Spline on geometry, hunts the U-shape | Produces the diagnostic plot, never ships a number ✅ |
-| `[~]` | **3.3** Bayesian hierarchical + spatial | Random-intercept GLMM **done** — credible intervals replace p-values, σ_u estimated at last. `expected_sign` encoded as a prior **done** — the registry's cited weights are the prior means, with the share of each answer they account for reported per factor. CAR/BYM outstanding, see below | Credible intervals replace p-values in the report ✅ · `expected_sign` encoded as prior ✅ |
+| `[x]` | **3.3** Bayesian hierarchical + spatial | Random-intercept GLMM **done** — credible intervals replace p-values, σ_u estimated at last. `expected_sign` encoded as a prior **done** — the registry's cited weights are the prior means, with the share of each answer they account for reported per factor. CAR/BYM **done** — a Leroux field over the corridor chain, fitted by joint Laplace, reporting rho with a credible interval and saying plainly when the corridor cannot tell | Credible intervals replace p-values in the report ✅ · `expected_sign` encoded as prior ✅ · CAR/BYM ✅ |
 | `[x]` | **3.4** Out-of-sample validation | Spatial CV over contiguous stretches, CURE plots with a measured design effect, calibration on held-out units | Reported by default, including when bad ✅ |
 
 ### 3.3 — credible intervals, and the two halves still outstanding
@@ -494,40 +495,54 @@ what the registry already records (source agreement and concern count) rather th
 in per factor, and keeping the whole thing opt-in is what stops them reaching a default
 number.
 
-### 3.3c — spatial CAR/BYM *(not built, and blocked in a specific way)*
+### 3.3c — spatial CAR/BYM *(done)*
 
-Segment 47 and segment 48 are neighbours, not strangers, and nothing in the engine knows
-that yet.
+```bash
+roadrisk demo --units 80 --periods 12 --spatial
+```
 
-**Why the current implementation cannot be extended to it.** The Bayesian rung is fast
-because it *integrates the random intercepts out* — one small independent integral per
-unit. That factorisation is the whole trick, and it works only because each unit's
-effect is independent of every other unit's given the hyperparameters. A CAR/BYM field
-is the exact opposite: neighbours are coupled by construction, the integral stops
-factorising, and the trick evaporates. This is not a defect to be fixed in the quadrature
-— it is what the quadrature *is*.
+Rung 2 gives every segment an independent random intercept, which is wrong about a road:
+a bad stretch is a *stretch*, and whatever makes segment 47 dangerous is usually working
+on 48 as well. A Leroux CAR field says so.
 
-**Three ways out, in order of appeal:**
+**It was recorded here as blocked, and the record was half right.** The quadrature in
+3.3a integrates each unit's effect out separately, which works *only* because units are
+independent — a CAR field couples them and the integral stops factorising. That much was
+correct. What was missed is that the *outer* half of that module never cared how the
+marginal was obtained: swapping the inner quadrature for a **joint Laplace over the whole
+latent field** left mode-finding, the importance check and every reporting surface
+untouched. The block was in one function, not in the design.
 
-1. **Laplace on the joint latent field.** The Laplace machinery already built does
-   generalise — approximating a coupled latent Gaussian field at its mode is precisely
-   what it is for, and it is what INLA actually does. A corridor is a *chain*, so the
-   CAR precision matrix is tridiagonal: sparse, cheap, and none of the awkward areal
-   cases (islands, disconnected components) arise. This keeps everything in pure Python.
-   Most of the work is the joint mode-finding, not the algebra.
-2. **A machine that can run PyMC.** `pm.ICAR` exists and is well tested. Blocked here
-   because PyTensor needs a C compiler and the Numba fallback is blocked by a Windows
-   Application Control policy — see the note in `IMPLEMENTED.md`. WSL2 would sidestep
-   both without weakening any security setting.
-3. **Drop it**, and say in the report that spatial correlation is unmodelled. Defensible
-   only if the honest answer turns out to be that it is not identifiable anyway.
+**A corridor is a path graph, and that is what makes it cheap.** Neighbours are the units
+either side, so the precision matrix is tridiagonal: Newton needs a banded solve and the
+determinant a banded Cholesky, both O(units). One marginal evaluation on eighty units
+costs about two milliseconds. None of the awkward areal cases — islands, disconnected
+components, uneven neighbour counts — happen on a road.
 
-**The caveat that applies whichever route is taken.** A spatial field and a per-unit
-random intercept both live at unit level and compete to explain the same variance. The
-BYM2 mixing parameter that splits them is hard to pin down on 50–120 units, which is
-every corridor validated so far. The honest deliverable may well be *"ρ is not
-identified, here is the prior sensitivity"* rather than a number — and that is a fine
-result, but it should be expected rather than discovered late.
+**Leroux, because it nests what already exists:**
+
+    Q = (1 / sigma_u²) [ (1 - rho) I + rho R ]
+
+`rho = 0` is rung 2 exactly, `rho → 1` approaches the intrinsic CAR limit. So "is there
+spatial structure here" becomes "is rho credibly above zero", answered by one posterior
+rather than by comparing two models. A test asserts the nesting holds.
+
+**Measured against planted truth:**
+
+| Planted | Estimated | Verdict |
+|---|---|---|
+| ρ = 0.0 | 0.21 [0.01, 0.56] | *no spatial clustering worth modelling* |
+| ρ = 0.9, 80 units | **0.89 [0.73, 0.98]** | *neighbouring segments are correlated* |
+| ρ = 0.9, 40 units | 0.44 [0.05, 0.86] | *this corridor cannot tell* |
+
+The last row is the caveat that was predicted, now measured rather than feared: below
+about eighty units the spatial and independent parts of the field explain the same
+variance and there is not enough road to separate them. **The report says so** instead of
+presenting 0.44 as a finding. That is an answer about the corridor, not a failure.
+
+**Two approximations are now stacked** — a Laplace over the latent field inside, and the
+existing Laplace-with-importance-check over the hyperparameters outside. The importance
+check polices only the outer one, which is stated in the module rather than glossed.
 
 ### 3.2 — the spline, and the bend it refuses to invent
 

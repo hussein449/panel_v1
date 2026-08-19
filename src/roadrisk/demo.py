@@ -49,6 +49,7 @@ def synthetic_panel(
     segment_length_km: float = 0.5,
     unit_dispersion: float = 0.5,
     crash_rows_only: bool = False,
+    spatial_rho: float = 0.0,
     u_shaped: str | None = None,
     u_vertex_quantile: float = 0.65,
     u_strength: float = 1.2,
@@ -74,6 +75,14 @@ def synthetic_panel(
             to it look better than it would on a road. Set to zero to get that back.
         crash_rows_only: Drop the zero-crash rows, producing a panel that Mode A must
             refuse. Used to exercise check 1.
+        spatial_rho: Correlate neighbouring segments' unobserved character instead of
+            drawing each independently, using the same Leroux CAR structure step 3.3c
+            fits. Zero draws them independently, which is what every other step here
+            assumes; near one makes a bad stretch a *stretch* rather than a scattering
+            of unrelated bad segments.
+
+            Units are neighbours when their ids are adjacent, which is how the
+            segmentation numbers them along the chainage.
         u_shaped: Give this factor a genuinely **non-monotonic** effect instead of its
             linear one: safest in the middle of its range, worse at both ends.
 
@@ -145,7 +154,11 @@ def synthetic_panel(
         # Mapped by unit id rather than repeated positionally, so the effect stays with
         # its segment however the frame is later ordered.
         heterogeneity = dict(
-            zip(unit_ids, rng.normal(0.0, unit_dispersion, n_units), strict=True)
+            zip(
+                unit_ids,
+                _segment_character(rng, n_units, unit_dispersion, spatial_rho),
+                strict=True,
+            )
         )
         linear = linear + panel["unit_id"].map(heterogeneity).to_numpy(dtype=float)
 
@@ -179,6 +192,28 @@ def _unit_factors(rng: np.random.Generator, n_units: int) -> dict[str, np.ndarra
         "poi_density": rng.gamma(shape=2.0, scale=2.5, size=n_units),
         "lit": rng.uniform(0.0, 1.0, size=n_units),
     }
+
+
+def _segment_character(
+    rng: np.random.Generator, n_units: int, sigma: float, rho: float
+) -> np.ndarray:
+    """Each segment's persistent unobserved character.
+
+    Independent draws when ``rho`` is zero. Above it, drawn from the Leroux CAR
+    covariance over the chain of segments — the same structure step 3.3c fits, so a
+    planted value has a right answer for that step to recover.
+    """
+    if rho <= 0.0 or n_units < 3:
+        return rng.normal(0.0, sigma, n_units)
+
+    structure = np.zeros((n_units, n_units))
+    for index in range(n_units - 1):
+        structure[index, index] += 1.0
+        structure[index + 1, index + 1] += 1.0
+        structure[index, index + 1] -= 1.0
+        structure[index + 1, index] -= 1.0
+    precision = ((1.0 - rho) * np.eye(n_units) + rho * structure) / sigma**2
+    return rng.multivariate_normal(np.zeros(n_units), np.linalg.inv(precision))
 
 
 def _bowl(transformed: np.ndarray, vertex_quantile: float, strength: float) -> np.ndarray:

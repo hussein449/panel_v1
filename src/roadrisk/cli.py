@@ -113,6 +113,16 @@ def assess_panel(
             ),
         ),
     ] = False,
+    spatial: Annotated[
+        bool,
+        typer.Option(
+            "--spatial",
+            help=(
+                "Also fit a CAR field over the corridor, so neighbouring segments are "
+                "correlated rather than strangers. Implies --bayes."
+            ),
+        ),
+    ] = False,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the assessment as JSON and nothing else.")
     ] = False,
@@ -135,8 +145,9 @@ def assess_panel(
             registry=registry,
             context=context,
             shape_factors=shape or (),
-            estimator=Estimator.BAYES if (bayes or priors) else Estimator.NB2,
+            estimator=Estimator.BAYES if (bayes or priors or spatial) else Estimator.NB2,
             use_registry_priors=priors,
+            use_spatial=spatial,
         )
     except RoadRiskError as exc:
         _print_rejection(exc)
@@ -268,6 +279,16 @@ def demo(
             ),
         ),
     ] = False,
+    spatial: Annotated[
+        bool,
+        typer.Option(
+            "--spatial",
+            help=(
+                "Also fit a CAR field over the corridor, so neighbouring segments are "
+                "correlated rather than strangers. Implies --bayes."
+            ),
+        ),
+    ] = False,
     out: Annotated[
         Path | None, typer.Option("--out", "-o", help="Write the generated panel to CSV.")
     ] = None,
@@ -300,8 +321,9 @@ def demo(
                 facility_type=facility_type, region=region, severity=severity
             ),
             shape_factors=shape or (),
-            estimator=Estimator.BAYES if (bayes or priors) else Estimator.NB2,
+            estimator=Estimator.BAYES if (bayes or priors or spatial) else Estimator.NB2,
             use_registry_priors=priors,
+            use_spatial=spatial,
         )
     )
 
@@ -859,6 +881,7 @@ def _render(assessment: Assessment) -> None:
         _render_validation(assessment)
         _render_evidence(assessment)
         _render_posterior(assessment)
+        _render_spatial(assessment)
         _render_sign_guard(assessment)
         _render_shapes(assessment)
     else:
@@ -1281,6 +1304,33 @@ def _render_posterior(assessment: Assessment) -> None:
             "measure at all."
         )
     console.print(f"[dim]{' · '.join(posterior.descent)}[/dim]")
+    console.print()
+
+
+def _render_spatial(assessment: Assessment) -> None:
+    """What the corridor said about whether its segments cluster."""
+    report = assessment.spatial
+    if report is None:
+        fit = assessment.posterior_spatial
+        if fit is not None and not fit.converged:
+            console.print(
+                Panel(
+                    fit.failure_reason or "",
+                    title="Spatial field — refused",
+                    border_style="yellow",
+                )
+            )
+            console.print()
+        return
+
+    border = "green" if report.spatial else "yellow" if not report.identified else "cyan"
+    console.print(
+        Panel(
+            report.describe(),
+            title=f"Spatial field — ρ = {report.rho.mean:.2f}",
+            border_style=border,
+        )
+    )
     console.print()
 
 

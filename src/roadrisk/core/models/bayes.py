@@ -106,6 +106,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -115,6 +116,9 @@ from scipy.special import gammaln, logsumexp
 
 from roadrisk.core.diagnostics import Family
 from roadrisk.core.priors import PriorSet
+
+#: A log posterior over a batch of parameter vectors: (batch, dim) -> (batch,).
+LogPosterior = Callable[[np.ndarray], np.ndarray]
 
 #: Quadrature nodes tried for the per-unit integral, in order, until the importance
 #: check passes.
@@ -670,17 +674,17 @@ def _step_sizes(theta: np.ndarray) -> np.ndarray:
     return 1e-4 * np.maximum(1.0, np.abs(theta))
 
 
-def _gradient(theta: np.ndarray, problem: _Problem) -> np.ndarray:
+def _gradient(theta: np.ndarray, logp: LogPosterior) -> np.ndarray:
     """Central-difference gradient, every perturbation in one batched call."""
     n = theta.size
     h = _step_sizes(theta)
     steps = np.eye(n) * h
     batch = np.vstack([theta + steps, theta - steps])
-    values = _batched_log_posterior(batch, problem)
+    values = logp(batch)
     return (values[:n] - values[n:]) / (2.0 * h)
 
 
-def _hessian(theta: np.ndarray, problem: _Problem) -> np.ndarray:
+def _hessian(theta: np.ndarray, logp: LogPosterior) -> np.ndarray:
     """Central-difference Hessian of the log posterior.
 
     Batched the same way: an eleven-parameter model needs a few hundred evaluations and
@@ -702,7 +706,7 @@ def _hessian(theta: np.ndarray, problem: _Problem) -> np.ndarray:
                     theta - eye[i] - eye[j],
                 ]
             )
-    values = _batched_log_posterior(np.vstack(points), problem)
+    values = logp(np.vstack(points))
 
     hessian = np.zeros((n, n))
     at = 0
@@ -715,18 +719,22 @@ def _hessian(theta: np.ndarray, problem: _Problem) -> np.ndarray:
     return hessian
 
 
-def _find_mode(
-    start: np.ndarray, problem: _Problem
-) -> tuple[np.ndarray, bool]:
-    """Maximise the log posterior. Returns the mode and whether the optimiser liked it."""
+def _find_mode(start: np.ndarray, logp: LogPosterior) -> tuple[np.ndarray, bool]:
+    """Maximise the log posterior. Returns the mode and whether the optimiser liked it.
+
+    Takes the log posterior as a callable rather than a problem object so that step
+    3.3c's spatial marginal — which integrates a coupled latent field out by its own
+    Laplace approximation instead of by quadrature — can reuse this and the numerical
+    differentiation above, rather than growing a second copy that could drift.
+    """
     from scipy.optimize import minimize
 
     def objective(theta: np.ndarray) -> float:
-        value = float(_batched_log_posterior(theta[None, :], problem)[0])
+        value = float(np.atleast_1d(logp(theta[None, :]))[0])
         return -value if np.isfinite(value) else 1e12
 
     def jacobian(theta: np.ndarray) -> np.ndarray:
-        return -_gradient(theta, problem)
+        return -_gradient(theta, logp)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -840,11 +848,14 @@ def _fit_laplace(
 ) -> tuple[list[PosteriorSummary], ApproximationReport | None, np.ndarray | None,
            np.ndarray | None]:
     """Step 1. Returns summaries, the honesty report, the mode and its covariance."""
-    mode, ok = _find_mode(centre, problem)
+    def logp(theta: np.ndarray) -> np.ndarray:
+        return _batched_log_posterior(theta, problem)
+
+    mode, ok = _find_mode(centre, logp)
     if not ok and not np.all(np.isfinite(mode)):
         return [], None, None, None
 
-    hessian = _hessian(mode, problem)
+    hessian = _hessian(mode, logp)
     precision = -hessian
     try:
         covariance = np.linalg.inv(precision)
@@ -1171,11 +1182,14 @@ def fit_mcmc_reference(
     )
     centre = _starting_point(start, names, problem)
 
-    mode, ok = _find_mode(centre, problem)
+    def logp(theta: np.ndarray) -> np.ndarray:
+        return _batched_log_posterior(theta, problem)
+
+    mode, ok = _find_mode(centre, logp)
     covariance: np.ndarray | None = None
     if ok and np.all(np.isfinite(mode)):
         try:
-            covariance = np.linalg.inv(-_hessian(mode, problem))
+            covariance = np.linalg.inv(-_hessian(mode, logp))
             np.linalg.cholesky(covariance)
         except np.linalg.LinAlgError:
             covariance = None

@@ -41,7 +41,9 @@ from roadrisk.core.models import (
     FitResult,
     IndexResult,
     PosteriorFit,
+    SpatialReport,
     fit_bayesian_glmm,
+    fit_spatial_glmm,
     score_index,
 )
 from roadrisk.core.priors import build_priors
@@ -106,6 +108,10 @@ class Assessment:
     #: turns it on and none that turns it off, because a model that fails it is a
     #: finding the report must carry rather than a computation a caller may decline.
     validation: ValidationReport | None = None
+    #: The CAR-field fit, when one was asked for, and what it concluded about whether
+    #: neighbouring segments cluster.
+    posterior_spatial: PosteriorFit | None = None
+    spatial: SpatialReport | None = None
 
     @property
     def is_mode_a(self) -> bool:
@@ -186,6 +192,18 @@ class Assessment:
             ),
             "evidence": self.evidence.as_dict() if self.evidence else None,
             "validation": self.validation.as_dict() if self.validation else None,
+            "spatial": (
+                {
+                    "rho": self.spatial.rho.mean,
+                    "rho_low": self.spatial.rho.hdi_low,
+                    "rho_high": self.spatial.rho.hdi_high,
+                    "identified": self.spatial.identified,
+                    "spatial": self.spatial.spatial,
+                    "message": self.spatial.describe(),
+                }
+                if self.spatial
+                else None
+            ),
             "receipts": {
                 "refusal": self.refusal_receipt,
                 "descent": self.descent_receipt,
@@ -208,6 +226,7 @@ def assess(
     shape_resamples: int = DEFAULT_RESAMPLES,
     estimator: Estimator = Estimator.NB2,
     use_registry_priors: bool = False,
+    use_spatial: bool = False,
 ) -> Assessment:
     """Assess one panel end to end.
 
@@ -442,6 +461,7 @@ def assess(
             factors=ladder.factors,
             context=active_context,
             use_registry_priors=use_registry_priors,
+            use_spatial=use_spatial,
             log=log,
         ),
         **common,  # type: ignore[arg-type]
@@ -500,6 +520,7 @@ def _bayesian(
     factors: list[Factor],
     context: RunContext,
     use_registry_priors: bool,
+    use_spatial: bool,
     log: RunLog,
 ) -> dict[str, Any]:
     """Fit the Bayesian rung, once or twice, and compare what each source contributed.
@@ -521,8 +542,14 @@ def _bayesian(
         counts, design, log_exposure, unit_ids, start=start
     )
     _log_posterior_outcome(corridor_only, log, "corridor-only")
+
+    extra: dict[str, Any] = {}
+    if use_spatial:
+        extra.update(
+            _spatial(counts, design, log_exposure, unit_ids, start, log)
+        )
     if not use_registry_priors:
-        return {"posterior": corridor_only}
+        return {"posterior": corridor_only, **extra}
 
     priors = build_priors(factors, context)
     log.info(
@@ -549,6 +576,7 @@ def _bayesian(
             "evidence": compare(
                 priors=priors, data_fit=corridor_only, mix_fit=corridor_only
             ),
+            **extra,
         }
 
     mixed = fit_bayesian_glmm(
@@ -587,7 +615,28 @@ def _bayesian(
         "posterior": mixed,
         "posterior_data_only": corridor_only,
         "evidence": evidence,
+        **extra,
     }
+
+
+def _spatial(
+    counts: pd.Series,
+    design: pd.DataFrame,
+    log_exposure: pd.Series,
+    unit_ids: pd.Series,
+    start: dict[str, float],
+    log: RunLog,
+) -> dict[str, Any]:
+    """Fit the CAR field and record what the corridor said about clustering."""
+    fit, report = fit_spatial_glmm(
+        counts, design, log_exposure, unit_ids, start=start
+    )
+    _log_posterior_outcome(fit, log, "spatial")
+    if report is None:
+        return {"posterior_spatial": fit}
+    level = log.info if report.identified else log.warning
+    level("bayes", "spatial_field", report.describe(), rho=round(report.rho.mean, 4))
+    return {"posterior_spatial": fit, "spatial": report}
 
 
 def _log_posterior_outcome(posterior: PosteriorFit, log: RunLog, label: str) -> None:

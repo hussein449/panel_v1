@@ -5,7 +5,95 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-19 (latest) — Step 3.4: does it predict road it has not seen
+## 2026-08-19 (latest) — Step 3.3c: neighbours, not strangers. Stage 3 complete.
+
+**Delivered:** a Leroux CAR field over the corridor chain, fitted by a joint Laplace
+approximation over the latent field, reporting ρ with a credible interval — and saying
+plainly when the corridor is too short to tell.
+
+```bash
+roadrisk demo --units 80 --periods 12 --spatial
+```
+
+**Verified:** 638 tests pass (16 new), `ruff check` clean.
+
+### This was recorded as blocked, and the record was half right
+
+The note under 3.3c said the quadrature in 3.3a integrates each unit's effect out
+separately, that this works *only* because units are independent, and that a CAR field
+couples them so the integral stops factorising. All true.
+
+What it missed is that the **outer** half of that module never cared where the marginal
+came from. The inference ladder operates on a marginal log posterior over a handful of
+hyperparameters. Swapping the inner quadrature for a joint Laplace over the whole latent
+field left mode-finding, the importance check, the reporting and the refusal paths
+untouched. **The block was in one function, not in the design** — and it only became
+visible once 3.3a's Laplace machinery existed to reuse.
+
+The reuse is real rather than copied: `_find_mode` and `_hessian` were refactored to take
+the log posterior as a callable, so both modules share one optimiser and one numerical
+derivative instead of two that could drift apart.
+
+### A corridor is a path graph, which is what makes it affordable
+
+Neighbours are the units either side, so the precision matrix is tridiagonal. Newton's
+method needs a banded solve, the determinant needs a banded Cholesky, both O(units), and
+one marginal evaluation on eighty units costs about **two milliseconds**. None of the
+awkward areal cases — islands, disconnected components, wildly uneven neighbour counts —
+occur on a road.
+
+### Leroux, because it nests what already exists
+
+    Q = (1 / sigma_u²) [ (1 - rho) I + rho R ]
+
+`rho = 0` is rung 2's independent random intercept **exactly**; `rho → 1` approaches the
+intrinsic CAR limit. So this is a strict generalisation, and "does this corridor cluster"
+becomes "is rho credibly above zero" — one posterior rather than two models compared.
+A test asserts the nesting: at rho near zero the coefficients agree with the independent
+fit.
+
+### Measured against planted truth, in both directions
+
+| Planted | Estimated | Reported as |
+|---|---|---|
+| ρ = 0.0 | 0.21 [0.01, 0.56] | *no spatial clustering worth modelling* |
+| ρ = 0.9, 80 units | **0.89 [0.73, 0.98]** | *neighbouring segments are correlated* |
+| ρ = 0.9, 40 units | 0.44 [0.05, 0.86] | *this corridor cannot tell* |
+
+The second row is the point; the first is what stops it being a machine for finding what
+it went looking for. Both halves are pinned by tests.
+
+### The caveat was predicted, and is now measured rather than feared
+
+`STEPS.md` warned that a spatial field and a per-unit random intercept both live at unit
+level and compete for the same variance, so ρ might not be identifiable on the fifty to a
+hundred and twenty units a corridor has. It is — above about eighty. Below that the
+interval spans most of the unit line and the report says the corridor **cannot tell**,
+rather than presenting 0.44 as a finding. That is an answer about the road, not a failure
+of the fit, and the run says which it is.
+
+A draw ladder was added for the same reason the node ladder exists in 3.3a: this
+posterior carries one more dimension than the independent one, and on a short corridor
+the outer approximation needs more importance draws before its weights behave. Escalating
+is cheaper than refusing.
+
+### Two approximations are now stacked, and that is stated
+
+A Laplace over the latent field inside, and the existing Laplace-with-importance-check
+over the hyperparameters outside. **The importance check polices only the outer one.**
+That is written into the module docstring rather than glossed, and it is why the MCMC
+fallback still exists.
+
+### Stage 3 is complete
+
+Panel-clustered standard errors (3.1), the spline that hunts the U-shape (3.2), the
+Bayesian random-intercept GLMM (3.3a), the registry's cited weights as priors (3.3b), the
+spatial field (3.3c) and out-of-sample validation (3.4). The next thing between this
+package and something a client can read is Stage 4.
+
+---
+
+## 2026-08-19 — Step 3.4: does it predict road it has not seen
 
 **Delivered:** cross-validation over contiguous stretches of corridor, CURE plots, and
 calibration on held-out units. **Reported on every Mode A run, pass or fail** — there is
