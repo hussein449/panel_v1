@@ -114,6 +114,7 @@ import pandas as pd
 from scipy.special import gammaln, logsumexp
 
 from roadrisk.core.diagnostics import Family
+from roadrisk.core.priors import PriorSet
 
 #: Quadrature nodes tried for the per-unit integral, in order, until the importance
 #: check passes.
@@ -476,6 +477,12 @@ class _Problem:
     n_units: int
     r_inverse: np.ndarray
     means: np.ndarray
+    #: Prior mean and width per factor, on the caller's coefficient scale. Step 3.3b
+    #: fills these from the registry's cited weights; without it they are zero and one,
+    #: which is the weakly informative default and says nothing about direction.
+    prior_means: np.ndarray
+    prior_sds: np.ndarray
+    intercept_sd: float
 
     @property
     def n_factors(self) -> int:
@@ -492,6 +499,9 @@ def _prepare(
     log_exposure: pd.Series,
     unit_ids: pd.Series,
     n_nodes: int,
+    prior_means: np.ndarray | None = None,
+    prior_sds: np.ndarray | None = None,
+    intercept_sd: float = 5.0,
 ) -> _Problem:
     """Sort rows by unit so each unit's rows are contiguous.
 
@@ -531,6 +541,15 @@ def _prepare(
         n_units=int(len(boundaries)),
         r_inverse=np.linalg.inv(r),
         means=means,
+        prior_means=(
+            np.zeros(raw.shape[1]) if prior_means is None
+            else np.asarray(prior_means, dtype=float)
+        ),
+        prior_sds=(
+            np.ones(raw.shape[1]) if prior_sds is None
+            else np.asarray(prior_sds, dtype=float)
+        ),
+        intercept_sd=float(intercept_sd),
     )
 
 
@@ -602,17 +621,22 @@ def _log_posterior(theta: np.ndarray, problem: _Problem) -> np.ndarray:
     per_unit = np.add.reduceat(loglik, problem.boundaries, axis=1)
     marginal = logsumexp(per_unit + problem.log_weights[None, None, :], axis=2).sum(axis=1)
 
-    # Weakly informative priors on the log-rate scale. Normal(0, 1) on a coefficient
-    # admits effects up to about sevenfold per unit of the transformed factor, generous
-    # for road safety and still ruling out the numerical nonsense an improper prior
-    # lets an optimiser or a sampler wander into.
+    # The prior on each coefficient, centred and scaled per factor.
     #
-    # Step 3.3b replaces these with the registry's own cited weights, which is the
-    # brief's unifying idea: Mode B weights ARE the priors.
+    # Without a PriorSet these are Normal(0, 1) on the log-rate scale: weakly
+    # informative, admitting effects up to about sevenfold per unit of the transformed
+    # factor, saying nothing about direction, and still ruling out the numerical
+    # nonsense an improper prior lets an optimiser wander into.
+    #
+    # With one, the centres are the registry's own cited weights — the brief's unifying
+    # idea, that Mode B's published weights ARE Mode A's priors. They are never
+    # truncated to the expected sign: a prior that forbids a direction would make
+    # P(wrong sign) identically zero and delete the sign guard by construction.
     original_beta = beta[index] @ problem.r_inverse.T
+    standardised = (original_beta - problem.prior_means[None, :]) / problem.prior_sds[None, :]
     log_prior = (
-        -0.5 * (intercept[index] / 5.0) ** 2
-        - 0.5 * np.sum(original_beta**2, axis=1)
+        -0.5 * (intercept[index] / problem.intercept_sd) ** 2
+        - 0.5 * np.sum(standardised**2, axis=1)
         - 0.5 * sigma[index] ** 2
         + theta[index, -2]
         - 0.5 * alpha[index] ** 2
@@ -967,6 +991,7 @@ def fit_bayesian_glmm(
     n_nodes: int = DEFAULT_NODES,
     hdi_probability: float = 0.95,
     allow_mcmc: bool = True,
+    priors: PriorSet | None = None,
     seed: int = 0,
 ) -> PosteriorFit:
     """Fit the random-intercept NB GLMM and return its posterior.
@@ -991,6 +1016,10 @@ def fit_bayesian_glmm(
         allow_mcmc: Set False to stop at step 1 and refuse rather than descend. Used by
             tests that must stay fast, and by callers who would rather have nothing
             than wait.
+        priors: The registry's cited weights as prior means, from
+            :func:`roadrisk.core.priors.build_priors`. Without it every coefficient gets
+            a weakly informative Normal(0, 1) that says nothing about direction, which
+            is what step 3.3a shipped and what the "your data" column reports.
         seed: RNG seed. The same seed reproduces the same posterior.
 
     Returns:
@@ -1005,7 +1034,13 @@ def fit_bayesian_glmm(
     # Quadrature accuracy is the first thing to escalate, because it is by far the
     # cheapest: adding nodes costs seconds, descending to MCMC costs minutes.
     schedule = [n for n in NODE_LADDER if n >= n_nodes] or [n_nodes]
-    problem = _prepare(counts, design, log_exposure, unit_ids, schedule[0])
+    prior_means = np.asarray(priors.means(names)) if priors else None
+    prior_sds = np.asarray(priors.sds(names)) if priors else None
+    intercept_sd = priors.intercept_sd if priors else 5.0
+    problem = _prepare(
+        counts, design, log_exposure, unit_ids, schedule[0],
+        prior_means, prior_sds, intercept_sd,
+    )
     centre = _starting_point(start, names, problem)
     summaries: list[PosteriorSummary] = []
     approximation: ApproximationReport | None = None
@@ -1013,7 +1048,10 @@ def fit_bayesian_glmm(
     covariance: np.ndarray | None = None
 
     for nodes in schedule:
-        problem = _prepare(counts, design, log_exposure, unit_ids, nodes)
+        problem = _prepare(
+            counts, design, log_exposure, unit_ids, nodes,
+            prior_means, prior_sds, intercept_sd,
+        )
         summaries, approximation, mode, covariance = _fit_laplace(
             problem, names, centre, hdi_probability, seed
         )
@@ -1105,6 +1143,7 @@ def fit_mcmc_reference(
     walkers: int | None = None,
     n_nodes: int = 48,
     hdi_probability: float = 0.95,
+    priors: PriorSet | None = None,
     seed: int = 0,
 ) -> PosteriorFit:
     """Run the MCMC rung directly, skipping the approximation. **Validation only.**
@@ -1123,8 +1162,13 @@ def fit_mcmc_reference(
 
     See ``tools/validate_posterior.py``.
     """
-    problem = _prepare(counts, design, log_exposure, unit_ids, n_nodes)
     names = [str(c) for c in design.columns]
+    problem = _prepare(
+        counts, design, log_exposure, unit_ids, n_nodes,
+        np.asarray(priors.means(names)) if priors else None,
+        np.asarray(priors.sds(names)) if priors else None,
+        priors.intercept_sd if priors else 5.0,
+    )
     centre = _starting_point(start, names, problem)
 
     mode, ok = _find_mode(centre, problem)
@@ -1176,6 +1220,22 @@ def fit_mcmc_reference(
     )
 
 
+def _prior_note(problem: _Problem) -> str:
+    """Say whether this fit's answer is partly somebody else's evidence."""
+    informative = int(np.count_nonzero(problem.prior_means))
+    if not informative:
+        return (
+            "Priors are weakly informative — Normal(0, 1) on every coefficient, centred "
+            "on no effect. Every number here is this corridor's own data speaking."
+        )
+    return (
+        f"{informative} of {problem.n_factors} coefficients carry a prior centred on a "
+        "cited published weight rather than on zero, so those numbers are partly "
+        "somebody else's evidence. The share attributable to the prior is reported per "
+        "factor; treat a high share as a statement about the literature, not this road."
+    )
+
+
 def _notes(problem: _Problem, n_nodes: int) -> tuple[str, ...]:
     return (
         f"The {problem.n_units:,} random intercepts are integrated out by {n_nodes}-node "
@@ -1184,9 +1244,7 @@ def _notes(problem: _Problem, n_nodes: int) -> tuple[str, ...]:
         "neither is spatial structure — see 3.3c.",
         "alpha is the NB2 dispersion of var = mu + alpha * mu^2, the same convention the "
         "frequentist rungs report.",
-        "Priors are weakly informative and are NOT the registry's cited weights yet. "
-        "Step 3.3b makes Mode B's weights the prior means, which is the brief's "
-        "unifying idea and changes what this fit means.",
+        _prior_note(problem),
     )
 
 

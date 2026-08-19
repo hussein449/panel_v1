@@ -15,7 +15,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
 | **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
-| **Stage 3 — model depth** | Mostly done. Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. A spline diagnostic hunts the U-shape behind a wrong sign, reporting only the shape the smoothing grid agrees on. And `--bayes` fits a random-intercept GLMM that reports **credible intervals instead of p-values** and estimates how much segments differ from one another — in pure Python, seconds per fit, policing its own approximation on every run. Registry-weights-as-priors, spatial CAR/BYM and out-of-sample validation outstanding. |
+| **Stage 3 — model depth** | Mostly done. Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. A spline diagnostic hunts the U-shape behind a wrong sign, reporting only the shape the smoothing grid agrees on. And `--bayes` fits a random-intercept GLMM that reports **credible intervals instead of p-values** and estimates how much segments differ from one another — in pure Python, seconds per fit, policing its own approximation on every run. `--priors` then makes the registry's own cited weights the starting belief and reports, per factor, how much of the answer came from the literature rather than from your road. Spatial CAR/BYM and out-of-sample validation outstanding. |
 | Stage 4 — report and PDF | Not started |
 | Stage 5 — web layer | Not started |
 
@@ -77,6 +77,19 @@ reporting an interval it cannot vouch for. Pure Python: no compiler, no MCMC too
 
 `--bayes` chooses how the numbers are arrived at, never which mode or rung the engine
 picks. A test asserts the same panel returns the same mode, rung and factors either way.
+
+To use the registry's own cited weights as the starting belief, and see how much of
+each answer came from them rather than from your road:
+
+```bash
+roadrisk assess panel.csv --priors
+```
+
+Three numbers per factor — what the literature says, what your corridor says on its own,
+and the two combined — with the share attributable to the literature printed beside each
+one, and the engine naming which of the three this run designates. On a thin corridor the
+published weights steady intervals too wide to act on; on a rich one they fall away to
+near nothing, which is the check that they are not doing the work. Off by default.
 
 To see the declared factors and their weight status:
 

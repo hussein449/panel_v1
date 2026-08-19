@@ -5,7 +5,109 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-17 (latest) — Step 3.3a: credible intervals, and a wrong diagnosis caught late
+## 2026-08-19 (latest) — Step 3.3b: the registry's weights become the priors
+
+**Delivered:** the brief's unifying idea, implemented. Mode B's cited weights are Mode
+A's prior means, and every factor is reported three ways — what the literature says, what
+this corridor says alone, and the two combined — with the share of each answer
+attributable to the literature.
+
+```bash
+roadrisk demo --units 40 --periods 12 --priors --facility-type rural_two_lane --region europe
+roadrisk assess panel.csv --priors
+```
+
+**Verified:** 600 tests pass (27 new), `ruff check` clean.
+
+### Three answers, and the engine names one
+
+Showing one number hides where it came from. Showing three without designating one
+pushes the choice onto the reader, who will pick the one that suits them — so the engine
+designates, the same way it already designates the mode.
+
+```
+Factor            Textbook   Your data      The mix   %bk  Reading
+speed_limit         +1.600      +0.348       +0.880   34%  prior steadies it
+                            [-0.41,+1.12] [+0.21,+1.59]
+curve_density            —      +0.487       +0.328    —   shifted 0.5 SE by another prior
+```
+
+`%bk` is the auditing device: the share of the mixed answer that came from the published
+weight rather than from this road, taken from the precision each side pulls with. It is
+readable without any statistics, which is the point.
+
+### It gets weaker as the data gets better, without being told to
+
+The same generator at two sizes, three factors, planted `speed_limit` = +0.90:
+
+| | 691 crashes | 5,782 crashes |
+|---|---|---|
+| Designated answer | **the mix** | **your data** |
+| `speed_limit` alone | +0.375 [−0.41, +1.15] — spans zero | +0.896 [+0.52, +1.27] |
+| `speed_limit` mixed | +0.900 [+0.23, +1.60] | +1.026 |
+| Prior share | 34% | **11%** |
+
+The rich corridor found the planted value on its own. The thin one could not, and the
+literature carried it there. **No rule produces that** — it falls out of the arithmetic,
+and it is the check that the priors are not quietly doing the work everywhere.
+
+### Where the confidence in a prior comes from
+
+Not typed in per factor. Derived from what the registry already records: agreement
+between sources tightens a prior, each recorded concern widens it. `speed_limit` carries
+a standing caveat — the Elvik exponent applies to operating speed and the column holds
+posted limit — so its prior loosens without anybody remembering to loosen it.
+
+A finding from doing this: the agreement half rarely fires, because most factors have
+exactly one admissible weight for a given context, and one source cannot agree with
+itself. In practice the width is driven by concern count.
+
+### Crash scope is a dilution, and it matters more than expected
+
+Mode A fits total crashes; iRAP prices several factors per crash type. A weight covering
+run-off and head-on crashes cannot move the total rate by its full value, so it is
+diluted by that type's share — the first-order term of the exact combination Mode B
+performs. `lit` is the case that makes it concrete: an intersection-crash weight, diluted
+by a 10% share, arrives as a prior mean of **−0.014**. Correctly almost silent about
+total crashes.
+
+### A defect this exposed in its own first output
+
+The first run reported `curve_density` as *"no cited weight — this road's data alone"*
+while its estimate had moved from +0.414 to +0.255 between the two fits.
+
+Coefficients are correlated, so a prior on `speed_limit` drags its neighbours. **A factor
+with no weight of its own is not insulated from everyone else's**, and the report was
+saying it was. It now measures the movement in standard errors and says
+*"shifted 0.5 SE by another prior"*. There is no way to report a mixed fit honestly
+without that number.
+
+### Four guards, each against a specific way this could mislead
+
+- **`expected_sign` is never a constraint.** A truncated prior would make
+  `P(β has the wrong sign)` identically zero and delete the sign guard by construction.
+  Every prior is a plain normal with support on both sides of zero, asserted by a test.
+- **Contradiction is judged on the corridor-only fit.** Asking the mixed fit whether it
+  disagrees with the textbook asks a question the prior has already influenced.
+- **A prior-dominated coefficient may not become a crash count.** Mode B refuses to
+  produce a count from published weights alone; the same number arriving through a prior
+  gets the same rule, and the designation says so in words.
+- **Off by default.** `--bayes` alone is unchanged, so every number published before
+  today still reproduces. Part of a prior-informed answer is somebody else's evidence,
+  and that is the user's choice to make rather than the engine's.
+
+### The wart, recorded rather than smoothed over
+
+The prior *widths* — 0.35 for a clean cited weight, ×1.25 per concern, floored at 0.15 —
+are a judgement, not a citation. A package whose registry refuses uncited weights now
+carries uncited confidence levels. They are derived from what the registry already knows
+rather than invented per factor, and the floor guarantees roughly 400 crashes' worth of
+evidence can always overrule any of them. Keeping the feature opt-in is what stops those
+numbers reaching a default result.
+
+---
+
+## 2026-08-17 — Step 3.3a: credible intervals, and a wrong diagnosis caught late
 
 **Delivered:** the Bayesian rung. A negative-binomial GLMM with a random intercept per
 unit, reporting **credible intervals instead of p-values**, and estimating σ_u — the

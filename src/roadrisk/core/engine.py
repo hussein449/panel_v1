@@ -32,6 +32,7 @@ from roadrisk.core.diagnostics import (
     zero_variance_columns,
 )
 from roadrisk.core.errors import WeightNotSourced
+from roadrisk.core.evidence import EvidenceReport, compare
 from roadrisk.core.gam import DEFAULT_RESAMPLES, ShapeDiagnostic, hunt_shape
 from roadrisk.core.gates import GateReport, SnapReport, run_pre_fit_gates
 from roadrisk.core.ladder import LadderResult, Mode, Rung, walk_ladder
@@ -43,6 +44,7 @@ from roadrisk.core.models import (
     fit_bayesian_glmm,
     score_index,
 )
+from roadrisk.core.priors import build_priors
 from roadrisk.core.registry import Factor, Registry, load_registry
 from roadrisk.core.runlog import RunLog, RunManifest, build_manifest
 from roadrisk.core.signguard import (
@@ -93,6 +95,12 @@ class Assessment:
     #: and the two can be read against each other. Present and unconverged is a real
     #: outcome — it means no rung of the inference ladder could be believed.
     posterior: PosteriorFit | None = None
+    #: The corridor-only posterior, fitted with uninformative priors. Present only when
+    #: the registry priors were used, because it exists to be compared against them.
+    posterior_data_only: PosteriorFit | None = None
+    #: Textbook, corridor and mixture side by side, with the share of each answer that
+    #: came from the literature and the one the engine designates.
+    evidence: EvidenceReport | None = None
 
     @property
     def is_mode_a(self) -> bool:
@@ -168,6 +176,10 @@ class Assessment:
             # a consumer has to know what a GAM is.
             "reference": {"shapes": [s.as_dict() for s in self.shapes]},
             "posterior": self.posterior.as_dict() if self.posterior else None,
+            "posterior_data_only": (
+                self.posterior_data_only.as_dict() if self.posterior_data_only else None
+            ),
+            "evidence": self.evidence.as_dict() if self.evidence else None,
             "receipts": {
                 "refusal": self.refusal_receipt,
                 "descent": self.descent_receipt,
@@ -189,6 +201,7 @@ def assess(
     shape_factors: Sequence[str] = (),
     shape_resamples: int = DEFAULT_RESAMPLES,
     estimator: Estimator = Estimator.NB2,
+    use_registry_priors: bool = False,
 ) -> Assessment:
     """Assess one panel end to end.
 
@@ -405,13 +418,16 @@ def assess(
             n_resamples=shape_resamples,
             log=log,
         ),
-        posterior=_posterior(
+        **_bayesian(
             estimator,
             counts=counts,
             design=design[[f.name for f in ladder.factors]],
             log_exposure=log_exposure,
             unit_ids=unit_ids,
             fit=ladder.fit,
+            factors=ladder.factors,
+            context=active_context,
+            use_registry_priors=use_registry_priors,
             log=log,
         ),
         **common,  # type: ignore[arg-type]
@@ -421,7 +437,7 @@ def assess(
 # ---- internals ---------------------------------------------------------------
 
 
-def _posterior(
+def _bayesian(
     estimator: Estimator,
     *,
     counts: pd.Series,
@@ -429,11 +445,19 @@ def _posterior(
     log_exposure: pd.Series,
     unit_ids: pd.Series,
     fit: FitResult,
+    factors: list[Factor],
+    context: RunContext,
+    use_registry_priors: bool,
     log: RunLog,
-) -> PosteriorFit | None:
-    """Fit the Bayesian rung beside the frequentist one, when it was asked for."""
+) -> dict[str, Any]:
+    """Fit the Bayesian rung, once or twice, and compare what each source contributed.
+
+    Twice when the registry's priors are in play: once told nothing, once told what the
+    literature believes. Two fits is the price of being able to say which of them the
+    answer came from, and there is no cheaper way to know.
+    """
     if estimator is not Estimator.BAYES:
-        return None
+        return {}
 
     start = {c.factor: c.estimate for c in fit.coefficients}
     if fit.intercept is not None:
@@ -441,38 +465,103 @@ def _posterior(
     if fit.alpha is not None:
         start["alpha"] = fit.alpha
 
-    posterior = fit_bayesian_glmm(
+    corridor_only = fit_bayesian_glmm(
         counts, design, log_exposure, unit_ids, start=start
     )
-    for step in posterior.descent:
-        log.info("bayes", "inference_step", step)
+    _log_posterior_outcome(corridor_only, log, "corridor-only")
+    if not use_registry_priors:
+        return {"posterior": corridor_only}
 
+    priors = build_priors(factors, context)
+    log.info(
+        "bayes",
+        "priors_built",
+        priors.summary(),
+        cited=[p.factor for p in priors.cited],
+    )
+    for prior in priors.cited:
+        log.info("bayes", "prior", prior.describe(), factor=prior.factor)
+
+    if not priors.is_informative:
+        log.warning(
+            "bayes",
+            "no_priors",
+            (
+                "Registry priors were requested but no factor in this specification has "
+                "an admissible cited weight, so the fit is unchanged and the corridor's "
+                "own data is the whole answer."
+            ),
+        )
+        return {
+            "posterior": corridor_only,
+            "evidence": compare(
+                priors=priors, data_fit=corridor_only, mix_fit=corridor_only
+            ),
+        }
+
+    mixed = fit_bayesian_glmm(
+        counts, design, log_exposure, unit_ids, start=start, priors=priors
+    )
+    _log_posterior_outcome(mixed, log, "prior-informed")
+
+    evidence = compare(priors=priors, data_fit=corridor_only, mix_fit=mixed)
+    log.info("bayes", "designated_answer", f"{evidence.answer.value}: {evidence.reason}")
+    for item in evidence.prior_dominated:
+        log.warning(
+            "bayes",
+            "prior_dominated",
+            (
+                f"'{item.factor}' is {item.prior_share:.0%} prior — the published weight "
+                "is doing most of the work and this corridor little of it. Read it as a "
+                "statement about the literature, and do not derive a crash count from it."
+            ),
+            factor=item.factor,
+            prior_share=round(item.prior_share or 0.0, 4),
+        )
+    for item in evidence.contradictions:
+        log.flag(
+            "bayes",
+            "contradicts_literature",
+            (
+                f"'{item.factor}': this corridor fitted {item.data_mean:+.3f} on its own "
+                f"and the published weight is {item.textbook:+.3f}, which its credible "
+                "interval excludes. The data fought the prior and won — a finding, not "
+                "an error."
+            ),
+            factor=item.factor,
+        )
+
+    return {
+        "posterior": mixed,
+        "posterior_data_only": corridor_only,
+        "evidence": evidence,
+    }
+
+
+def _log_posterior_outcome(posterior: PosteriorFit, log: RunLog, label: str) -> None:
+    for step in posterior.descent:
+        log.info("bayes", "inference_step", f"[{label}] {step}")
     if not posterior.converged:
         log.refusal(
             "bayes",
             "posterior_refused",
             (
-                "The Bayesian rung produced no reportable intervals. "
-                f"{posterior.failure_reason} The NB2 fit is unaffected and is what this "
-                "assessment reports."
+                f"The {label} Bayesian fit produced no reportable intervals. "
+                f"{posterior.failure_reason} The NB2 fit is unaffected."
             ),
         )
-        return posterior
-
+        return
     log.info(
         "bayes",
         "posterior_fitted",
         (
-            f"Bayesian GLMM fitted by {posterior.method.value} over "
-            f"{posterior.n_units:,} units. Between-segment SD "
-            f"{posterior.sigma_u.mean:.3f} on the log rate "  # type: ignore[union-attr]
+            f"[{label}] fitted by {posterior.method.value} over {posterior.n_units:,} "
+            f"units. Between-segment SD {posterior.sigma_u.mean:.3f} "  # type: ignore[union-attr]
             f"[{posterior.sigma_u.hdi_low:.3f}, "  # type: ignore[union-attr]
-            f"{posterior.sigma_u.hdi_high:.3f}] — the persistent character rungs 1 "  # type: ignore[union-attr]
-            "and 2 could not measure at all."
+            f"{posterior.sigma_u.hdi_high:.3f}]."  # type: ignore[union-attr]
         ),
         method=posterior.method.value,
     )
-    return posterior
 
 
 def _requested_shapes(

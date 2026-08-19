@@ -303,7 +303,7 @@ The network layer is injectable, so all 34 tests run without touching it.
 |---|---|---|---|
 | `[~]` | **3.1** NB GLMM | Panel-clustered standard errors **done** — up to 3.9x wider, two factors lose significance. The random-intercept GLMM itself is deferred to 3.3, see below | Standard errors widen versus plain NB2 ✅ |
 | `[x]` | **3.2** GAM diagnostic | Spline on geometry, hunts the U-shape | Produces the diagnostic plot, never ships a number ✅ |
-| `[~]` | **3.3** Bayesian hierarchical + spatial | Random-intercept GLMM **done** — credible intervals replace p-values, and σ_u is estimated at last. Registry-weights-as-priors and CAR/BYM outstanding, see below | Credible intervals replace p-values in the report ✅ |
+| `[~]` | **3.3** Bayesian hierarchical + spatial | Random-intercept GLMM **done** — credible intervals replace p-values, σ_u estimated at last. `expected_sign` encoded as a prior **done** — the registry's cited weights are the prior means, with the share of each answer they account for reported per factor. CAR/BYM outstanding, see below | Credible intervals replace p-values in the report ✅ · `expected_sign` encoded as prior ✅ |
 | `[ ]` | **3.4** Out-of-sample validation | Spatial CV, CURE plots, calibration on held-out units | Reported by default, including when bad |
 
 ### 3.3 — credible intervals, and the two halves still outstanding
@@ -352,25 +352,73 @@ a rung, and a test asserts the same panel returns the same mode, rung and factor
 under either estimator. NB2 stays on the result beside the posterior — it is the
 comparison every reviewer expects to see cited.
 
-### 3.3b — registry weights as priors *(not built)*
+### 3.3b — registry weights as priors *(done)*
 
-The priors today are weakly informative `Normal(0, 1)` on the log-rate scale, and they
-are **not** the registry's cited weights. The brief's unifying idea is that they should
-be:
+```bash
+roadrisk demo --units 40 --periods 12 --priors --facility-type rural_two_lane --region europe
+roadrisk assess panel.csv --priors
+```
+
+The brief's unifying idea, implemented:
 
 > A prior is what we believed before seeing data. **Mode B weights are priors.** Mode A
 > is those priors updated by data.
 
-`core/weights.py` already does the hard half — it selects a weight by facility type,
-region and severity and reports what it reached for. Wiring those in as prior means
-turns the ladder into one continuum instead of two products, and makes a sign reversal
-reportable as *"the data fought the prior and won"*.
+**Three answers per factor, and the engine names one.** Textbook, this corridor alone,
+and the two combined — all printed, because showing one without the others hides where
+the number came from, and showing three without designating one pushes the choice onto
+the reader.
 
-**The trap to avoid when it is built.** `expected_sign` must enter as a *soft* prior,
-never a hard constraint. Truncating a coefficient to its expected sign would make the
-sign guard structurally incapable of ever firing again — the posterior would be positive
-because negative was forbidden. The replacement statistic already exists on the result:
-`P(β has the wrong sign | data)`.
+```
+Factor            Textbook   Your data      The mix   %bk  Reading
+speed_limit         +1.600      +0.348       +0.880   34%  prior steadies it
+                            [-0.41,+1.12] [+0.21,+1.59]
+curve_density            —      +0.487       +0.328    —   shifted 0.5 SE by another prior
+```
+
+**`%bk` is the auditing device.** The share of the mixed answer that came from the
+literature rather than this road, from the precision each side pulls with. 3% is your
+road talking; 78% is a textbook with a corridor's name on it, and it is labelled.
+
+**Measured on the same panel at two sizes:**
+
+| | 691 crashes | 5,782 crashes |
+|---|---|---|
+| Designated answer | **the mix** | **your data** |
+| `speed_limit`, corridor alone | +0.375 [−0.41, +1.15] — spans zero | +0.896 [+0.52, +1.27] |
+| `speed_limit`, mixed | +0.900 [+0.23, +1.60] — usable | +1.026 |
+| Prior share | 34% | **11%** |
+
+The planted truth is +0.90. The rich corridor found it alone; the thin one needed the
+literature to get there. **More data automatically makes the textbook matter less** —
+there is no rule doing that, it falls out of the arithmetic, and it is the check that
+the priors are not quietly doing the work.
+
+**Off by default.** `--bayes` alone still uses uninformative priors, so every number
+already published stays reproducible. Part of a prior-informed answer is somebody else's
+evidence, and that is a choice a user makes rather than one the engine makes for them.
+
+**Four guards, each against a specific way this could mislead:**
+
+- **`expected_sign` is never a constraint.** Truncating a coefficient to its expected
+  direction would make `P(β has the wrong sign)` identically zero and delete the sign
+  guard by construction. Every prior is a plain normal with support on both sides.
+- **Contradiction is judged on the corridor-only fit.** Asking the mixed fit whether it
+  disagrees with the textbook asks a question the prior has already influenced.
+- **A prior-dominated coefficient may not become a crash count.** Mode B refuses to
+  produce a count from published weights alone; the same number arriving through a
+  prior gets the same rule.
+- **Indirect shifts are reported.** A factor with no cited weight is *not* insulated:
+  coefficients are correlated, so a prior on one drags its neighbours. The first run of
+  this comparison moved an uncited factor by half a standard error while describing it
+  as "this road's data alone". It now says which factors were moved, and by how much.
+
+**One honest wart.** The prior *widths* — 0.35 for a clean cited weight, ×1.25 per
+recorded concern, floored at 0.15 — are a judgement, not a citation. A package that
+refuses uncited weights now carries uncited confidence levels. They are derived from
+what the registry already records (source agreement and concern count) rather than typed
+in per factor, and keeping the whole thing opt-in is what stops them reaching a default
+number.
 
 ### 3.3c — spatial CAR/BYM *(not built, and blocked in a specific way)*
 

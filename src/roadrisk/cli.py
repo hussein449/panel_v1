@@ -102,6 +102,17 @@ def assess_panel(
             ),
         ),
     ] = False,
+    priors: Annotated[
+        bool,
+        typer.Option(
+            "--priors",
+            help=(
+                "Centre each prior on the registry's cited weight instead of on zero, "
+                "and report textbook / your data / the mix side by side. Implies "
+                "--bayes and costs a second fit."
+            ),
+        ),
+    ] = False,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the assessment as JSON and nothing else.")
     ] = False,
@@ -124,7 +135,8 @@ def assess_panel(
             registry=registry,
             context=context,
             shape_factors=shape or (),
-            estimator=Estimator.BAYES if bayes else Estimator.NB2,
+            estimator=Estimator.BAYES if (bayes or priors) else Estimator.NB2,
+            use_registry_priors=priors,
         )
     except RoadRiskError as exc:
         _print_rejection(exc)
@@ -246,6 +258,16 @@ def demo(
             ),
         ),
     ] = False,
+    priors: Annotated[
+        bool,
+        typer.Option(
+            "--priors",
+            help=(
+                "Use the registry's cited weights as prior means, and show textbook / "
+                "your data / the mix side by side. Implies --bayes."
+            ),
+        ),
+    ] = False,
     out: Annotated[
         Path | None, typer.Option("--out", "-o", help="Write the generated panel to CSV.")
     ] = None,
@@ -278,7 +300,8 @@ def demo(
                 facility_type=facility_type, region=region, severity=severity
             ),
             shape_factors=shape or (),
-            estimator=Estimator.BAYES if bayes else Estimator.NB2,
+            estimator=Estimator.BAYES if (bayes or priors) else Estimator.NB2,
+            use_registry_priors=priors,
         )
     )
 
@@ -833,6 +856,7 @@ def _render(assessment: Assessment) -> None:
 
     if assessment.is_mode_a:
         _render_coefficients(assessment)
+        _render_evidence(assessment)
         _render_posterior(assessment)
         _render_sign_guard(assessment)
         _render_shapes(assessment)
@@ -1063,6 +1087,63 @@ def _render_panel_correction(fit) -> None:
             border_style="cyan" if fit.is_clustered else "red",
         )
     )
+    console.print()
+
+
+def _render_evidence(assessment: Assessment) -> None:
+    """Textbook, corridor and mixture side by side, with the designated answer named."""
+    evidence = assessment.evidence
+    if evidence is None:
+        return
+
+    table = Table(
+        title="Three answers per factor — and the one this run designates",
+        header_style="bold",
+        title_justify="left",
+    )
+    table.add_column("Factor", no_wrap=True)
+    table.add_column("Textbook", justify="right", no_wrap=True, min_width=8)
+    table.add_column("Your data", justify="right", no_wrap=True, min_width=15)
+    table.add_column("The mix", justify="right", no_wrap=True, min_width=15)
+    table.add_column("%bk", justify="right", no_wrap=True, min_width=4)
+    table.add_column("Reading", min_width=18)
+
+    def interval(mean, low, high) -> str:
+        if mean is None:
+            return "—"
+        return f"{mean:+.3f}\n[{low:+.2f}, {high:+.2f}]"
+
+    for item in evidence.factors:
+        if item.contradicts_textbook:
+            style = "red"
+        elif item.prior_dominates or item.indirectly_shifted:
+            style = "yellow"
+        else:
+            style = "green" if item.is_cited else "dim"
+        share = f"{item.prior_share:.0%}" if item.prior_share is not None else "—"
+        table.add_row(
+            item.factor,
+            f"{item.textbook:+.3f}" if item.textbook is not None else "—",
+            interval(item.data_mean, item.data_low, item.data_high),
+            interval(item.mix_mean, item.mix_low, item.mix_high),
+            Text(share, style=style),
+            Text(item.label(), style=style),
+        )
+
+    console.print(table)
+    console.print(
+        "[dim]%bk — how much of the mixed answer came from the published weight rather "
+        "than from this corridor.[/dim]"
+    )
+    console.print(
+        Panel(
+            evidence.reason,
+            title=f"Designated answer — {evidence.answer.value.upper()}",
+            border_style="cyan",
+        )
+    )
+    for note in evidence.notes:
+        console.print(f"[dim]{note}[/dim]")
     console.print()
 
 
