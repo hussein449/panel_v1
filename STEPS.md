@@ -799,3 +799,103 @@ Things that need a human call, not a code change.
    about a road. A single real police extract is worth more than a third corridor.
 4. **Rung 4 engine.** PyMC/NumPyro keeps one language; R + INLA is materially faster for
    CAR/BYM at panel scale. Defer until MCMC actually hurts.
+
+---
+
+## Project Requirements
+
+Reference only. This section records what the call topic *Road Safety and Resilience of
+Rural Areas* asks a funded project to deliver. It states the requirements as written; it
+does not assign them to stages.
+
+### Context the call sets
+
+More than 50% of all EU road fatalities occur in rural areas, and crashes and
+crash-related fatalities on rural roads differ from those on urban roads and motorways.
+
+The **RISM Directive** introduced the concept of **network-wide road safety assessment
+(NWRSA)** and of proactive assessment through the **in-built safety** of roads.
+Network-level assessment gives an overview of road safety performance instead of
+focusing on isolated parts of it; in-built safety assessment identifies parts of the road
+that crash-based analyses (crash clusters, hotspot analysis) omit — sections that do not
+concentrate the majority of crashes yet are crash-prone and/or uncomfortable to navigate.
+
+A methodology has been developed under the Directive to assess the network-wide safety of
+**motorways and primary rural roads** on their combined crash-based and in-built safety
+assessments. **Secondary and lower-class roads are not covered**, and there is not
+adequate information on road user behaviour.
+
+The call additionally notes that in an ageing society, cognitive and physical impairments
+pose an increasing threat to safe mobility, and that in rural areas people with any kind
+of impairment or disability often lack alternatives to driving — so addressing this
+concerns quality of life and social exclusion as well as road safety.
+
+Local and regional authorities also manage risks from extreme weather phenomena and
+natural disasters such as floods, fires, storms or heavy snowfall, which affect both
+safety and operations, and need a more holistic resilience monitoring and response.
+
+### Expected outcomes
+
+Project results are expected to contribute to **all** of the following:
+
+1. Implementation of the **NWRSA methodology for secondary rural roads**.
+2. **Innovative and effective enforcement strategies, incentive mechanisms and measures
+   raising risk awareness** for fostering safer behaviour.
+3. **Prevention strategies** for reducing road fatalities and serious road traffic
+   injuries on rural roads, along with the respective **implementation guidelines and
+   policy measures tailored to the responsible stakeholders** (regional authorities,
+   police, healthcare professionals, national governments, etc.).
+4. A **GIS-based application** to assist local and regional authorities in identifying and
+   mapping the impact of extreme weather phenomena and other natural disasters (floods,
+   fires, storms, heavy snowfall, etc.) on the safety and resilience of the road network
+   in their jurisdiction.
+
+### Required actions
+
+Research should undertake **all** of the following, in **at least three regions**,
+covering **both primary and secondary rural roads of adequate length** to allow
+region-level comparisons:
+
+1. **Demonstrate the practical applicability of the NWRSA methodology and expand its use
+   to all rural roads** for an easy, low-cost, flexible and transparent, yet sufficiently
+   accurate assessment of road infrastructure safety. **Identify information gaps and
+   propose methods to leverage available data** to supplement the understanding of crash
+   causation and outcomes.
+
+2. **Develop prevention strategies and measures** to reduce fatalities and serious
+   injuries in rural areas, with a focus on high-risk locations and situations and on
+   improving road user behaviour. This includes:
+   - reliable and easy-to-use methods providing **quantified indications of the actual
+     crash risk** associated with, and the **prevalence of**, risky behaviours;
+   - **enforcement measures with evidence-based effectiveness** addressing the problems
+     and motivations underlying risky behaviour, combining traditional methods with
+     innovative enforcement approaches and new technologies;
+   - the issue of **multi-offenders** — a small group of repeat offenders accounts for a
+     large share of crashes (e.g. 5% of the population vs 27% of crashes, SWOV 2017);
+   - **intoxication by drugs** — recent studies show the share of crash-involved drivers
+     intoxicated by drugs equals or surpasses those intoxicated by alcohol (Gjerde &
+     Forst 2023);
+   - **awareness raising and nudging measures**, and **novel incentive mechanisms** to
+     promote safe driving, forming building blocks of integrated strategies tailored to
+     local needs and rural specificities;
+   - a **gender and disability sensitive and intersectional approach**, intersecting with
+     other social factors, could be considered;
+   - **countermeasures for health-related risk factors**, guaranteeing at the same time
+     the mobility of older people and persons with health impairments in rural areas.
+
+3. **Develop tools to make knowledge about climate-related risks easily accessible to
+   local authorities**, enabling them to take appropriate actions to maintain road safety
+   and the resilience of the rural road network and of the infrastructure for road users
+   even in extreme conditions.
+
+### Region selection
+
+- Regions must ensure **diversity in terms of road network design, geography and climate
+  conditions, and road safety culture**.
+- **At least two** of those regions should be in **countries with a higher percentage of
+  fatalities on rural roads than the EU average**.
+- **Involvement of road authorities is strongly recommended.**
+
+### Maturity
+
+Activities are expected to achieve **TRL 6–7** by the end of the project.
