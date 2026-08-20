@@ -35,6 +35,7 @@ from roadrisk.core.registry import (
     Severity,
     load_registry,
 )
+from roadrisk.report import REPORT_FILENAME, build_run, write_report
 
 
 def _make_output_utf8_safe() -> None:
@@ -194,6 +195,7 @@ def assess_panel(
         _write_run(assessment, out_dir)
         if not as_json:
             console.print(f"\n[dim]Run record written to {out_dir}[/dim]")
+            console.print(f"[bold]Report:[/bold] {out_dir / REPORT_FILENAME}")
 
 
 @app.command()
@@ -599,7 +601,7 @@ def corridor(
     _render(assessment)
 
     if out_dir is not None:
-        _write_run(assessment, out_dir)
+        _write_run(assessment, out_dir, built)
         # The geography half of the report model. Written beside assessment.json
         # because a report is rendered from the pair — provenance, licences and the
         # corridor's own geometry live here, and none of them survive in the panel.
@@ -612,6 +614,7 @@ def corridor(
         if built.snap_detail is not None:
             built.snap_detail.to_csv(out_dir / "snap_detail.csv", index=False)
         console.print(f"\n[dim]Run record and panel written to {out_dir}[/dim]")
+        console.print(f"[bold]Report:[/bold] {out_dir / REPORT_FILENAME}")
 
 
 def _fetch_from_osm(ref: str, bbox: str | None) -> list[tuple[float, float]]:
@@ -1740,11 +1743,17 @@ def _load(path: Path | None) -> Registry:
         raise typer.Exit(EXIT_REJECTED) from exc
 
 
-def _write_run(assessment: Assessment, out_dir: Path) -> None:
+def _write_run(
+    assessment: Assessment, out_dir: Path, built: object | None = None
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "assessment.json").write_text(
         json.dumps(assessment.as_dict(), indent=2, default=str), encoding="utf-8"
     )
+    # The report is written by --out rather than behind a flag of its own. A run
+    # directory a client cannot read is a run directory that needed one more
+    # command nobody ran.
+    write_report(build_run(assessment, built), out_dir / REPORT_FILENAME)
     # Both modes rank now, so this is written from the unified table rather than from
     # Mode B's index — a Mode A run used to produce no ranking.csv at all.
     if assessment.ranking is not None:

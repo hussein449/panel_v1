@@ -5,7 +5,122 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-20 (latest) — Step 4.2: one ranked table, and runs that break where the road breaks
+## 2026-08-20 (latest) — Step 4.3: something a client can actually read
+
+**Delivered:** the report. One HTML file, written beside the run, that opens by
+double-clicking it.
+
+```bash
+roadrisk corridor --demo --out run/
+# → run/report.html
+```
+
+### One renderer, and why it is not Jinja
+
+The original plan for this stage said *"same template serves the web page and the
+PDF"*, which assumed a Jinja template rendered in Python. Stage 5.3 is React. Those two
+together are **two renderers in two languages**, kept in visual sync by hand, drifting
+the first time either changes.
+
+So there is one renderer and it lives in the UI. `web/src/Report.tsx` is what a client
+reads on screen, what will print to PDF at 4.5, and what 5.3 imports as its report tab —
+not a copy of it. The JS toolchain arrives at 4.3 instead of 5.3, which is paying early
+rather than paying extra: Stage 5 was always going to need it.
+
+It takes a plain object and nothing else. No fetching, no routing, no engine types —
+everything it renders came out of `Assessment.as_dict()` and `CorridorPanel.as_dict()`,
+which is exactly what 4.1 built and why a run stored months ago renders identically
+today.
+
+### The report opens with nothing running
+
+That is the done-when for this step, and it is not an arbitrary bar. A corridor can be
+assessed with **no network and no API key**. A report that then needed a web server to
+be read would have put the network back into the one product that does without it.
+
+Two consequences, both forced:
+
+**The run is injected, not fetched.** A browser will not `fetch()` a local file —
+`file://` requests are blocked by CORS with no origin to grant one. So the payload is
+written *into* the document as a JSON script block and the page reads it out of its own
+DOM. `roadrisk.report.render_report` does the injection; the page does
+`getElementById("roadrisk-run")`.
+
+**Everything is inlined.** No stylesheet, no asset directory, no CDN — one file, 314 KB
+for the demo corridor. A report is a thing you email, and an emailed report that loses
+its formatting is not a deliverable. A test asserts there is not a single `<link>`
+element in the output, which also disarms the one piece of the bundle that can call
+`fetch` at all: Vite's module-preload polyfill walks `<link rel="modulepreload">` tags,
+and there are none.
+
+### Injection is the dangerous part, so it is the tested part
+
+A value containing `</script>` would end the block early and spill the rest of the run
+into the document as markup. In JSON a `<` can only ever appear inside a string literal,
+so escaping every one as `<` is both sufficient and lossless — a corridor genuinely
+named `</script><img src=x onerror=alert(1)>` survives the round trip intact and cannot
+break out. The payload is ASCII-only for the same reason: the document's encoding cannot
+change what the page parses.
+
+And a template that has drifted **fails loudly**. If the front end ever renames the
+placeholder, `render_report` raises rather than quietly handing a client a report with
+no run in it and a file picker where the numbers should be.
+
+### What is on the page
+
+Everything the CLI already prints, in the order a reader needs it rather than the order
+the engine computes it:
+
+- **The mode banner**, first thing, coloured, with the rung beside it
+- **Four headline tiles** — corridor length, segments, crashes, worst segment
+- **Receipts** — the refusal and the descent, in a box that cannot be scrolled past
+- **Where to look first** — blackspot runs with chainage extents, then the worst 20
+  segments with observed, expected and the 95% interval
+- **What the model found** — coefficients, with credible intervals substituted
+  automatically when a posterior is present, and the clustering note underneath
+- **Where every number came from** — one row per factor: source, tier, licence,
+  coverage, confidence, and who contested it
+- **The data this rests on** — the panel, and every crash the snapping dropped, by reason
+- **What was checked** — all nine gates and what each one means
+- **Credits and licensing** — the credit lines, and the share-alike sentence a client
+  redistributing the panel needs to have read
+
+Mode B's count columns are not rendered as dashes. The page reads `has_intervals` and
+omits the columns, because a column of dashes invites a reader to think a number was
+missing rather than never estimated.
+
+### Also
+
+- **The bundle is committed.** Installing this package never needs Node; only changing
+  the page does. `cd web && npm run build` rewrites
+  `src/roadrisk/report/static/index.html`.
+- **A fallback file picker.** Opened on its own, the bundle offers to read
+  `assessment.json` and `corridor.json` from disk, so a run directory without a
+  generated report is still readable. Nothing is uploaded — `FileReader` works where
+  `fetch` does not.
+- **`assess --out` writes a report too**, with the geography half absent. The page drops
+  the provenance and licensing sections rather than inventing them.
+
+**15 new tests, 701 passing.** The page's rendering was verified by opening the built
+file in a browser; what the suite pins is everything that would silently produce a
+report with no run in it.
+
+### Known, and deliberately left
+
+- **No figures.** No map, no CURE plots, no spline curves, no risk strip along the
+  chainage. Every one of those is a picture and pictures are 4.4. The corridor geometry
+  is already in the payload waiting for them.
+- **No print stylesheet.** Printing it today gives browser defaults. `@page`, the running
+  banner and the page counters are 4.5.
+- **No limitations page.** 4.6, and it will be generated from the run rather than
+  written into the layout.
+- **Light theme only, deliberately.** This is a document before it is a web page. A
+  report that changed colour with the reader's OS setting would print differently for
+  different people.
+
+---
+
+## 2026-08-20 — Step 4.2: one ranked table, and runs that break where the road breaks
 
 **Delivered:** the answer to the question a client actually asks. Not *"what are the
 coefficients"* — **which bit of road do I look at first, and is it one bad segment or a

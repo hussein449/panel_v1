@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Road risk assessment</title>
+  </head>
+  <body>
+    <!--
+      The run this page renders. The Python side replaces the `null` below with an
+      object holding the assessment and the corridor payloads, which is why the page
+      opens from disk with nothing running. Left as `null`, the page offers a file
+      picker instead, so the bundle is still usable on its own.
+    -->
+    <script id="roadrisk-run" type="application/json">null</script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
