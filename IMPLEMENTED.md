@@ -5,7 +5,134 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-19 (latest) — Step 3.3c: neighbours, not strangers. Stage 3 complete.
+## 2026-08-20 (latest) — Step 4.1: the report model, and the licence nobody reads
+
+**Delivered:** the seam between the engine and anything that renders it. Two payloads —
+`assessment.json` and `corridor.json` — that between them carry everything a report
+needs, and carry it as JSON rather than as Python.
+
+### Why this is a step and not plumbing
+
+`Assessment.as_dict()` has described itself as *"the shape the API and the report
+template consume"* since Stage 1. It was nearly true. Two things were missing, and both
+were the kind of missing that only shows up when something tries to consume it.
+
+**The geography did not serialise at all.** `CorridorPanel` had no `as_dict()`.
+`provenance` and `confidence` were DataFrame properties that reached a CSV or a terminal
+and nowhere else — so the report's central promise, *every factor with its source, tier,
+licence and confidence*, lived in a format no renderer could read. Licences were worse
+than absent: they were present, as prose inside adapter notes.
+
+**Mode A predicted nothing anyone could see.** `fitted_values` was on `FitResult` and was
+dropped by `_fit_as_dict`. Mode B has serialised its per-unit ranking since 1.4;
+Mode A's predictions existed only in memory, which is why 4.2 has nothing to rank yet.
+
+### What was built
+
+**`CorridorPanel.as_dict()`** — corridor, segmentation, panel summary, snap report,
+adapters with what each resolved and skipped, provenance, per-unit confidence, contested
+factors, scored disagreements, cache ages, warnings.
+
+Geometry is included, in WGS84 and GeoJSON's `(longitude, latitude)` order, because the
+corridor map is part of the report rather than a separate product and a consumer that has
+to reproject is a consumer that will eventually swap the pair. Coordinates are rounded to
+six decimals — about 0.1 m, finer than any centreline this tool consumes, and it keeps a
+long corridor's geometry from dominating the payload it travels in.
+
+**`predictions` on the Assessment** — one row per panel row: `unit_id`, `period`,
+`time_slot`, `observed`, `expected`, `exposure`. Keyed, because 4.2 ranks by unit and an
+unkeyed list of numbers is not something anything can group.
+
+Per-row rather than per-unit on purpose. Aggregation is 4.2's job; what belongs at this
+seam is the raw material, in the one form that cannot be reconstructed from anything else
+in the payload.
+
+**It refuses twice.** A fit that did not converge returns no predictions — a fitted value
+from a failed fit is not a prediction, and shipping it would let a report draw a corridor
+out of numbers the engine already refused. And if the fitted values ever fail to align
+with the panel's index, the answer is no predictions rather than NaN: `json.dumps` emits
+a bare `NaN` for those, which is not JSON at all, and the failure would surface as a
+report with holes in it rather than as an error.
+
+**Mode B still predicts nothing.** `predictions` is `None` there and serialises as
+`null`. A mode that has no predicted count must not acquire one by being serialised, and
+a test says so.
+
+### The attribution collector
+
+`roadrisk.geo.attribution` turns the licence riding on every `FactorValues` into the two
+sentences a client actually needs. The distinction is the entire point, and it is the one
+`Licence`'s own docstring has always made:
+
+- **Who must be credited in the report.** ODbL, CC-BY-SA and CC-BY-4.0 all require it.
+  A line of text discharges it.
+- **What happens if they redistribute the panel.** ODbL and CC-BY-SA impose share-alike
+  on a derived *database*. A report is not a database; the panel CSV is. A client who
+  publishes the panel inherits an obligation they will not have read about, and the only
+  defensible moment to say so is before they do.
+
+Collapsing the two into "attribution required" would understate the second. Treating
+every licence as share-alike would overstate the first — CC-BY-4.0 is a separate rung in
+the enum precisely so that it is not read as CC-BY-SA.
+
+Two smaller decisions:
+
+- **A rejected source is owed nothing.** Fusion's loser never reached the report, so it
+  creates no obligation. Only the value that won is counted.
+- **An unrecognised licence fails safe.** It is reported as unrecognised, marked as
+  requiring credit, and told to check its terms — never quietly treated as permissive.
+
+Where an adapter attached explicit credit text — the Copernicus DEM and ESA WorldCover
+both do, as notes prefixed `ATTRIBUTION REQUIRED.` — that exact wording travels through
+to the credit line instead of being reconstructed here from an adapter's name.
+
+### The test that is the deliverable
+
+`json.dumps(payload, default=str)` is not a check. It is a way of hiding a DataFrame, an
+enum or a Timestamp by stringifying it, after which the report is reading a repr and
+nobody notices. So the payloads are walked instead, asserting every leaf is a JSON
+primitive and naming the path of the first that is not.
+
+Both payloads pass with no `default=` escape hatch. The done-when is then written as the
+thing a renderer actually does: dump both to disk, read them back, and assert the report
+is reachable with no engine object anywhere in scope.
+
+### Also
+
+`roadrisk corridor --out` now writes `corridor.json` beside `assessment.json`. Without it
+the payload existed and nothing emitted it.
+
+**24 new tests, 662 passing.** A demo corridor produces a 155 KB `corridor.json` and a
+129 KB `assessment.json`; the corridor's own centreline geometry is the largest single
+item in either.
+
+### Known, and deliberately left
+
+- **Nothing ranks yet.** `predictions` is per-row raw material. Ranking, blackspot
+  aggregation and the constraint that Mode B rows carry no interval are 4.2.
+
+---
+
+### Fixed on the way past: the banner could not be redirected
+
+Found while running the CLI end to end for this step, and pre-existing. The mode banner
+carries a coloured circle and the receipts carry arrows and sigmas. When stdout is a
+terminal, Python writes through the Windows console API and all of it survives. Redirect
+it — `roadrisk corridor > report.txt`, a CI log, a worker capturing its child — and
+Python drops to the locale encoding instead, cp1252 on a Western Windows install, and the
+first emoji raises `UnicodeEncodeError` part-way through printing the assessment.
+
+Losing a whole run because a character would not fit the log it was being written into is
+not a trade anyone would choose. The CLI now reconfigures both streams to UTF-8 at
+startup, falling back to `errors="replace"` for a stream that cannot be reconfigured, so
+the floor is a substituted character rather than an exception.
+
+Invisible to the suite until now because Typer's runner captures output differently from
+a real redirect, so the three new tests exercise the reconfiguration directly.
+
+---
+
+## 2026-08-19 — Step 3.3c: neighbours, not strangers. Stage 3 complete.
 
 **Delivered:** a Leroux CAR field over the corridor chain, fitted by a joint Laplace
 approximation over the latent field, reporting ρ with a credible interval — and saying

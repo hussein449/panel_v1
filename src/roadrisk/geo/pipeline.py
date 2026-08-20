@@ -46,6 +46,7 @@ from roadrisk.geo.adapters import (
     read_client_values,
     read_tags,
 )
+from roadrisk.geo.attribution import AttributionReport, collect_attributions
 from roadrisk.geo.cache import Cache, CacheReport, NullCache
 from roadrisk.geo.cache import collect_notes as collect_cache_notes
 from roadrisk.geo.cached import cached_mapillary, cached_overpass
@@ -130,6 +131,133 @@ class CorridorPanel:
             f"{self.total_crashes:,} crashes, "
             f"{self.zero_crash_rows:,} zero-crash rows"
         )
+
+    @property
+    def attribution(self) -> AttributionReport:
+        """Who must be credited, and what redistributing the panel would cost."""
+        return collect_attributions(self.fusion)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialisable form. The geography half of what the report consumes.
+
+        The counterpart to :meth:`roadrisk.core.Assessment.as_dict`. Together the two
+        carry everything a report needs, which is the point: a report rendered from
+        these two payloads never holds a Python object, so a run stored today can be
+        re-rendered tomorrow without refitting anything.
+
+        Geometry is included in WGS84 — ``(longitude, latitude)`` pairs, GeoJSON's
+        order — because the corridor map is part of the report rather than a separate
+        product, and a consumer that has to reproject is a consumer that will get it
+        wrong.
+        """
+        return {
+            "corridor": {
+                "name": self.corridor.name,
+                "length_m": round(self.corridor.length_m, 3),
+                "length_km": round(self.corridor.length_km, 4),
+                "epsg": self.corridor.epsg,
+                "self_intersecting": self.corridor.self_intersecting,
+                "warnings": list(self.corridor.warnings),
+                "geometry": _linestring(self.corridor.wgs84),
+            },
+            "segmentation": {
+                "n_units": self.n_units,
+                "target_length_m": self.segmentation.target_length_m,
+                "total_length_km": round(self.segmentation.total_length_km, 4),
+                "units": [
+                    {
+                        "unit_id": unit.unit_id,
+                        "index": unit.index,
+                        "start_m": round(unit.start_m, 3),
+                        "end_m": round(unit.end_m, 3),
+                        "length_m": round(unit.length_m, 3),
+                        "midpoint_m": round(unit.midpoint_m, 3),
+                        "geometry": _linestring(
+                            self.corridor.projector.to_wgs84(unit.geometry)
+                        ),
+                    }
+                    for unit in self.segmentation.units
+                ],
+            },
+            "panel": {
+                "rows": self.n_rows,
+                "units": self.n_units,
+                "total_crashes": self.total_crashes,
+                "zero_crash_rows": self.zero_crash_rows,
+                "factor_columns": list(self.factor_columns),
+            },
+            "snap": (
+                {
+                    "n_supplied": self.snap.n_supplied,
+                    "n_snapped": self.snap.n_snapped,
+                    "n_dropped": self.snap.n_dropped,
+                    "snap_rate": round(self.snap.snap_rate, 4),
+                    "dropped_reasons": dict(self.snap.dropped_reasons),
+                }
+                if self.snap is not None
+                else None
+            ),
+            "adapters": [
+                {
+                    "name": result.name,
+                    "resolved": [values.factor for values in result.resolved],
+                    "skipped": [
+                        {
+                            "factor": skip.factor,
+                            "adapter": skip.adapter,
+                            "reason": skip.reason,
+                        }
+                        for skip in result.skipped
+                    ],
+                    "notes": list(result.notes),
+                }
+                for result in self.adapters
+            ],
+            "provenance": self.provenance.to_dict("records"),
+            "confidence": self.confidence.to_dict("records"),
+            "contested": list(self.contested),
+            "disagreements": [
+                {
+                    "factor": agreement.factor,
+                    "column": agreement.column,
+                    "chosen": agreement.chosen,
+                    "challenger": agreement.challenger,
+                    "n_compared": agreement.n_compared,
+                    "n_agreeing": agreement.n_agreeing,
+                    "score": agreement.score,
+                    "mean_absolute_difference": agreement.mean_absolute_difference,
+                    "max_absolute_difference": agreement.max_absolute_difference,
+                    "correlation": agreement.correlation,
+                    "disagreeing_units": list(agreement.disagreeing_units),
+                    "note": agreement.note,
+                }
+                for agreement in self.fusion.disagreements
+            ],
+            "attribution": self.attribution.as_dict(),
+            "cache": {
+                "hits": self.cache.hits,
+                "misses": self.cache.misses,
+                "used": self.cache.used,
+                "oldest_days": round(self.cache.oldest_days, 2),
+                "notes": self.cache.notes(),
+                "ages": [
+                    {"source": source, "age_days": round(age, 2), "fetched_on": on}
+                    for source, age, on in self.cache.ages
+                ],
+            },
+            "fusion_notes": list(self.fusion.notes),
+            "warnings": list(self.warnings),
+        }
+
+
+def _linestring(geometry: Any) -> list[list[float]]:
+    """A shapely line as GeoJSON-ordered coordinate pairs.
+
+    Six decimal places is about 0.1 m at the equator — finer than any centreline this
+    tool consumes, and it keeps a 200-unit corridor's geometry from dominating the
+    payload it travels in.
+    """
+    return [[round(x, 6), round(y, 6)] for x, y in geometry.coords]
 
 
 def build_corridor_panel(

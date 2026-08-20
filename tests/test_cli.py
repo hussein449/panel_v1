@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sys
+
 from typer.testing import CliRunner
 
-from roadrisk.cli import app
+from roadrisk.cli import _make_output_utf8_safe, app
 from roadrisk.geo.corridor import CENTRELINE_GUIDANCE
 
 runner = CliRunner()
@@ -54,3 +56,51 @@ class TestCorridorCommand:
         result = runner.invoke(app, ["corridor", "--demo", "--periods", "6"])
         assert "Snapped" in result.output
         assert "Dropped" in result.output
+
+
+class TestRedirectedOutput:
+    """A run must not die because the log it is being written into is cp1252.
+
+    The mode banner carries a coloured circle and the receipts carry arrows and
+    sigmas. Redirected — a CI log, a worker capturing its child, `> report.txt` —
+    Python drops from the Windows console API to the locale encoding, and the first
+    emoji raises UnicodeEncodeError part-way through printing an assessment.
+    """
+
+    def test_streams_are_reconfigured_to_utf8(self, monkeypatch) -> None:
+        calls: list[dict] = []
+
+        class Stream:
+            def reconfigure(self, **kwargs: object) -> None:
+                calls.append(kwargs)
+
+        monkeypatch.setattr(sys, "stdout", Stream())
+        monkeypatch.setattr(sys, "stderr", Stream())
+
+        _make_output_utf8_safe()
+
+        assert calls == [{"encoding": "utf-8"}, {"encoding": "utf-8"}]
+
+    def test_a_stream_that_refuses_utf8_degrades_instead_of_raising(
+        self, monkeypatch
+    ) -> None:
+        calls: list[dict] = []
+
+        class AwkwardStream:
+            def reconfigure(self, **kwargs: object) -> None:
+                calls.append(kwargs)
+                if "encoding" in kwargs:
+                    raise ValueError("cannot reconfigure encoding")
+
+        monkeypatch.setattr(sys, "stdout", AwkwardStream())
+        monkeypatch.setattr(sys, "stderr", AwkwardStream())
+
+        _make_output_utf8_safe()  # must not raise
+
+        assert {"errors": "replace"} in calls
+
+    def test_a_stream_without_reconfigure_is_left_alone(self, monkeypatch) -> None:
+        monkeypatch.setattr(sys, "stdout", object())
+        monkeypatch.setattr(sys, "stderr", object())
+
+        _make_output_utf8_safe()  # must not raise

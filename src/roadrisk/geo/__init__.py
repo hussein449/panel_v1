@@ -37,6 +37,11 @@ from roadrisk.geo.adapters import (
     provenance_frame,
     read_client_values,
 )
+from roadrisk.geo.attribution import (
+    AttributionReport,
+    Obligation,
+    collect_attributions,
+)
 from roadrisk.geo.cache import Cache, CacheReport, FileCache, NullCache, quantise_bbox
 from roadrisk.geo.corridor import Corridor
 from roadrisk.geo.crs import Projector, utm_epsg_for
@@ -54,6 +59,7 @@ from roadrisk.geo.snapping import SnapOutcome, apply_counts, snap_crashes
 
 __all__ = [
     "AdapterResult",
+    "AttributionReport",
     "Cache",
     "CacheReport",
     "Confidence",
@@ -66,6 +72,7 @@ __all__ = [
     "FusionResult",
     "GeoError",
     "NullCache",
+    "Obligation",
     "OsmExtract",
     "PointSampler",
     "Projector",
@@ -77,6 +84,7 @@ __all__ = [
     "Unit",
     "apply_counts",
     "attach_factor_values",
+    "collect_attributions",
     "build_corridor_panel",
     "build_skeleton",
     "compute_curvature",

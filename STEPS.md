@@ -641,11 +641,72 @@ GLMM belongs there, where it is paid for once and reported properly.
 
 ## Stage 4 — Report
 
+**Re-scoped deliberately.** The original 4.1 said *"same template serves the web page and
+the PDF"* and assumed a Jinja template rendered in Python. With **5.3** in React, that is
+two renderers in two languages, kept in visual sync by hand, forever. The report and the
+UI would drift the first time either of them changed.
+
+So there is one renderer, and it lives in the UI. The PDF is a print stylesheet over the
+same route, not a second pipeline. WeasyPrint is gone — it cannot render the thing the
+client will actually be looking at.
+
+**The contract is JSON.** `Assessment.as_dict()` already calls itself *"the shape the API
+and the report template consume"*; this stage finishes that promise and then holds the
+line. Nothing renders from a live Python object, so a stored run can be re-rendered
+without a refit, and the same payload feeds **5.1** and **5.3** unchanged.
+
 | | Step | Deliverable | Done when |
 |---|---|---|---|
-| `[ ]` | **4.1** Report template | Jinja HTML — method, mode, factors with source/tier/licence/confidence | Same template serves the web page and the PDF |
-| `[ ]` | **4.2** PDF export | WeasyPrint, branded | Every number traceable to a source in the document |
-| `[ ]` | **4.3** Limitations page | Data sources, dropped terms, unvalidated assumptions, what it does not cover | Cannot be disabled by config |
+| `[x]` | **4.1** Report model | `CorridorPanel.as_dict()`, the fitted values the serialised fit currently drops, and an attribution collector that separates report-attribution from database share-alike | A report renders from `assessment.json` + `corridor.json` alone, with no engine object in scope ✅ |
+| `[ ]` | **4.2** Rank and blackspots | One ranking surface for both modes — Mode A by predicted rate with its interval, Mode B by index score — and contiguous runs aggregated into blackspots with chainage extents | Both modes produce the same-shaped table; a blackspot never spans a chainage gap; Mode B rows carry no count and no interval |
+| `[ ]` | **4.3** Report page | React view over the JSON — method, mode banner, factors with source/tier/licence/confidence, ranked units, receipts. A standalone bundle that loads a run from disk | Opens a run written by `roadrisk corridor --out` with no server running |
+| `[ ]` | **4.4** Figures | Spline curves, CURE plots, calibration and a risk strip along chainage, as SVG over the curve data already in the JSON | No external image request anywhere in the page |
+| `[ ]` | **4.5** PDF export | `@media print` and `@page` over the same route — banner on every page, page counters, no orphaned tables | The exported PDF and the screen are the same document, and every number in it is traceable to a source |
+| `[ ]` | **4.6** Limitations page | Generated from the run, not written into the layout: dropped terms, failed checks, missing factors, Tier B caveats, the `speed_limit` and HSM caveats, Mode B's ranking-only status, corridor count, crash-mix defaults, cache age | Cannot be disabled by config — no flag removes it, and a test that tries every way to suppress it still finds it |
+| `[ ]` | **4.7** CLI seam | `roadrisk corridor --report`, and `--bayes` / `--priors` / `--spatial` wired through `corridor` | `roadrisk corridor --demo --bayes --report out/` goes from coordinates to a readable report in one command |
+
+### 4.3 — one renderer, built early rather than twice
+
+The page is written in React from the start and graduates into **5.3** as the report tab.
+That pulls a JS toolchain into the repository at 4.3 instead of 5.3, which is paying
+early, not paying extra — Stage 5 is on the roadmap either way. What it buys is that the
+client's report and the client's screen can never disagree, because they are the same
+component tree.
+
+Until **5.1** exists the bundle is static and reads a run from disk, which is also how it
+stays honest to the rest of this project: a corridor assessed offline, with no network
+and no API key, still produces something a client can open.
+
+### 4.5 — the PDF is a stylesheet, not a pipeline
+
+Measured on the development machine, 2026-08-20, so that it is not re-litigated later:
+
+- **Headless Chrome renders it.** `@page` margin boxes, `counter(page)` / `counter(pages)`
+  and inline SVG all work — the mode banner repeated on all three pages of a test
+  document. Chrome and Edge are both already installed.
+- **`string-set` is not supported, and is not needed.** One report is one mode, so the
+  banner is constant for the whole document and is written into the `@page` rule directly.
+  Running headers only need `string-set` when they change per page; this one does not.
+- **WeasyPrint could not load at all** — no GTK runtime present, and a partial
+  `libgobject-2.0-0.dll` on `PATH` from an unrelated install is picked up first. Moot now:
+  it cannot render a React page regardless.
+- `--no-pdf-header-footer` is silently ignored. The flag is `--print-to-pdf-no-header`,
+  and without it Chrome stamps a date and a URL on every page.
+
+Client-side export is the browser's own print dialogue and needs no infrastructure at all.
+Server-side generation — for a run that has to be stored or emailed — is headless Chrome
+against the same route, producing the same document.
+
+### 4.6 — the limitations page is data
+
+It is assembled from what the run actually did. Most of it is already on `as_dict()`:
+`checks`, `factors.missing`, `factors.dropped_for_collinearity`, `receipts`, `validation`,
+`context.crash_mix_is_default`. The two standing caveats from **Open decisions** — posted
+speed standing in for operating speed, and the unpinned HSM edition — are registry-level
+and come from [`docs/WEIGHTS.md`](docs/WEIGHTS.md).
+
+Written as prose in the layout it becomes a thing that can be quietly edited out. Written
+as data, removing it is a code change with a failing test attached.
 
 ---
 
@@ -657,7 +718,7 @@ GLMM belongs there, where it is paid for once and reported properly.
 |---|---|---|---|
 | `[ ]` | **5.1** FastAPI | Project CRUD, job submit, result read | OpenAPI schema generated from the registry |
 | `[ ]` | **5.2** Celery worker | Pipeline as a chord: fan-out adapters, join, fit | Per-project spend cap enforced in the runner |
-| `[ ]` | **5.3** Next.js + MapLibre | Corridor map, ranked units, factor provenance, mode banner | Mode banner unmissable on every screen |
+| `[ ]` | **5.3** Next.js + MapLibre | Corridor map, ranked units, factor provenance, mode banner. The report page from **4.3** becomes the report tab — imported, not rebuilt | Mode banner unmissable on every screen |
 | `[ ]` | **5.4** Accounts + storage | Supabase auth, saved projects, corridor comparison | Two tenants cannot see each other's runs |
 
 ---

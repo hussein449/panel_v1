@@ -19,7 +19,10 @@ import pandas as pd
 from roadrisk.core.context import RunContext
 from roadrisk.core.contract import (
     CRASH_COLUMN,
+    EXPOSURE_COLUMN,
     LOG_EXPOSURE_COLUMN,
+    PERIOD_COLUMN,
+    TIME_SLOT_COLUMN,
     UNIT_COLUMN,
     ContractReport,
     prepare_panel,
@@ -113,6 +116,11 @@ class Assessment:
     posterior_spatial: PosteriorFit | None = None
     spatial: SpatialReport | None = None
 
+    #: One row per panel row: what was observed, what the model expects, and the
+    #: exposure it was expected over. Mode A only — Mode B has no predicted count and
+    #: never acquires one by being serialised.
+    predictions: pd.DataFrame | None = None
+
     @property
     def is_mode_a(self) -> bool:
         return self.mode is Mode.A
@@ -180,6 +188,14 @@ class Assessment:
                 "in_model": self.factor_names,
             },
             "fit": _fit_as_dict(self.fit),
+            # Per-row, not per-unit. Ranking and blackspot aggregation are 4.2's job;
+            # what belongs here is the raw material they need, in the one form that
+            # cannot be reconstructed from anything else in this payload.
+            "predictions": (
+                self.predictions.to_dict("records")
+                if self.predictions is not None
+                else None
+            ),
             "index": _index_as_dict(self.index),
             "sign_guard": _sign_guard_as_dict(self.sign_guard),
             # Under "reference", never under "fit". The brief files rung 3 as reference
@@ -431,6 +447,7 @@ def assess(
         fit=ladder.fit,
         sign_guard=sign_guard,
         descent_receipt=descent_receipt,
+        predictions=_predictions(prepared, ladder.fit),
         validation=_validate(
             counts=counts,
             design=design[[f.name for f in ladder.factors]],
@@ -469,6 +486,42 @@ def assess(
 
 
 # ---- internals ---------------------------------------------------------------
+
+
+def _predictions(prepared: pd.DataFrame, fit: FitResult) -> pd.DataFrame | None:
+    """Observed against expected, one row per panel row, keyed by unit and period.
+
+    ``fitted_values`` is indexed by the design's index, which is the prepared panel's
+    index, so the join is positional-safe rather than assumed. Without the keys the
+    numbers are a bare list nothing downstream can group, which is why they were not
+    worth serialising before and are now.
+
+    Returns ``None`` when the fit did not converge — a fitted value from a fit that
+    failed is not a prediction, and shipping it would let a report draw a corridor
+    from numbers the engine already refused.
+    """
+    if fit.fitted_values is None or not fit.converged:
+        return None
+
+    fitted = fit.fitted_values.reindex(prepared.index)
+    if fitted.isna().any():
+        # `build_design` preserves the panel's index, so this should not happen. If it
+        # ever does, the rows no longer line up and the honest answer is no predictions
+        # — a NaN here would reach the report as invalid JSON and draw a corridor with
+        # holes in it.
+        return None
+
+    frame = pd.DataFrame(
+        {
+            UNIT_COLUMN: prepared[UNIT_COLUMN].to_numpy(),
+            PERIOD_COLUMN: prepared[PERIOD_COLUMN].to_numpy(),
+            TIME_SLOT_COLUMN: prepared[TIME_SLOT_COLUMN].to_numpy(),
+            "observed": prepared[CRASH_COLUMN].to_numpy(),
+            "expected": fitted.to_numpy(dtype=float).round(6),
+            EXPOSURE_COLUMN: prepared[EXPOSURE_COLUMN].to_numpy(dtype=float).round(6),
+        }
+    )
+    return frame
 
 
 def _validate(

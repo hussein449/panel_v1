@@ -8,7 +8,9 @@ information — this is where the shape of it gets decided.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -33,6 +35,36 @@ from roadrisk.core.registry import (
     Severity,
     load_registry,
 )
+
+
+def _make_output_utf8_safe() -> None:
+    """Stop a redirected Windows console from killing the run over a character.
+
+    The mode banner is deliberately unmissable, which means it carries a coloured
+    circle, and the receipts carry arrows, sigmas and em dashes. When stdout is a
+    terminal, Python writes to the Windows console API and all of that survives. When
+    it is redirected — ``roadrisk corridor > report.txt``, a CI log, a Celery worker
+    capturing its child — Python falls back to the locale encoding instead, which on a
+    Western Windows install is cp1252, and the first emoji raises
+    ``UnicodeEncodeError`` part-way through printing.
+
+    Losing a whole assessment because a character would not fit the log it was being
+    written into is not a trade anyone would choose. UTF-8 first, since it is what the
+    text actually is; ``replace`` as the floor, so a stream that cannot be reconfigured
+    degrades to a substituted character rather than an exception.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # pragma: no cover - not a text stream
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (ValueError, OSError):  # pragma: no cover - exotic stream
+            with contextlib.suppress(ValueError, OSError):
+                reconfigure(errors="replace")
+
+
+_make_output_utf8_safe()
 
 app = typer.Typer(
     add_completion=False,
@@ -567,6 +599,12 @@ def corridor(
 
     if out_dir is not None:
         _write_run(assessment, out_dir)
+        # The geography half of the report model. Written beside assessment.json
+        # because a report is rendered from the pair — provenance, licences and the
+        # corridor's own geometry live here, and none of them survive in the panel.
+        (out_dir / "corridor.json").write_text(
+            json.dumps(built.as_dict(), indent=2), encoding="utf-8"
+        )
         built.panel.to_csv(out_dir / "panel.csv", index=False)
         built.provenance.to_csv(out_dir / "provenance.csv", index=False)
         built.confidence.to_csv(out_dir / "confidence.csv", index=False)
