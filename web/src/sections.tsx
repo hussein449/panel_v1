@@ -1,4 +1,11 @@
 import type { Assessment, Corridor, Ranking, Run } from "./types";
+import {
+  CalibrationBars,
+  CorridorMap,
+  CurePlot,
+  RiskStrip,
+  SplineCurve,
+} from "./figures";
 import { count, decimal, extent, percent, shorten, signed, significant } from "./format";
 
 /** A titled block. Every section is one, so the print rules have one thing to target. */
@@ -119,7 +126,13 @@ export function Headline({ run }: { run: Run }) {
  * omit them because they are empty — it omits them because it does not estimate a
  * count, and a column of dashes would invite the reader to think one was missing.
  */
-export function RankingSection({ ranking }: { ranking: Ranking }) {
+export function RankingSection({
+  ranking,
+  corridor,
+}: {
+  ranking: Ranking;
+  corridor: Corridor | null;
+}) {
   const withCounts = ranking.has_intervals;
   const top = ranking.units.slice(0, 20);
 
@@ -129,6 +142,13 @@ export function RankingSection({ ranking }: { ranking: Ranking }) {
       title="Where to look first"
       lead={`Ranked on ${ranking.basis}.`}
     >
+      {corridor ? (
+        <>
+          <RiskStrip ranking={ranking} corridor={corridor} />
+          <CorridorMap ranking={ranking} corridor={corridor} />
+        </>
+      ) : null}
+
       {ranking.blackspots.length > 0 ? (
         <>
           <h3>
@@ -500,6 +520,103 @@ export function PanelSection({ run }: { run: Run }) {
           </table>
         </>
       ) : null}
+    </Section>
+  );
+}
+
+/**
+ * Out-of-sample validation, reported by default and including when it fails.
+ *
+ * There is no flag that turns this on and none that turns it off. A model that cannot
+ * predict road it has not seen is a finding the report carries, not a computation the
+ * caller may decline.
+ */
+export function ValidationSection({ assessment }: { assessment: Assessment }) {
+  const validation = assessment.validation;
+  if (!validation) return null;
+
+  if (!validation.available) {
+    return (
+      <Section id="validation" title="Does it predict road it has not seen?">
+        <p className="caveat">
+          {validation.refusal ??
+            "This corridor is too small to hold out a piece of and still fit the rest."}
+        </p>
+      </Section>
+    );
+  }
+
+  const calibrations = [
+    validation.spatial ? { label: "held-out stretches", calibration: validation.spatial } : null,
+    validation.random ? { label: "random split", calibration: validation.random } : null,
+  ].filter((item): item is { label: string; calibration: NonNullable<typeof item>["calibration"] } =>
+    item !== null,
+  );
+
+  return (
+    <Section
+      id="validation"
+      title="Does it predict road it has not seen?"
+      lead="The model is refitted with stretches of the corridor held back, then asked to predict them. Reported whatever the answer is."
+    >
+      <p>
+        {validation.passed
+          ? "The model predicts held-out road at close to the right level."
+          : "The model does not predict held-out road well. Treat the ranking as indicative and the counts as weak."}
+      </p>
+
+      <CalibrationBars calibrations={calibrations} />
+
+      {validation.optimism !== null ? (
+        <p className="footnote">
+          A random split flatters the model by {percent(Math.abs(validation.optimism), 1)}{" "}
+          relative to holding out contiguous road — which is why the spatial split is
+          the one to read.
+        </p>
+      ) : null}
+
+      {validation.cure.length > 0 ? (
+        <>
+          <h3>Cumulative residuals</h3>
+          <div className="figures">
+            {validation.cure.map((cure) => (
+              <CurePlot cure={cure} key={cure.factor} />
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {validation.notes.map((note) => (
+        <p className="caveat" key={note}>
+          {note}
+        </p>
+      ))}
+    </Section>
+  );
+}
+
+/**
+ * Reference material, kept apart from everything above it.
+ *
+ * The brief files the spline as reference only — never in the client report. It is
+ * here because hiding a diagnostic is worse than labelling one, and the label is the
+ * point: nothing in this section is a number to act on.
+ */
+export function ReferenceSection({ assessment }: { assessment: Assessment }) {
+  const shapes = (assessment.reference?.shapes ?? []).filter((shape) => shape.curve);
+  if (shapes.length === 0) return null;
+
+  return (
+    <Section
+      id="reference"
+      title="Reference — diagnostics, not findings"
+      lead="These say what shape a relationship has. They do not produce an effect size, and nothing here should be quoted as one."
+    >
+      <div className="figures">
+        {shapes.map((shape) => (
+          <SplineCurve shape={shape} key={shape.factor} />
+        ))}
+      </div>
     </Section>
   );
 }

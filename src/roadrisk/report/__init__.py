@@ -21,6 +21,7 @@ deliverable.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -126,13 +127,40 @@ def _script_block(run: Mapping[str, Any]) -> str:
     one of them as ``\\u003c`` is both sufficient and lossless: a corridor named
     ``</script>`` survives the round trip and cannot end the block early. ASCII-only
     output means the document's encoding cannot change what the page parses either.
+
+    ``allow_nan=False`` is the belt to :func:`_finite`'s braces. Python writes ``NaN``
+    and ``Infinity`` as bare tokens, which JavaScript's ``JSON.parse`` rejects — and
+    the failure is silent in the worst possible way, because the page cannot tell an
+    unparseable run from an absent one, so it quietly offers a file picker where the
+    report should be. Sanitising first and then refusing to serialise anything
+    non-finite means that cannot reach a client.
     """
-    payload = json.dumps(run, ensure_ascii=True, separators=(",", ":"))
+    payload = json.dumps(
+        _finite(run), ensure_ascii=True, separators=(",", ":"), allow_nan=False
+    )
     return (
         '<script id="roadrisk-run" type="application/json">'
         + payload.replace("<", "\\u003c")
         + "</script>"
     )
+
+
+def _finite(value: Any) -> Any:
+    """Replace every non-finite float with ``null``, recursively.
+
+    A ``NaN`` arriving here is not a corrupt payload — it is a quantity that genuinely
+    could not be computed, such as a mean deviation over folds that produced nothing.
+    JSON has a word for that and it is ``null``, which the page already renders as an
+    absent value. Losing a whole report over one uncomputable diagnostic would be the
+    worse trade by a distance.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        return {key: _finite(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_finite(item) for item in value]
+    return value
 
 
 __all__ = [

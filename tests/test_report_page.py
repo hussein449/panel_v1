@@ -144,6 +144,25 @@ class TestSelfContained:
         assert 'getElementById("roadrisk-run")' in report_html
 
 
+class TestNeverBlank:
+    """A report that fails must say it failed.
+
+    Every pixel is drawn by JavaScript, so anywhere scripts do not run — a sandboxed
+    preview pane, an email viewer, a locked-down browser — an empty root would be a
+    blank white page telling the reader nothing at all.
+    """
+
+    def test_the_root_is_not_empty_before_scripts_run(self, report_html: str) -> None:
+        assert '<div id="root"></div>' not in report_html
+        assert "needs JavaScript to draw itself" in report_html
+
+    def test_the_fallback_says_what_to_do_about_it(self, report_html: str) -> None:
+        assert "open it in a web browser" in report_html
+        # And where the same numbers are, for a reader who cannot.
+        assert "assessment.json" in report_html
+        assert "ranking.csv" in report_html
+
+
 class TestModeBStaysModeB:
     def test_no_count_reaches_the_page(
         self, starved_panel: pd.DataFrame, sourced_registry: Registry
@@ -184,3 +203,100 @@ class TestWrittenToDisk:
         report = tmp_path / REPORT_FILENAME
         assert report.exists()
         assert embedded(report.read_text(encoding="utf-8"))["assessment"]["banner"]
+
+
+class TestFiguresHaveSomethingToDraw:
+    """Step 4.4 — the figures are SVG over arrays already in the payload.
+
+    Python cannot render React, so what is pinned here is the contract the figures
+    draw from. A missing array is a blank rectangle in front of a client, and it
+    would otherwise only be discovered by looking.
+    """
+
+    def test_the_strip_and_map_have_per_unit_geometry(self, report_html: str) -> None:
+        units = embedded(report_html)["corridor"]["segmentation"]["units"]
+
+        assert units
+        for unit in units:
+            assert unit["start_m"] < unit["end_m"]
+            assert len(unit["geometry"]) > 1
+            longitude, latitude = unit["geometry"][0]
+            assert -180 <= longitude <= 180
+            assert -90 <= latitude <= 90
+
+    def test_the_ranking_carries_a_percentile_for_every_unit(
+        self, report_html: str
+    ) -> None:
+        """The strip and the map colour by percentile, so every unit needs one."""
+        for unit in embedded(report_html)["assessment"]["ranking"]["units"]:
+            assert 0.0 <= unit["percentile"] <= 1.0
+
+    def test_cure_curves_carry_their_bounds(self, rich_panel: pd.DataFrame) -> None:
+        validation = embedded(
+            render_report(build_run(assess(rich_panel), None))
+        )["assessment"]["validation"]
+
+        assert validation["cure"]
+        for cure in validation["cure"]:
+            assert len(cure["x"]) == len(cure["cumulative"]) == len(cure["bound"])
+            assert len(cure["x"]) > 1
+
+    def test_a_requested_spline_carries_its_curve(self, rich_panel: pd.DataFrame) -> None:
+        assessment = assess(rich_panel, shape_factors=["curve_density"])
+        shapes = embedded(render_report(build_run(assessment, None)))["assessment"][
+            "reference"
+        ]["shapes"]
+
+        assert shapes
+        curve = shapes[0]["curve"]
+        assert len(curve["x"]) == len(curve["y"]) == len(curve["lower"])
+        assert all(lo <= hi for lo, hi in zip(curve["lower"], curve["upper"], strict=True))
+
+    def test_no_figure_asks_the_network_for_an_image(self, report_html: str) -> None:
+        """The done-when for 4.4. Every mark is drawn, none is fetched."""
+        assert "<img" not in report_html
+        assert "url(http" not in report_html
+
+
+class TestNonFiniteNumbers:
+    """`NaN` in the payload is the failure that looks like nothing being wrong.
+
+    Python writes it as a bare `NaN` token, which JavaScript's `JSON.parse` rejects.
+    The page cannot tell an unparseable run from an absent one, so it quietly shows a
+    file picker where the report should be — a blank-looking report with no error.
+    """
+
+    def test_a_nan_becomes_null_rather_than_breaking_the_page(self) -> None:
+        html = render_report(
+            {"assessment": {"banner": "x", "deviation": float("nan")}}
+        )
+
+        assert embedded(html)["assessment"]["deviation"] is None
+
+    def test_infinities_are_nulled_too(self) -> None:
+        html = render_report(
+            {"assessment": {"a": float("inf"), "b": float("-inf")}}
+        )
+        run = embedded(html)
+
+        assert run["assessment"]["a"] is None
+        assert run["assessment"]["b"] is None
+
+    def test_nested_non_finite_values_are_reached(self) -> None:
+        html = render_report(
+            {"assessment": {"cure": [{"bound": [1.0, float("nan"), 3.0]}]}}
+        )
+
+        assert embedded(html)["assessment"]["cure"][0]["bound"] == [1.0, None, 3.0]
+
+    def test_a_real_run_parses_under_a_strict_json_reader(
+        self, report_html: str
+    ) -> None:
+        """`json.loads` accepts `NaN` by default; a browser never does."""
+        match = RUN_BLOCK.search(report_html)
+        assert match is not None
+
+        def refuse(constant: str) -> None:
+            raise AssertionError(f"{constant} is not valid JSON")
+
+        json.loads(match.group(1), parse_constant=refuse)

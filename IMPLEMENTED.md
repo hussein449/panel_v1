@@ -5,7 +5,101 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-20 (latest) — Step 4.3: something a client can actually read
+## 2026-08-20 (latest) — Step 4.4: pictures, and three ways a report can go blank
+
+**Delivered:** the figures. A risk strip along the chainage, the corridor in plan, CURE
+plots, calibration bars and the spline diagnostic — all SVG, all drawn from arrays that
+were already in the payload.
+
+And three separate bugs found by *opening the thing and looking at it*, each of which
+turned a complete assessment into a blank or near-blank page.
+
+### The figures
+
+| Figure | What it answers |
+|---|---|
+| **Risk strip** | Where along this road is the problem, and is it one place or several |
+| **Corridor map** | The same, on the shape of the actual road |
+| **CURE plots** | Is any factor entered in the wrong shape |
+| **Calibration** | Does the model get the level right on road it did not see |
+| **Spline** | What shape a relationship has — filed under reference, never a finding |
+
+No plotting library, no image requests, nothing fetched. A test asserts there is not one
+`<img>` in the document: a figure that needed a CDN would be a blank rectangle in an
+emailed report, which is the one thing this page exists to survive.
+
+### The colour scale was computed, not chosen
+
+Risk is a magnitude, so it gets a **sequential ramp — one hue, light to dark**. Never a
+rainbow, never a categorical palette pressed into service as a value scale.
+
+The six steps were run through a validator rather than eyeballed, and the first four
+candidates **failed**: the pale end sat at 1.22:1, then 1.52, then 1.65, then 2.00
+against a white page — below the 2:1 floor at which a mark stops reading as a mark. The
+shipped ramp starts at `#e9a468` (2.11:1) and passes every check: monotone lightness,
+visible gaps between steps, hue spread 18°. Because it varies by lightness rather than
+hue it survives being printed in grey, and colour is never the only channel — the ranked
+table carries the same numbers beside every figure.
+
+### Three ways the report went blank, all fixed
+
+**1. Scripts blocked → a white page with no explanation.** `<div id="root"></div>` shipped
+empty, so anywhere JavaScript does not run — a sandboxed preview pane, an email client's
+viewer — the reader got nothing at all. The root now ships with a message saying the file
+is intact, that it needs a browser, and where the same numbers are. React replaces it on
+mount, so nobody who can read the report ever sees it.
+
+**2. One `NaN` → a file picker instead of the report.** This is the nastiest of the three.
+`ValidationReport` produced `mean_absolute_deviation: NaN` for a fold that had nothing to
+compare, Python wrote it as a bare `NaN` token, and **`JSON.parse` rejects that**. The
+page cannot tell an unparseable run from an absent one, so it did exactly what it was
+built to do with no run — it offered a file picker. A complete assessment, silently
+replaced by an upload prompt.
+
+Non-finite floats are now nulled recursively at the seam — `null` is what JSON has for
+"could not be computed", and losing a whole report over one uncomputable diagnostic
+would be the worse trade — and `allow_nan=False` then refuses to serialise anything
+non-finite that survives. A test parses a real run with `parse_constant` set to raise,
+because `json.loads` accepts `NaN` by default and a browser never does.
+
+**3. One null → the entire tree unmounted.** With the NaNs turned into nulls, a formatter
+called `.toLocaleString()` on one and threw. React unmounts everything on an uncaught
+error, so one missing diagnostic erased every number, every receipt and every licence,
+leaving white.
+
+Two fixes. Every formatter now takes `number | null | undefined` and renders an en dash
+rather than throwing — the payload legitimately contains nulls, and the types now say so.
+And there is an **error boundary**: a rendering failure is held to a message that names
+the error, says the assessment itself is intact, and points at the JSON beside it.
+
+The pattern in all three is the same, and it is the one this project applies everywhere
+else: **fail loudly, never silently**. A report that cannot draw itself must say so.
+
+### Also fixed by looking
+
+- **A duplicated scale key.** The strip and the map sit together and share one ramp; two
+  identical legends stacked was noise. The map's caption now says "on the same scale as
+  the strip above".
+- **Calibration drew bars of zero.** When the held-out folds contain no crashes, observed
+  and expected are both zero and the factor is undefined — a bar chart of that reads as
+  *"the model predicted nothing"* rather than *"there was nothing to check it against"*.
+  It now says the latter, in a sentence.
+
+**11 new tests, 712 passing.**
+
+### Known, and deliberately left
+
+- **No hover tooltips beyond native `<title>`.** Every mark carries one, which works
+  without JavaScript and prints harmlessly. A richer hover layer is a screen-only
+  feature and belongs with 5.3, not in a document.
+- **The map is equirectangular, scaled about the corridor's own mean latitude.** Over
+  tens of kilometres the distortion is far below the width of the drawn line. A corridor
+  spanning degrees of latitude would need a real projection.
+- **No print stylesheet yet.** 4.5.
+
+---
+
+## 2026-08-20 — Step 4.3: something a client can actually read
 
 **Delivered:** the report. One HTML file, written beside the run, that opens by
 double-clicking it.

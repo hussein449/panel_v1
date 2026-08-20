@@ -13,7 +13,46 @@
       picker instead, so the bundle is still usable on its own.
     -->
     <script id="roadrisk-run" type="application/json">null</script>
-    <div id="root"></div>
+
+    <!--
+      `#root` is not left empty on purpose.
+
+      Every pixel of this report is drawn by JavaScript, so anywhere scripts do not run
+      — a sandboxed preview pane, an email client's built-in viewer, a locked-down
+      browser — an empty root is a blank white page telling the reader nothing. A
+      report that fails should say it failed and say what to do about it. React replaces
+      this block the moment it mounts, so nobody who can run the page ever sees it.
+    -->
+    <div id="root">
+      <div class="fallback">
+        <h1>Road risk assessment</h1>
+        <p>
+          <strong>This page needs JavaScript to draw itself, and it has not run.</strong>
+        </p>
+        <p>
+          Nothing is missing from the file — the whole assessment is inside it. It is
+          most likely being shown in a preview pane, an email viewer or a sandbox that
+          blocks scripts.
+        </p>
+        <p>
+          <strong>Save the file and open it in a web browser</strong> — Chrome, Edge,
+          Firefox or Safari — and the report appears. It needs no internet connection
+          and no server.
+        </p>
+        <p class="fallback__note">
+          The same numbers are in <code>assessment.json</code>,
+          <code>corridor.json</code> and <code>ranking.csv</code> in the same folder,
+          if you would rather read them directly.
+        </p>
+      </div>
+    </div>
+    <noscript>
+      <style>
+        .fallback__note::after {
+          content: " JavaScript is switched off in this browser.";
+        }
+      </style>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

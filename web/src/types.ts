@@ -116,6 +116,55 @@ export interface IndexTerm {
   agreement: { score: number | null; note: string } | null;
 }
 
+/**
+ * A calibration result.
+ *
+ * The numeric fields are nullable because the engine will not invent one it could not
+ * compute — a factor with no denominator, a deviation over folds that produced
+ * nothing. `null` is what the payload carries and what the formatters render.
+ */
+export interface Calibration {
+  scheme: string;
+  n_folds: number;
+  observed: number | null;
+  predicted: number | null;
+  factor: number | null;
+  calibrated: boolean;
+  mean_absolute_deviation: number | null;
+}
+
+export interface Cure {
+  factor: string;
+  share_outside: number;
+  drifts: boolean;
+  x: number[];
+  cumulative: number[];
+  bound: number[];
+}
+
+export interface Validation {
+  available: boolean;
+  passed: boolean;
+  n_units: number;
+  spatial: Calibration | null;
+  random: Calibration | null;
+  optimism: number | null;
+  design_effect: number | null;
+  cure: Cure[];
+  refusal: string | null;
+  notes: string[];
+}
+
+/** Rung 3's spline. Reference material — never a client number, by the brief. */
+export interface Shape {
+  factor: string;
+  available: boolean;
+  shape: string | null;
+  turning_point: number | null;
+  penalty_sensitive: boolean;
+  curve: { x: number[]; y: number[]; lower: number[]; upper: number[] } | null;
+}
+
 export interface Assessment {
   mode: string;
   rung: string;
@@ -151,7 +200,8 @@ export interface Assessment {
   ranking: Ranking | null;
   posterior: Posterior | null;
   spatial: { message: string; identified: boolean } | null;
-  validation: { available: boolean; passed: boolean; notes: string[] } | null;
+  validation: Validation | null;
+  reference: { shapes: Shape[] } | null;
   sign_guard: { contradictions: unknown[] } | null;
   receipts: {
     refusal: string | null;
@@ -207,6 +257,8 @@ export interface Corridor {
       start_m: number;
       end_m: number;
       length_m: number;
+      midpoint_m: number;
+      geometry: [number, number][];
     }[];
   };
   snap: {

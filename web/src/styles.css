@@ -409,3 +409,157 @@ code {
   padding: 0.05rem 0.3rem;
   border-radius: 2px;
 }
+
+/* ---- the no-JavaScript fallback ----------------------------------------- */
+
+/*
+ * Shown only where scripts do not run. React replaces `#root` on mount, so a reader
+ * who can see the report never sees this — and a reader who cannot gets a sentence
+ * telling them why, instead of a blank page telling them nothing.
+ */
+.fallback {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 3rem clamp(1.25rem, 4vw, 3.5rem);
+  background: var(--page);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--warn);
+  border-radius: 4px;
+}
+
+.fallback h1 {
+  margin-top: 0;
+}
+
+.fallback p {
+  max-width: 42rem;
+}
+
+.fallback__note {
+  font-size: 0.85rem;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--rule-soft);
+  padding-top: 1rem;
+  margin-top: 1.5rem;
+}
+
+/* ---- figures ------------------------------------------------------------- */
+
+.figure {
+  margin: 0 0 2rem;
+}
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1.5rem;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.chart--map {
+  background: #fbfbfa;
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+}
+
+.chart__tick {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__label {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+figcaption {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin-top: 0.6rem;
+  max-width: 46rem;
+}
+
+/* The scale key. A continuous encoding without one is unreadable by construction. */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.legend__swatches {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.legend__swatches span {
+  width: 1.6rem;
+  height: 0.55rem;
+  border-radius: 1px;
+}
+
+/* ---- calibration --------------------------------------------------------- */
+
+.calibration {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1.5rem;
+}
+
+.calibration__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.calibration__bar {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr 3rem;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.75rem;
+}
+
+.calibration__name {
+  color: var(--ink-faint);
+}
+
+.calibration__track {
+  display: block;
+  height: 0.5rem;
+  background: var(--rule-soft);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.calibration__fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.calibration__value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}

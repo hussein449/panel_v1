@@ -8,6 +8,8 @@ import {
   PanelSection,
   RankingSection,
   Receipts,
+  ReferenceSection,
+  ValidationSection,
 } from "./sections";
 import type { Run } from "./types";
 
@@ -44,12 +46,14 @@ export default function Report({ run }: { run: Run }) {
       <Headline run={run} />
       <Receipts assessment={assessment} />
 
-      {ranking ? <RankingSection ranking={ranking} /> : null}
+      {ranking ? <RankingSection ranking={ranking} corridor={corridor} /> : null}
       <ModelSection assessment={assessment} />
+      <ValidationSection assessment={assessment} />
       {corridor ? <FactorsSection corridor={corridor} /> : null}
       <PanelSection run={run} />
       <ChecksSection assessment={assessment} />
       {corridor ? <AttributionSection corridor={corridor} /> : null}
+      <ReferenceSection assessment={assessment} />
 
       <footer className="report__footer">
         <p>
