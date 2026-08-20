@@ -27,8 +27,6 @@ from roadrisk.core.registry import Licence, Registry, Tier
 from roadrisk.geo.adapters.base import FactorValues
 from roadrisk.geo.adapters.fusion import Confidence, FusedFactor, FusionResult
 from roadrisk.geo.attribution import ATTRIBUTION_PREFIX, collect_attributions
-from roadrisk.geo.demo import monthly_periods, synthetic_centreline, synthetic_crashes
-from roadrisk.geo.pipeline import build_corridor_panel
 
 JSON_PRIMITIVES = (str, int, float, bool, type(None))
 
@@ -88,19 +86,6 @@ def fused(*resolved: FactorValues, rejected: tuple[FactorValues, ...] = ()) -> F
             )
             for item in resolved
         ]
-    )
-
-
-@pytest.fixture(scope="module")
-def corridor_panel():
-    """A whole corridor built offline — geometry, snapping, curvature, fusion."""
-    points = synthetic_centreline()
-    periods = monthly_periods(6)
-    return build_corridor_panel(
-        points,
-        periods=periods,
-        name="demo",
-        crashes=synthetic_crashes(points, periods, n_crashes=400),
     )
 
 

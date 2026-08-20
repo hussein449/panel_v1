@@ -591,6 +591,7 @@ def corridor(
     assessment = assess(
         built.panel,
         snap=built.snap,
+        corridor_units=built.corridor_units,
         context=RunContext(
             facility_type=facility_type, region=region, severity=severity
         ),
@@ -925,7 +926,72 @@ def _render(assessment: Assessment) -> None:
     else:
         _render_index(assessment)
 
+    _render_ranking(assessment)
     _render_footer(assessment)
+
+
+def _render_ranking(assessment: Assessment, top: int = 10) -> None:
+    """The answer to the question the client actually asked: which bit first."""
+    ranking = assessment.ranking
+    if ranking is None or not ranking.units:
+        return
+
+    table = Table(
+        title=f"Worst {min(top, ranking.n_units)} of {ranking.n_units:,} units",
+        header_style="bold",
+        caption=ranking.basis,
+    )
+    table.add_column("#", justify="right")
+    table.add_column("Unit")
+    table.add_column("Score", justify="right")
+    if ranking.has_intervals:
+        table.add_column("Observed", justify="right")
+        table.add_column("Expected", justify="right")
+        table.add_column("95% interval", justify="right")
+
+    for unit in ranking.worst(top):
+        row = [str(unit.rank), unit.unit_id, f"{unit.score:.4g}"]
+        if ranking.has_intervals:
+            row += [
+                f"{unit.observed:,}",
+                f"{unit.expected:.1f}",
+                f"{unit.expected_low:.1f} – {unit.expected_high:.1f}",
+            ]
+        table.add_row(*row)
+
+    console.print()
+    console.print(table)
+
+    if not ranking.blackspots:
+        console.print(
+            "[dim]No unit cleared the blackspot threshold.[/dim]"
+        )
+    else:
+        spots = Table(
+            title=(
+                f"Blackspots — runs in the worst "
+                f"{(1 - ranking.threshold_percentile) * 100:.0f}%"
+            ),
+            header_style="bold",
+        )
+        spots.add_column("#", justify="right")
+        spots.add_column("Units", justify="right")
+        spots.add_column("Extent")
+        spots.add_column("Worst unit")
+        for spot in ranking.blackspots:
+            extent = (
+                f"{spot.start_m:,.0f}–{spot.end_m:,.0f} m ({spot.length_m:,.0f} m)"
+                if spot.length_m is not None
+                else "[dim]chainage unknown[/dim]"
+            )
+            spots.add_row(
+                str(spot.rank), str(spot.n_units), extent, spot.worst_unit
+            )
+        console.print()
+        console.print(spots)
+
+    for note in ranking.notes:
+        console.print(f"[yellow]{note}[/yellow]")
 
 
 def _render_banner(assessment: Assessment) -> None:
@@ -1679,8 +1745,10 @@ def _write_run(assessment: Assessment, out_dir: Path) -> None:
     (out_dir / "assessment.json").write_text(
         json.dumps(assessment.as_dict(), indent=2, default=str), encoding="utf-8"
     )
-    if assessment.index is not None:
-        assessment.index.unit_ranking.to_csv(out_dir / "ranking.csv", index=False)
+    # Both modes rank now, so this is written from the unified table rather than from
+    # Mode B's index — a Mode A run used to produce no ranking.csv at all.
+    if assessment.ranking is not None:
+        assessment.ranking.as_frame().to_csv(out_dir / "ranking.csv", index=False)
 
 
 if __name__ == "__main__":  # pragma: no cover

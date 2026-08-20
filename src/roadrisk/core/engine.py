@@ -50,6 +50,7 @@ from roadrisk.core.models import (
     score_index,
 )
 from roadrisk.core.priors import build_priors
+from roadrisk.core.ranking import Ranking, rank_mode_a, rank_mode_b
 from roadrisk.core.registry import Factor, Registry, load_registry
 from roadrisk.core.runlog import RunLog, RunManifest, build_manifest
 from roadrisk.core.signguard import (
@@ -120,6 +121,10 @@ class Assessment:
     #: exposure it was expected over. Mode A only — Mode B has no predicted count and
     #: never acquires one by being serialised.
     predictions: pd.DataFrame | None = None
+
+    #: The ranked table, worst segment first, and the blackspot runs built from it.
+    #: One shape whichever mode produced it — see :mod:`roadrisk.core.ranking`.
+    ranking: Ranking | None = None
 
     @property
     def is_mode_a(self) -> bool:
@@ -197,6 +202,7 @@ class Assessment:
                 else None
             ),
             "index": _index_as_dict(self.index),
+            "ranking": self.ranking.as_dict() if self.ranking else None,
             "sign_guard": _sign_guard_as_dict(self.sign_guard),
             # Under "reference", never under "fit". The brief files rung 3 as reference
             # only, never in the client report, and the serialised shape says so before
@@ -236,6 +242,7 @@ def assess(
     registry: Registry | None = None,
     context: RunContext | None = None,
     snap: SnapReport | None = None,
+    corridor_units: Sequence[tuple[str, float, float]] | None = None,
     correlation_threshold: float = DEFAULT_CORRELATION_THRESHOLD,
     max_leave_one_out: int = DEFAULT_MAX_LEAVE_ONE_OUT,
     shape_factors: Sequence[str] = (),
@@ -253,6 +260,11 @@ def assess(
             pick between published weights in Mode B. Undeclared by default, which
             admits only unrestricted weights — the engine does not guess.
         snap: Crash-snapping report from the geospatial pipeline, when there was one.
+        corridor_units: ``(unit_id, start_m, end_m)`` in corridor order, when the
+            caller knows the geography. It gives the ranking real chainage extents
+            and lets a blackspot run break at a gap instead of stepping over it.
+            Without it, units are assumed adjacent in sorted id order and the
+            ranking says so.
         correlation_threshold: Minimum |r| for a factor to count as a correlated partner
             in the sign guard's follow-up diagnostics.
         max_leave_one_out: Cap on leave-one-unit-out refits per contradicting factor.
@@ -396,6 +408,7 @@ def assess(
             unit_ids=unit_ids,
             log=log,
             refusal_receipt=receipt,
+            corridor_units=corridor_units,
             common=common,
         )
 
@@ -420,10 +433,20 @@ def assess(
             log=log,
             refusal_receipt=ladder.refusal,
             descent_receipt=descent_receipt,
+            corridor_units=corridor_units,
             common=common,
         )
 
     assert ladder.fit is not None  # noqa: S101 - guaranteed by walk_ladder on Mode A
+    predictions = _predictions(prepared, ladder.fit)
+    ranking = (
+        rank_mode_a(predictions, fit=ladder.fit, corridor_units=corridor_units)
+        if predictions is not None
+        else None
+    )
+    if ranking is not None:
+        _log_ranking(ranking, log)
+
     sign_guard = run_sign_guard(
         fit=ladder.fit,
         counts=counts,
@@ -447,7 +470,8 @@ def assess(
         fit=ladder.fit,
         sign_guard=sign_guard,
         descent_receipt=descent_receipt,
-        predictions=_predictions(prepared, ladder.fit),
+        predictions=predictions,
+        ranking=ranking,
         validation=_validate(
             counts=counts,
             design=design[[f.name for f in ladder.factors]],
@@ -522,6 +546,31 @@ def _predictions(prepared: pd.DataFrame, fit: FitResult) -> pd.DataFrame | None:
         }
     )
     return frame
+
+
+def _log_ranking(ranking: Ranking, log: RunLog) -> None:
+    """Say what was ranked, on what, and where the runs are."""
+    worst = ranking.units[0] if ranking.units else None
+    log.info(
+        STAGE,
+        "ranked",
+        (
+            f"{ranking.n_units:,} unit(s) ranked on {ranking.basis}."
+            + (f" Worst is {worst.unit_id}." if worst else "")
+            + (
+                f" {len(ranking.blackspots)} blackspot(s) in the worst "
+                f"{(1 - ranking.threshold_percentile) * 100:.0f}%."
+                if ranking.blackspots
+                else " No unit cleared the blackspot threshold."
+            )
+        ),
+        mode=ranking.mode,
+        n_units=ranking.n_units,
+        n_blackspots=len(ranking.blackspots),
+        has_intervals=ranking.has_intervals,
+    )
+    for note in ranking.notes:
+        log.warning(STAGE, "ranking_caveat", note)
 
 
 def _validate(
@@ -846,6 +895,7 @@ def _mode_b_assessment(
     common: dict[str, Any],
     refusal_receipt: str | None = None,
     descent_receipt: str | None = None,
+    corridor_units: Sequence[tuple[str, float, float]] | None = None,
 ) -> Assessment:
     """Score Mode B, or explain precisely why it could not be scored."""
     index: IndexResult | None = None
@@ -886,12 +936,21 @@ def _mode_b_assessment(
         index_refusal = str(exc)
         log.refusal("mode_b", "unsourced_weights", index_refusal)
 
+    ranking = (
+        rank_mode_b(index.unit_ranking, corridor_units=corridor_units)
+        if index is not None
+        else None
+    )
+    if ranking is not None:
+        _log_ranking(ranking, log)
+
     return Assessment(
         mode=Mode.B,
         rung=Rung.B,
         banner=MODE_B_BANNER,
         ladder=ladder,
         index=index,
+        ranking=ranking,
         refusal_receipt=refusal_receipt,
         descent_receipt=descent_receipt,
         index_refusal=index_refusal,

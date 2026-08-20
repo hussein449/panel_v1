@@ -133,6 +133,18 @@ class CorridorPanel:
         )
 
     @property
+    def corridor_units(self) -> list[tuple[str, float, float]]:
+        """``(unit_id, start_m, end_m)`` in corridor order, for the engine's ranking.
+
+        The engine cannot see the road. Handed this, it can put real chainage on a
+        blackspot and break a run where the corridor breaks, instead of assuming that
+        units which sort next to each other lie next to each other.
+        """
+        return [
+            (unit.unit_id, unit.start_m, unit.end_m) for unit in self.segmentation.units
+        ]
+
+    @property
     def attribution(self) -> AttributionReport:
         """Who must be credited, and what redistributing the panel would cost."""
         return collect_attributions(self.fusion)

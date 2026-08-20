@@ -5,7 +5,119 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-20 (latest) — Step 4.1: the report model, and the licence nobody reads
+## 2026-08-20 (latest) — Step 4.2: one ranked table, and runs that break where the road breaks
+
+**Delivered:** the answer to the question a client actually asks. Not *"what are the
+coefficients"* — **which bit of road do I look at first, and is it one bad segment or a
+length of road with a problem.**
+
+```bash
+roadrisk corridor --demo --out run/
+```
+
+```
+                       Worst 10 of 22 units
+┌────┬───────────┬──────────┬──────────┬──────────┬──────────────┐
+│  # │ Unit      │    Score │ Observed │ Expected │ 95% interval │
+├────┼───────────┼──────────┼──────────┼──────────┼──────────────┤
+│  1 │ demo-0020 │ 0.004269 │       46 │     37.4 │  32.1 – 43.6 │
+│  2 │ demo-0018 │ 0.004235 │       40 │     37.1 │  32.4 – 42.6 │
+└────┴───────────┴──────────┴──────────┴──────────┴──────────────┘
+
+         Blackspots — runs in the worst 20%
+┌───┬───────┬─────────────────────────┬────────────┐
+│ 3 │     3 │ 7,000–8,500 m (1,500 m) │ demo-0016  │
+└───┴───────┴─────────────────────────┴────────────┘
+```
+
+### One table, two modes, and the number that must not leak
+
+Mode A produces an expected crash rate from a fitted model. Mode B produces a weighted
+index score from published weights. These are not the same kind of number and never will
+be. But *"which segment first"* is **one** question, and a report that answers it twice
+in two shapes has handed the reader the join.
+
+So there is one ranked table. Both modes fill in `unit_id`, `rank`, `percentile` and
+`score`, worst first. Mode A additionally fills in what it actually estimated — observed,
+expected, an interval, exposure, rate. Mode B fills in none of those.
+
+**They are absent from Mode B's rows, not present and null.** A null count is still a
+count-shaped hole, and a renderer meeting `"expected": null` puts a dash in a column that
+should not have existed — which reads as *"not available"* rather than *"this mode does
+not produce one"*. `UnitRisk.as_dict()` omits the keys, and a test asserts none of the
+six count fields appears anywhere in a serialised Mode B ranking. The same rule reaches
+the blackspots: a Mode B blackspot has no observed and no expected either.
+
+Mode B's crash-type components do ride along, because a unit that ranks badly should be
+readable for *why* — a run-off problem and an intersection problem call for different
+countermeasures.
+
+### The interval, and what kind of interval it is
+
+Each unit's expected count is the sum of its rows' fitted means. The interval around it
+comes from the delta method: with a log link `d(mu)/d(beta) = mu * x`, so the gradient of
+the unit total is `sum(mu_r * x_r)`, and the variance is that gradient through the fit's
+own parameter covariance.
+
+**It is a confidence interval on the expected count** — where the model's estimate of the
+mean sits. It is not a prediction interval for next year's actual count, which would be
+wider and is a different question. The module docstring says so rather than leaving a
+reader to assume the more flattering reading.
+
+**The panel correction travels for free.** When the fit clustered its standard errors by
+unit — which rung 2 does whenever there are enough clusters — the covariance this reads
+is the clustered one, because it comes from the fitted model rather than being
+re-derived. Step 3.1's widening reaches the ranking without a line of code saying so.
+
+**And it refuses rather than inventing.** A fit that exposes no parameter covariance
+produces a ranking with expected counts and no interval, plus a note saying the order is
+unaffected and the uncertainty around it is simply not reported.
+
+### Blackspots break where the road breaks
+
+A single bad segment is usually a bad segment. Six bad segments in a row is a length of
+road with a problem. So flagged units are grouped into contiguous runs — and the
+interesting part is what ends a run.
+
+A run continues only while the next unit is **both flagged and physically adjacent**.
+Adjacency is decided by chainage when the caller supplies it: a unit whose start does not
+meet the previous unit's end is the far side of a gap, and a blackspot spanning it would
+be describing road the panel does not cover. That is the difference between *"these eight
+units are one blackspot"* and *"these are two blackspots either side of a junction"*.
+
+`assess()` gained one optional argument for this — `corridor_units`, a list of
+`(unit_id, start_m, end_m)` in corridor order. `CorridorPanel.corridor_units` builds it
+from the segmentation, and the CLI passes it. With it, blackspots carry real chainage
+extents. Without it, order falls back to sorted unit ids and adjacency is positional —
+the same assumption the spatial field makes at 3.3c — and the ranking **says so in its
+notes** rather than leaving it implicit.
+
+Three things end a run, each with a test: a chainage gap, a unit the panel does not
+contain, and a unit that did not clear the threshold. Runs are then ordered against each
+other by their worst member, so blackspot #1 contains the worst segment on the corridor.
+
+The default threshold is the worst quintile. A blackspot list that flags half the corridor
+is a list nobody acts on.
+
+### Also
+
+- **`ranking.csv` is now written for both modes.** It came from Mode B's index before, so
+  a Mode A run produced no ranking file at all.
+- The CLI prints the ranked table and the blackspot runs on every assessment.
+
+**24 new tests, 686 passing.**
+
+### Known, and deliberately left
+
+- **The threshold is not tunable from the CLI.** `DEFAULT_THRESHOLD_PERCENTILE` is a
+  constant. Exposing it is a flag and a docstring, and worth doing when someone asks for
+  a different band rather than before.
+- **Blackspots do not aggregate across a corridor's own discontinuities.** A corridor is
+  one chain by construction, so this only matters once comparison across corridors exists.
+
+---
+
+## 2026-08-20 — Step 4.1: the report model, and the licence nobody reads
 
 **Delivered:** the seam between the engine and anything that renders it. Two payloads —
 `assessment.json` and `corridor.json` — that between them carry everything a report

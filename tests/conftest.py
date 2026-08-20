@@ -53,3 +53,27 @@ def starved_panel() -> pd.DataFrame:
 def crash_only_panel() -> pd.DataFrame:
     """Crash locations with no zero rows. Mode A must refuse this."""
     return synthetic_panel(n_units=120, n_periods=24, seed=7, crash_rows_only=True)
+
+
+@pytest.fixture(scope="session")
+def corridor_panel():
+    """A whole corridor built offline — geometry, snapping, curvature, fusion.
+
+    Imported inside the fixture rather than at module scope: ``roadrisk.geo`` needs the
+    geospatial extra, and a core-only checkout must still be able to collect this file.
+    """
+    from roadrisk.geo.demo import (
+        monthly_periods,
+        synthetic_centreline,
+        synthetic_crashes,
+    )
+    from roadrisk.geo.pipeline import build_corridor_panel
+
+    points = synthetic_centreline()
+    periods = monthly_periods(6)
+    return build_corridor_panel(
+        points,
+        periods=periods,
+        name="demo",
+        crashes=synthetic_crashes(points, periods, n_crashes=400),
+    )
