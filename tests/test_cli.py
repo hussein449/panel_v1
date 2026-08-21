@@ -104,3 +104,58 @@ class TestRedirectedOutput:
         monkeypatch.setattr(sys, "stderr", object())
 
         _make_output_utf8_safe()  # must not raise
+
+
+class TestTheReportSeam:
+    """Step 4.7 — coordinates to a readable report in one command."""
+
+    def test_corridor_can_reach_the_bayesian_rung(self) -> None:
+        """It could not before: `corridor` called assess() with no estimator at all,
+        so the whole of Stage 3's best work was unreachable from the geometry path."""
+        import inspect
+
+        from roadrisk.cli import corridor
+
+        parameters = set(inspect.signature(corridor).parameters)
+        assert {"bayes", "priors", "spatial", "shape"} <= parameters
+
+    def test_both_commands_offer_the_same_estimator_options(self) -> None:
+        import inspect
+
+        from roadrisk.cli import assess_panel, corridor
+
+        shared = {"bayes", "priors", "spatial", "shape", "report", "pdf"}
+        assert shared <= set(inspect.signature(assess_panel).parameters)
+        assert shared <= set(inspect.signature(corridor).parameters)
+
+    def test_report_writes_the_html_and_the_json_beside_it(self, tmp_path) -> None:
+        """The report's own fallback tells a reader the same numbers are in
+        assessment.json. That has to be true."""
+        result = runner.invoke(
+            app, ["corridor", "--demo", "--periods", "6", "--report", str(tmp_path)]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "report.html").exists()
+        assert (tmp_path / "assessment.json").exists()
+        assert (tmp_path / "corridor.json").exists()
+
+    def test_report_accepts_a_filename(self, tmp_path) -> None:
+        target = tmp_path / "b9-assessment.html"
+
+        result = runner.invoke(
+            app, ["corridor", "--demo", "--periods", "6", "--report", str(target)]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert target.exists()
+        assert (tmp_path / "assessment.json").exists()
+
+    def test_report_alone_does_not_write_the_whole_run_record(self, tmp_path) -> None:
+        """--out is the run record; --report is for when the report is all you want."""
+        runner.invoke(
+            app, ["corridor", "--demo", "--periods", "6", "--report", str(tmp_path)]
+        )
+
+        assert not (tmp_path / "panel.csv").exists()
+        assert not (tmp_path / "snap_detail.csv").exists()

@@ -87,10 +87,13 @@ export interface Fit {
 }
 
 export interface PosteriorSummary {
-  name: string;
   mean: number;
+  sd: number;
   hdi_low: number;
   hdi_high: number;
+  prob_positive: number;
+  r_hat: number | null;
+  ess_bulk: number | null;
 }
 
 export interface Posterior {
@@ -98,7 +101,15 @@ export interface Posterior {
   converged: boolean;
   method: string;
   hdi_probability: number;
-  coefficients: PosteriorSummary[];
+  /**
+   * Keyed by factor name, **not** a list.
+   *
+   * Typing this as an array is not a harmless slip: `.find()` on it returns nothing,
+   * every row silently falls back to the frequentist interval, and the column keeps
+   * its "credible interval" heading. Frequentist numbers under a Bayesian label is
+   * the one mislabelling this report must never make.
+   */
+  coefficients: Record<string, PosteriorSummary>;
   sigma_u: PosteriorSummary | null;
   descent: string[];
   notes: string[];

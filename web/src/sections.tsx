@@ -248,7 +248,19 @@ export function RankingSection({
 
 /** Mode A's coefficients, or Mode B's weighted terms. Never both, never mixed. */
 export function ModelSection({ assessment }: { assessment: Assessment }) {
-  const posterior = assessment.posterior;
+  // A posterior that exists is not a posterior that can be believed. When the
+  // inference ladder ran out of rungs — Laplace refused, then MCMC failed to mix —
+  // `posterior` is present, unconverged and carries no coefficients. Reading its mere
+  // presence as "we have credible intervals" would put the frequentist numbers under a
+  // Bayesian heading, which is the one mislabelling this section must never make.
+  const attempted = assessment.posterior;
+  const posterior =
+    attempted &&
+    attempted.converged &&
+    Object.keys(attempted.coefficients ?? {}).length > 0
+      ? attempted
+      : null;
+  const refused = attempted && !posterior ? attempted : null;
 
   if (assessment.fit) {
     return (
@@ -270,9 +282,7 @@ export function ModelSection({ assessment }: { assessment: Assessment }) {
           </thead>
           <tbody>
             {assessment.fit.coefficients.map((coefficient) => {
-              const credible = posterior?.coefficients.find(
-                (item) => item.name === coefficient.factor,
-              );
+              const credible = posterior?.coefficients[coefficient.factor];
               const low = credible ? credible.hdi_low : coefficient.ci_low;
               const high = credible ? credible.hdi_high : coefficient.ci_high;
               const excludesZero = low > 0 || high < 0;
@@ -316,6 +326,13 @@ export function ModelSection({ assessment }: { assessment: Assessment }) {
         ) : null}
         {assessment.spatial ? (
           <p className="footnote">{assessment.spatial.message}</p>
+        ) : null}
+        {refused ? (
+          <p className="caveat">
+            A Bayesian fit was attempted and <strong>could not be believed</strong>, so
+            nothing from it is reported and the intervals above are the frequentist
+            ones. {refused.descent[refused.descent.length - 1] ?? ""}
+          </p>
         ) : null}
       </Section>
     );

@@ -5,7 +5,100 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-21 (latest) — Step 4.6: what this assessment cannot tell you
+## 2026-08-21 (latest) — Step 4.7: coordinates to a readable report in one command. Stage 4 complete.
+
+**Delivered:** the seam. One command from a road to something a client can open, with
+every estimator the engine has reachable from the geometry path — and a mislabelling bug
+found by finally running that path end to end.
+
+```bash
+roadrisk corridor --demo --report out/          # report.html + the JSON behind it
+roadrisk corridor --demo --out out/ --pdf       # the whole run record, printed too
+roadrisk assess panel.csv --bayes --report out/ # credible intervals, on a panel
+```
+
+### `corridor` could not reach the Bayesian rung at all
+
+It called `assess()` with a context and nothing else. No estimator, no priors, no spatial
+flag, no splines. **The whole of Stage 3 was unreachable from the geometry path** — a
+corridor assessed from coordinates could only ever produce p-values, while the brief asks
+for credible intervals in the report and `assess` had offered them since 3.3.
+
+`--shape`, `--bayes`, `--priors` and `--spatial` now exist on both commands, defined
+once and shared, so the two cannot drift apart. A test asserts the option sets match.
+
+### `--report`, for when the report is all you want
+
+`--out` writes the run record — panel, provenance, confidence, snap detail, the JSON, the
+report. `--report` writes the report and the two JSON payloads it was built from, and
+nothing else. A path ending `.html` is taken as the filename; anything else is a
+directory.
+
+The JSON travels either way because it has to: the report's own no-JavaScript fallback
+tells a reader the same numbers are in `assessment.json` and `corridor.json`, and that
+sentence has to be true wherever the file lands.
+
+### The bug this step existed to find
+
+Running `--bayes` through to a rendered page for the first time surfaced something that
+had shipped in 4.3 and survived three steps of review:
+
+**`posterior.coefficients` is a mapping keyed by factor name, not a list.** The page's
+TypeScript typed it as an array and looked a factor up with `.find()`. That returns
+`undefined` for every row — so every coefficient silently fell back to its *frequentist*
+confidence interval, while the column header, keyed only off the posterior's existence,
+kept saying **"95% credible interval"**.
+
+Frequentist numbers under a Bayesian heading is the one mislabelling this report must
+never make, and nothing caught it: the types were wrong, so the compiler agreed; the
+fallback was silent, so the page looked right; and no test had ever rendered a converged
+posterior. It took an actual `--bayes` run, read on screen, to see it.
+
+Fixed at three levels — the type now says `Record<string, PosteriorSummary>` with a
+comment explaining why the distinction matters, the lookup is by key, and two tests pin
+it: one asserting `as_dict()` produces a mapping keyed by factor, one asserting the
+bundle contains no `.find(` over coefficients.
+
+**A second, related mislabelling closed with it.** A posterior that *exists* is not a
+posterior that can be *believed*. When the inference ladder runs out of rungs — Laplace
+refused, MCMC failed to mix — `posterior` is present, unconverged and carries nothing.
+Reading its mere presence as "we have credible intervals" was the same bug in another
+costume. The page now requires `converged` and a non-empty mapping, says plainly that a
+Bayesian fit was attempted and could not be believed, quotes the last line of the
+descent, and the limitations page records that the intervals shown are the narrower
+frequentist ones.
+
+### What `--bayes` costs on the demo corridor
+
+Worth writing down, because it looks like a hang and is not.
+
+`roadrisk corridor --demo --bayes` with the default 24 periods runs for **tens of
+minutes**. The engine is behaving correctly: Laplace is refused at 24, 48 and 96
+quadrature nodes (Pareto k̂ 0.82, above the 0.7 gate), it descends to MCMC, the chains do
+not mix (R-hat 1.45 on σ_u against a 1.01 gate), and it **reports nothing rather than an
+interval from chains that have not mixed**. That is the honesty machinery working, at the
+cost of a long wait on a synthetic corridor whose σ_u is barely identified from 22
+segments.
+
+Nothing here was tuned to make that faster. Loosening a convergence gate to speed up a
+demo would be exactly the trade this project exists not to make. `--periods 8` finishes
+in 5 seconds; a real panel that clears the gates — 120 units, 24 periods — takes 50.
+
+**Stage 4 is complete.** Coordinates in, a printed, sourced, caveated report out.
+
+**11 new tests, 763 passing.**
+
+### Known, and deliberately left
+
+- **The demo's default period count is not tuned for `--bayes`.** Changing it would
+  change the demo for every other flag too, and that is a product decision rather than a
+  fix.
+- **`--report` and `--out` can both be given.** They write two reports to two places,
+  which is what was asked for.
+
+---
+
+## 2026-08-21 — Step 4.6: what this assessment cannot tell you
 
 **Delivered:** the limitations page. Its own sheet at the back of every report,
 assembled from what the run actually did, with nothing anywhere that turns it off.

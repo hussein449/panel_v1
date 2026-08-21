@@ -304,3 +304,32 @@ class TestItReachesTheReport:
         bundle = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "#limitations" in bundle
         assert "page-break-before" in bundle
+
+
+class TestTheBayesianRefusal:
+    """A posterior that exists is not a posterior that can be believed."""
+
+    def test_an_unconverged_posterior_is_a_limitation(self) -> None:
+        assessment = {"posterior": {"converged": False, "coefficients": []}}
+
+        found = next(
+            item
+            for item in collect_limitations(assessment, None)
+            if item.code == "posterior_refused"
+        )
+        assert "could not be believed" in found.title
+        assert "frequentist" in found.detail
+
+    def test_a_converged_posterior_raises_nothing(self) -> None:
+        assessment = {"posterior": {"converged": True, "coefficients": [{"name": "a"}]}}
+
+        assert "posterior_refused" not in codes(collect_limitations(assessment, None))
+
+    def test_the_page_will_not_label_frequentist_numbers_as_credible(self) -> None:
+        """The one mislabelling this report must never make: a refused Bayesian fit
+        leaves `posterior` present but empty, and reading its presence as "we have
+        credible intervals" puts the frequentist numbers under a Bayesian heading."""
+        from roadrisk.report import TEMPLATE_PATH
+
+        bundle = TEMPLATE_PATH.read_text(encoding="utf-8")
+        assert "could not be believed" in bundle

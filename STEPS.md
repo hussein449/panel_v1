@@ -641,6 +641,8 @@ GLMM belongs there, where it is paid for once and reported properly.
 
 ## Stage 4 — Report
 
+**Complete.** The report model, the ranking, the page, the figures, the PDF, the limitations page and the CLI seam.
+
 **Re-scoped deliberately.** The original 4.1 said *"same template serves the web page and
 the PDF"* and assumed a Jinja template rendered in Python. With **5.3** in React, that is
 two renderers in two languages, kept in visual sync by hand, forever. The report and the
@@ -663,7 +665,7 @@ without a refit, and the same payload feeds **5.1** and **5.3** unchanged.
 | `[x]` | **4.4** Figures | Spline curves, CURE plots, calibration and a risk strip along chainage, as SVG over the curve data already in the JSON | No external image request anywhere in the page ✅ |
 | `[x]` | **4.5** PDF export | `@media print` and `@page` over the same route — banner on every page, page counters, no orphaned tables | The exported PDF and the screen are the same document, and every number in it is traceable to a source ✅ |
 | `[x]` | **4.6** Limitations page | Generated from the run, not written into the layout: dropped terms, failed checks, missing factors, Tier B caveats, the `speed_limit` and HSM caveats, Mode B's ranking-only status, corridor count, crash-mix defaults, cache age | Cannot be disabled by config — no flag removes it, and a test that tries every way to suppress it still finds it ✅ |
-| `[ ]` | **4.7** CLI seam | `roadrisk corridor --report`, and `--bayes` / `--priors` / `--spatial` wired through `corridor` | `roadrisk corridor --demo --bayes --report out/` goes from coordinates to a readable report in one command |
+| `[x]` | **4.7** CLI seam | `roadrisk corridor --report`, and `--bayes` / `--priors` / `--spatial` wired through `corridor` | `roadrisk corridor --demo --bayes --report out/` goes from coordinates to a readable report in one command ✅ |
 
 ### 4.3 — one renderer, built early rather than twice
 

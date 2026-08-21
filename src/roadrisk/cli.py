@@ -89,6 +89,60 @@ _STATUS_STYLE = {
     CheckStatus.SKIPPED: "yellow",
 }
 
+ShapeOption = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--shape",
+        help=(
+            "Run the rung 3 spline on this factor and draw the curve. Repeatable. "
+            "A factor whose sign contradicts gets one automatically."
+        ),
+    ),
+]
+BayesOption = Annotated[
+    bool,
+    typer.Option(
+        "--bayes",
+        help=(
+            "Also fit the Bayesian GLMM: a random intercept per segment, and "
+            "credible intervals instead of p-values. Seconds on a narrow "
+            "specification; minutes if the approximation is refused."
+        ),
+    ),
+]
+PriorsOption = Annotated[
+    bool,
+    typer.Option(
+        "--priors",
+        help=(
+            "Centre each prior on the registry's cited weight instead of on zero, "
+            "and report textbook / your data / the mix side by side. Implies "
+            "--bayes and costs a second fit."
+        ),
+    ),
+]
+SpatialOption = Annotated[
+    bool,
+    typer.Option(
+        "--spatial",
+        help=(
+            "Also fit a CAR field over the corridor, so neighbouring segments are "
+            "correlated rather than strangers. Implies --bayes."
+        ),
+    ),
+]
+ReportOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--report",
+        help=(
+            "Write the report here and nothing else. A directory gets report.html "
+            "and the two JSON files it was built from; a path ending .html gets "
+            "that filename. --out already writes one, so this is for when the "
+            "report is all you want."
+        ),
+    ),
+]
 PdfOption = Annotated[
     bool,
     typer.Option(
@@ -131,48 +185,11 @@ def assess_panel(
     facility_type: FacilityOption = FacilityType.ANY,
     region: RegionOption = Region.GLOBAL,
     severity: SeverityOption = Severity.ALL,
-    shape: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--shape",
-            help=(
-                "Run the rung 3 spline on this factor and draw the curve. Repeatable. "
-                "A factor whose sign contradicts gets one automatically."
-            ),
-        ),
-    ] = None,
-    bayes: Annotated[
-        bool,
-        typer.Option(
-            "--bayes",
-            help=(
-                "Also fit the Bayesian GLMM: a random intercept per segment, and "
-                "credible intervals instead of p-values. Seconds on a narrow "
-                "specification; minutes if the approximation is refused."
-            ),
-        ),
-    ] = False,
-    priors: Annotated[
-        bool,
-        typer.Option(
-            "--priors",
-            help=(
-                "Centre each prior on the registry's cited weight instead of on zero, "
-                "and report textbook / your data / the mix side by side. Implies "
-                "--bayes and costs a second fit."
-            ),
-        ),
-    ] = False,
-    spatial: Annotated[
-        bool,
-        typer.Option(
-            "--spatial",
-            help=(
-                "Also fit a CAR field over the corridor, so neighbouring segments are "
-                "correlated rather than strangers. Implies --bayes."
-            ),
-        ),
-    ] = False,
+    shape: ShapeOption = None,
+    bayes: BayesOption = False,
+    priors: PriorsOption = False,
+    spatial: SpatialOption = False,
+    report: ReportOption = None,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the assessment as JSON and nothing else.")
     ] = False,
@@ -216,6 +233,9 @@ def assess_panel(
             console.print(f"[bold]Report:[/bold] {out_dir / REPORT_FILENAME}")
         if pdf:
             _write_pdf(out_dir, quiet=as_json)
+
+    if report is not None:
+        _write_report_bundle(assessment, None, report, quiet=as_json, pdf=pdf)
 
 
 @app.command()
@@ -487,6 +507,11 @@ def corridor(
     out_dir: Annotated[
         Path | None, typer.Option("--out", "-o", help="Directory for the run record.")
     ] = None,
+    shape: ShapeOption = None,
+    bayes: BayesOption = False,
+    priors: PriorsOption = False,
+    spatial: SpatialOption = False,
+    report: ReportOption = None,
     pdf: PdfOption = False,
 ) -> None:
     """Build a panel from a corridor centreline, then assess it.
@@ -618,6 +643,10 @@ def corridor(
         context=RunContext(
             facility_type=facility_type, region=region, severity=severity
         ),
+        shape_factors=shape or (),
+        estimator=Estimator.BAYES if (bayes or priors or spatial) else Estimator.NB2,
+        use_registry_priors=priors,
+        use_spatial=spatial,
     )
     _render(assessment)
 
@@ -638,6 +667,9 @@ def corridor(
         console.print(f"[bold]Report:[/bold] {out_dir / REPORT_FILENAME}")
         if pdf:
             _write_pdf(out_dir)
+
+    if report is not None:
+        _write_report_bundle(assessment, built, report, pdf=pdf)
 
 
 def _fetch_from_osm(ref: str, bbox: str | None) -> list[tuple[float, float]]:
@@ -1748,7 +1780,46 @@ def _render_footer(assessment: Assessment) -> None:
     )
 
 
-def _write_pdf(out_dir: Path, *, quiet: bool = False) -> None:
+def _write_report_bundle(
+    assessment: Assessment,
+    built: object | None,
+    target: Path,
+    *,
+    quiet: bool = False,
+    pdf: bool = False,
+) -> None:
+    """Write the report on its own, without the rest of the run record.
+
+    A path ending ``.html`` is taken as the filename; anything else is a directory.
+    Either way the two JSON payloads land beside it — the report's own fallback tells
+    a reader who cannot run scripts that the same numbers are in `assessment.json`
+    and `corridor.json`, and that has to be true.
+    """
+    if target.suffix.lower() == ".html":
+        directory, path = target.parent, target
+    else:
+        directory, path = target, target / REPORT_FILENAME
+
+    directory.mkdir(parents=True, exist_ok=True)
+    run = build_run(assessment, built)
+    write_report(run, path)
+    (directory / "assessment.json").write_text(
+        json.dumps(run["assessment"], indent=2), encoding="utf-8"
+    )
+    if run["corridor"] is not None:
+        (directory / "corridor.json").write_text(
+            json.dumps(run["corridor"], indent=2), encoding="utf-8"
+        )
+
+    if not quiet:
+        console.print(f"[bold]Report:[/bold] {path}")
+    if pdf:
+        _write_pdf(directory, quiet=quiet, filename=path.name)
+
+
+def _write_pdf(
+    out_dir: Path, *, quiet: bool = False, filename: str = REPORT_FILENAME
+) -> None:
     """Print the written report, and say what to do instead when that is not possible.
 
     A missing browser is not a failed run — the HTML beside it is complete and any
@@ -1756,7 +1827,7 @@ def _write_pdf(out_dir: Path, *, quiet: bool = False) -> None:
     and the exit code stays whatever the assessment itself earned.
     """
     try:
-        written = to_pdf(out_dir / REPORT_FILENAME)
+        written = to_pdf(out_dir / filename)
     except (BrowserNotFound, PdfExportFailed) as exc:
         console.print(f"[yellow]No PDF was written.[/yellow] {exc}")
         return

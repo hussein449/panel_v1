@@ -353,6 +353,23 @@ def _evidence(assessment: Mapping[str, Any]) -> list[Limitation]:
             )
         )
 
+    posterior = assessment.get("posterior")
+    if posterior and not posterior.get("converged"):
+        found.append(
+            Limitation(
+                code="posterior_refused",
+                severity=CAVEAT,
+                title="A Bayesian fit was attempted and could not be believed",
+                detail=(
+                    "The approximation was refused and the sampler that replaced it did "
+                    "not converge, so nothing from it is reported and the intervals in "
+                    "this report are the frequentist ones. They are narrower than a "
+                    "credible interval would have been, because they do not carry the "
+                    "uncertainty in how much segments differ from one another."
+                ),
+            )
+        )
+
     index = assessment.get("index") or {}
     families = {str(term.get("family")) for term in index.get("terms") or []}
     factors_used = set(assessment.get("factors", {}).get("in_model") or [])

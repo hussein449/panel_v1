@@ -300,3 +300,50 @@ class TestNonFiniteNumbers:
             raise AssertionError(f"{constant} is not valid JSON")
 
         json.loads(match.group(1), parse_constant=refuse)
+
+
+class TestThePosteriorContract:
+    """The page reads credible intervals out of the posterior by factor name.
+
+    `coefficients` is a **mapping**, not a list. Typing it as an array is not a
+    harmless slip: `.find()` on it returns nothing, every row silently falls back to
+    the frequentist interval, and the column keeps its "credible interval" heading.
+    Frequentist numbers under a Bayesian label is the one mislabelling this report
+    must never make, and it shipped that way until a real `--bayes` run was rendered
+    and read.
+    """
+
+    def test_coefficients_are_keyed_by_factor_name(self) -> None:
+        from roadrisk.core.contract import prepare_panel
+        from roadrisk.core.models import fit_bayesian_glmm
+        from roadrisk.core.registry import load_registry
+        from roadrisk.core.transforms import build_design
+        from roadrisk.demo import synthetic_panel
+
+        narrow = synthetic_panel(n_units=40, n_periods=12, seed=7)[
+            ["unit_id", "period", "time_slot", "n_crashes", "length_km",
+             "duration_hours", "curve_density"]
+        ]
+        frame, _ = prepare_panel(narrow)
+        registry = load_registry()
+        design = build_design(frame, registry.available(frame.columns))
+        fit = fit_bayesian_glmm(
+            frame["n_crashes"],
+            design,
+            frame["log_exposure"],
+            frame["unit_id"],
+            allow_mcmc=False,
+            seed=3,
+        )
+
+        coefficients = fit.as_dict()["coefficients"]
+
+        assert isinstance(coefficients, dict)
+        assert "curve_density" in coefficients
+        assert set(coefficients["curve_density"]) >= {"mean", "hdi_low", "hdi_high"}
+
+    def test_the_page_does_not_search_the_coefficients_as_a_list(self) -> None:
+        """A `.find(` over `coefficients` would be the bug returning."""
+        bundle = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+        assert "coefficients.find(" not in bundle
