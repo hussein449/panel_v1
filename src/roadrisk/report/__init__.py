@@ -28,6 +28,13 @@ from pathlib import Path
 from typing import Any
 
 from roadrisk import __version__
+from roadrisk.report.pdf import (
+    PDF_FILENAME,
+    BrowserNotFound,
+    PdfExportFailed,
+    find_browser,
+    to_pdf,
+)
 
 #: The compiled page. Built by ``npm run build`` in ``web/`` and committed, so that
 #: installing this package never needs a JavaScript toolchain.
@@ -164,11 +171,16 @@ def _finite(value: Any) -> Any:
 
 
 __all__ = [
+    "PDF_FILENAME",
     "PLACEHOLDER",
     "REPORT_FILENAME",
     "TEMPLATE_PATH",
+    "BrowserNotFound",
+    "PdfExportFailed",
     "ReportTemplateError",
     "build_run",
+    "find_browser",
     "render_report",
+    "to_pdf",
     "write_report",
 ]

@@ -35,7 +35,14 @@ from roadrisk.core.registry import (
     Severity,
     load_registry,
 )
-from roadrisk.report import REPORT_FILENAME, build_run, write_report
+from roadrisk.report import (
+    REPORT_FILENAME,
+    BrowserNotFound,
+    PdfExportFailed,
+    build_run,
+    to_pdf,
+    write_report,
+)
 
 
 def _make_output_utf8_safe() -> None:
@@ -82,6 +89,16 @@ _STATUS_STYLE = {
     CheckStatus.SKIPPED: "yellow",
 }
 
+PdfOption = Annotated[
+    bool,
+    typer.Option(
+        "--pdf",
+        help=(
+            "Also print the report to PDF. Needs Chrome or Edge; the HTML is "
+            "complete without it and any browser can print it by hand."
+        ),
+    ),
+]
 FacilityOption = Annotated[
     FacilityType,
     typer.Option(
@@ -159,6 +176,7 @@ def assess_panel(
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the assessment as JSON and nothing else.")
     ] = False,
+    pdf: PdfOption = False,
 ) -> None:
     """Assess a panel. The engine picks the mode; there is no override."""
     try:
@@ -196,6 +214,8 @@ def assess_panel(
         if not as_json:
             console.print(f"\n[dim]Run record written to {out_dir}[/dim]")
             console.print(f"[bold]Report:[/bold] {out_dir / REPORT_FILENAME}")
+        if pdf:
+            _write_pdf(out_dir, quiet=as_json)
 
 
 @app.command()
@@ -467,6 +487,7 @@ def corridor(
     out_dir: Annotated[
         Path | None, typer.Option("--out", "-o", help="Directory for the run record.")
     ] = None,
+    pdf: PdfOption = False,
 ) -> None:
     """Build a panel from a corridor centreline, then assess it.
 
@@ -615,6 +636,8 @@ def corridor(
             built.snap_detail.to_csv(out_dir / "snap_detail.csv", index=False)
         console.print(f"\n[dim]Run record and panel written to {out_dir}[/dim]")
         console.print(f"[bold]Report:[/bold] {out_dir / REPORT_FILENAME}")
+        if pdf:
+            _write_pdf(out_dir)
 
 
 def _fetch_from_osm(ref: str, bbox: str | None) -> list[tuple[float, float]]:
@@ -1723,6 +1746,22 @@ def _render_footer(assessment: Assessment) -> None:
         f"engine v{manifest.engine_version}  ·  registry v{manifest.registry_version}  ·  "
         f"{len(assessment.log)} log events, {warnings} warning(s)[/dim]"
     )
+
+
+def _write_pdf(out_dir: Path, *, quiet: bool = False) -> None:
+    """Print the written report, and say what to do instead when that is not possible.
+
+    A missing browser is not a failed run — the HTML beside it is complete and any
+    reader can print it by hand. So this reports the alternative rather than raising,
+    and the exit code stays whatever the assessment itself earned.
+    """
+    try:
+        written = to_pdf(out_dir / REPORT_FILENAME)
+    except (BrowserNotFound, PdfExportFailed) as exc:
+        console.print(f"[yellow]No PDF was written.[/yellow] {exc}")
+        return
+    if not quiet:
+        console.print(f"[bold]PDF:[/bold] {written}")
 
 
 def _print_rejection(exc: RoadRiskError) -> None:

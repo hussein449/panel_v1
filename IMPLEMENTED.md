@@ -5,7 +5,98 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-20 (latest) — Step 4.4: pictures, and three ways a report can go blank
+## 2026-08-21 (latest) — Step 4.5: the PDF is the report printed, not a second one rendered
+
+**Delivered:** a six-page A4 document with the mode banner on every page, page counters,
+tables that keep their headers across a break, and the risk ramp still in colour.
+
+```bash
+roadrisk corridor --demo --pdf --out run/
+# → run/report.html   run/report.pdf
+```
+
+### There is still only one renderer
+
+The PDF is `report.html` loaded into a headless browser and printed. Not converted, not
+re-rendered, not templated a second time — **printed**. The screen and the paper cannot
+disagree because there is only one document, and every rule that turns it into a printed
+one is `@media print` CSS on the page itself.
+
+This is what the Stage 4 re-scope was for. A Jinja template plus a React UI would have
+been two renderers in two languages, drifting the first time either changed. Instead the
+question *"does the PDF match what the client saw?"* has no way to be answered wrongly.
+
+**WeasyPrint was reconsidered and is still out.** It cannot render this page at all: the
+report is a React application, so its content does not exist until a script has run.
+Printing the page clients actually read is the only way to be certain the file matches.
+
+### The running banner, and the flag that lies
+
+The brief wants the mode banner on every page of the PDF. A page banner has to come from
+paged-media CSS — there is no element that repeats — and Chrome supports `@page` margin
+boxes and page counters but **not `string-set`**.
+
+It does not need to. One report is one mode, so the banner is identical on every page and
+is baked into a `@page { @top-center { content: "…" } }` rule at render time. The banner
+text is escaped for a CSS string context first: a stray quote would end the string and
+leave a broken rule, which fails as *a PDF with no running header* rather than as an
+error.
+
+`--print-to-pdf-no-header` is not optional and is easy to get wrong. The flag that reads
+like the obvious one, `--no-pdf-header-footer`, is **silently ignored**, and without the
+right one Chrome stamps a date and the file's own `file:///` URL onto every page of a
+client deliverable. A test pins the correct flag.
+
+### Colour is information here, not decoration
+
+Browsers drop background fills when printing, on the reasonable theory that they are
+decoration and ink is expensive. In this document the risk ramp, the mode banner and
+every status tag **are** the information — a risk strip printed white says nothing at
+all. `print-color-adjust: exact` overrides the helpfulness.
+
+### Paged defects, found by printing it and looking
+
+- **A one-word-per-line citation.** Seven columns on A4 squeezed the source column into a
+  ribbon reading *"Circumradius / of the / centreline / resampled to"*. The first fix —
+  `table-layout: fixed` — made it **worse**: equal columns squeezed it further and the
+  last two headers collided outright. The actual culprit was `white-space: nowrap` on the
+  header row, which is right on screen where width is spare and is exactly what steals it
+  on paper. Letting print headers wrap fixed both.
+- **Split tables and orphaned headings.** `thead { display: table-header-group }` so the
+  blackspot table carries its header onto page two, `break-after: avoid` on every heading,
+  `break-inside: avoid` on figures, receipts, caveats and table rows.
+- **The screen's page furniture.** The shell background, the card border and the
+  Print button are chrome; paper has its own, so they are removed rather than printed.
+
+### Printing it without a person
+
+`roadrisk.report.to_pdf()` drives the browser, and `--pdf` on `assess` and `corridor`
+calls it. **The browser is not a dependency of anything.** Nothing is needed to produce a
+report — the HTML is complete on its own and any reader can press Ctrl+P — so a missing
+browser is reported as *what to do instead*, with the path to the HTML and the
+`ROADRISK_BROWSER` override, and the exit code stays whatever the assessment itself
+earned. This exists for the runs that have to be stored or emailed without a person in
+the loop, which is what the Stage 5 worker will need.
+
+Discovery checks `ROADRISK_BROWSER`, then `PATH`, then the usual install locations on
+Windows, macOS and Linux. An explicit path that does not exist returns nothing rather
+than falling back to a different browser — quietly printing with something other than
+what was asked for would make a reproducibility claim that is not true.
+
+**16 new tests, 728 passing.**
+
+### Known, and deliberately left
+
+- **A4 only.** No Letter, no landscape, no margin options. One page size until somebody
+  needs a second.
+- **No PDF outline or internal links.** Chrome generates neither from headings here. A
+  six-page document does not need a table of contents; a forty-page one would.
+- **Chrome and Edge only.** Firefox and Safari have no headless print-to-PDF flag worth
+  relying on. Both are perfectly good for printing by hand.
+
+---
+
+## 2026-08-20 — Step 4.4: pictures, and three ways a report can go blank
 
 **Delivered:** the figures. A risk strip along the chainage, the corridor in plan, CURE
 plots, calibration bars and the spline diagnostic — all SVG, all drawn from arrays that

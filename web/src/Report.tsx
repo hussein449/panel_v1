@@ -25,12 +25,49 @@ import type { Run } from "./types";
  * `CorridorPanel.as_dict()`, which is what lets a run stored months ago render
  * identically today.
  */
+/**
+ * Escape a string for use inside a CSS `content: "..."` value.
+ *
+ * The banner is user-adjacent text going into a stylesheet. A stray quote would end
+ * the string and leave a broken `@page` rule — which fails quietly, as a PDF with no
+ * running header rather than as an error.
+ */
+const cssString = (text: string): string =>
+  text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ");
+
+/**
+ * The running header, written as a literal into a `@page` rule.
+ *
+ * The brief wants the mode banner on every page of the PDF, and a page banner has to
+ * come from paged-media CSS — there is no element that repeats. Chrome supports
+ * `@page` margin boxes and page counters but not `string-set`, and it does not need
+ * to: one report is one mode, so the banner is the same on every page and can be
+ * baked in at render time.
+ */
+function PageBanner({ banner }: { banner: string }) {
+  return (
+    <style>{`@media print { @page { @top-center {
+      content: "${cssString(banner)}";
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      font-weight: 600;
+      color: #4a5158;
+    } } }`}</style>
+  );
+}
+
 export default function Report({ run }: { run: Run }) {
   const { assessment, corridor } = run;
   const ranking = assessment.ranking;
 
   return (
     <article className="report">
+      <PageBanner banner={assessment.banner} />
+      <div className="toolbar no-print">
+        <button type="button" onClick={() => window.print()}>
+          Print / Save as PDF
+        </button>
+      </div>
       <header className="report__header">
         <ModeBanner assessment={assessment} />
         <h1>
