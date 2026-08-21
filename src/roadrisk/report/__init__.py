@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from roadrisk import __version__
+from roadrisk.report.limitations import Limitation, as_dicts, collect_limitations
 from roadrisk.report.pdf import (
     PDF_FILENAME,
     BrowserNotFound,
@@ -77,9 +78,18 @@ def build_run(
         A JSON-shaped dictionary.
     """
     stamp = generated_at or datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    assessment_payload = assessment.as_dict()
+    corridor_payload = corridor.as_dict() if corridor is not None else None
     return {
-        "assessment": assessment.as_dict(),
-        "corridor": corridor.as_dict() if corridor is not None else None,
+        "assessment": assessment_payload,
+        "corridor": corridor_payload,
+        # Assembled here rather than in the page, so that the API and the worker get
+        # the same list without deriving it a second time — and so that removing it
+        # is a code change with a failing test attached rather than a template edit.
+        # There is no argument that omits it.
+        "limitations": as_dicts(
+            collect_limitations(assessment_payload, corridor_payload)
+        ),
         "generated_at": stamp,
         "engine_version": __version__,
     }
@@ -172,6 +182,7 @@ def _finite(value: Any) -> Any:
 
 __all__ = [
     "PDF_FILENAME",
+    "Limitation",
     "PLACEHOLDER",
     "REPORT_FILENAME",
     "TEMPLATE_PATH",
@@ -179,6 +190,7 @@ __all__ = [
     "PdfExportFailed",
     "ReportTemplateError",
     "build_run",
+    "collect_limitations",
     "find_browser",
     "render_report",
     "to_pdf",

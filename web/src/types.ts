@@ -282,10 +282,25 @@ export interface Corridor {
   warnings: string[];
 }
 
+/**
+ * One thing this assessment cannot tell you, and why.
+ *
+ * Assembled on the Python side from what the run actually did — never written into
+ * the layout, so it cannot go stale and cannot be edited out.
+ */
+export interface Limitation {
+  code: string;
+  /** `material` changes what you may conclude · `caveat` qualifies · `context` informs. */
+  severity: string;
+  title: string;
+  detail: string;
+}
+
 /** What the page is handed: the engine's half, and the geography's half when there is one. */
 export interface Run {
   assessment: Assessment;
   corridor: Corridor | null;
+  limitations?: Limitation[];
   generated_at?: string;
   engine_version?: string;
 }

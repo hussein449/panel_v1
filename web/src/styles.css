@@ -748,3 +748,70 @@ figcaption {
 .toolbar button:hover {
   border-color: var(--ink-faint);
 }
+
+/* ---- the limitations page ------------------------------------------------ */
+
+.limitations {
+  margin-bottom: 2rem;
+}
+
+.limits {
+  margin: 0;
+}
+
+.limit {
+  border-left: 3px solid var(--rule);
+  padding: 0.15rem 0 0.15rem 0.95rem;
+  margin-bottom: 1.1rem;
+}
+
+.limits--material .limit {
+  border-left-color: var(--bad);
+}
+
+.limits--caveat .limit {
+  border-left-color: var(--warn);
+}
+
+.limit dt {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.88rem;
+  font-weight: 650;
+  margin-bottom: 0.2rem;
+}
+
+.limit dd {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  max-width: 46rem;
+}
+
+@media print {
+  /* The one section a reader goes looking for deserves its own sheet, and it is the
+     last thing in the document so nothing is pushed around by giving it one. */
+  #limitations {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .limit {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* `break-after: avoid` on a heading only binds it to the element immediately after,
+     which here is the band's lead paragraph — leaving heading and lead stranded at the
+     foot of a page with every item overleaf. The lead has to carry the avoidance on to
+     the list, and the first item has to refuse to start a page on its own. */
+  .limitations .lead,
+  .limitations h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .limits .limit:first-child {
+    break-before: avoid;
+    page-break-before: avoid;
+  }
+}

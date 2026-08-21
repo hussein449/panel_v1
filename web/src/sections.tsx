@@ -1,4 +1,4 @@
-import type { Assessment, Corridor, Ranking, Run } from "./types";
+import type { Assessment, Corridor, Limitation, Ranking, Run } from "./types";
 import {
   CalibrationBars,
   CorridorMap,
@@ -668,6 +668,71 @@ export function AttributionSection({ corridor }: { corridor: Corridor }) {
           ))}
         </tbody>
       </table>
+    </Section>
+  );
+}
+
+/**
+ * The limitations page.
+ *
+ * Rendered for every report with no prop, no flag and no conditional wrapping it. The
+ * list is assembled on the Python side from what the run did, so this component cannot
+ * be given an empty one by a caller who would rather not show it — and a run with
+ * nothing wrong with it still carries the standing caveats, because a report whose
+ * limitations page said nothing would be making a claim it cannot support.
+ *
+ * It is last on the page and starts a new sheet in print, which is the one place a
+ * reader looks for it.
+ */
+export function LimitationsSection({ limitations }: { limitations: Limitation[] }) {
+  const bands: { severity: string; heading: string; lead: string }[] = [
+    {
+      severity: "material",
+      heading: "Read these before the numbers",
+      lead: "Each of these changes what this assessment can be used to conclude.",
+    },
+    {
+      severity: "caveat",
+      heading: "These qualify the numbers",
+      lead: "None of these invalidates a result. All of them narrow what it means.",
+    },
+    {
+      severity: "context",
+      heading: "Worth knowing",
+      lead: "True of this method rather than of anything that went wrong here.",
+    },
+  ];
+
+  return (
+    <Section
+      id="limitations"
+      title="What this assessment cannot tell you"
+      lead="Assembled from what this run actually did, not written in advance. It is part of the report and there is no setting that removes it."
+    >
+      {bands.map(({ severity, heading, lead }) => {
+        const items = limitations.filter((item) => item.severity === severity);
+        if (items.length === 0) return null;
+        return (
+          <div className="limitations" key={severity}>
+            <h3>{heading}</h3>
+            <p className="lead">{lead}</p>
+            <dl className={`limits limits--${severity}`}>
+              {items.map((item, index) => (
+                <div className="limit" key={`${item.code}-${index}`}>
+                  <dt>{item.title}</dt>
+                  <dd>{item.detail}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        );
+      })}
+      {limitations.length === 0 ? (
+        <p className="caveat caveat--strong">
+          No limitations were recorded for this run. That is itself a defect — every
+          assessment has limits — so treat this report as incomplete and report it.
+        </p>
+      ) : null}
     </Section>
   );
 }

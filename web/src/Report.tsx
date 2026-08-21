@@ -3,6 +3,7 @@ import {
   ChecksSection,
   FactorsSection,
   Headline,
+  LimitationsSection,
   ModeBanner,
   ModelSection,
   PanelSection,
@@ -91,6 +92,10 @@ export default function Report({ run }: { run: Run }) {
       <ChecksSection assessment={assessment} />
       {corridor ? <AttributionSection corridor={corridor} /> : null}
       <ReferenceSection assessment={assessment} />
+      {/* No condition, no prop that empties it, and last so it is where a
+          reader looks for it. Removing this line is a code change with a
+          failing test attached. */}
+      <LimitationsSection limitations={run.limitations ?? []} />
 
       <footer className="report__footer">
         <p>
@@ -103,8 +108,9 @@ export default function Report({ run }: { run: Run }) {
         </p>
         <p className="small muted">
           This report states which mode produced it, every check that ran, every term
-          dropped and where every number came from. A limitations page is added at step
-          4.6 and cannot be switched off.
+          dropped, and where every number came from. What it cannot tell you is set out
+          on its own page above, assembled from this run rather than written in advance,
+          and there is no setting that removes it.
         </p>
       </footer>
     </article>

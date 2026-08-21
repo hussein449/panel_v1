@@ -5,7 +5,99 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-21 (latest) — Step 4.5: the PDF is the report printed, not a second one rendered
+## 2026-08-21 (latest) — Step 4.6: what this assessment cannot tell you
+
+**Delivered:** the limitations page. Its own sheet at the back of every report,
+assembled from what the run actually did, with nothing anywhere that turns it off.
+
+### It is data, not prose
+
+Written as paragraphs inside the layout it would be two things at once: something
+somebody could quietly delete, and something that goes stale the moment the engine
+changes. Built from the payload it can do neither. It cannot describe a run other than
+the one it came from, and a new failure mode reaches the page the day it is implemented
+rather than the day someone remembers to write it down.
+
+Almost all of the material was already on the assessment — the checks that failed, the
+terms that were dropped, the factors that were missing, the receipts, the validation
+outcome, the crash mix. What was missing was a module that reads those and says what
+each one **costs the reader**.
+
+Severity is about that cost, not about how bad a thing sounds:
+
+| | |
+|---|---|
+| **material** | Changes what you may conclude. Read before the numbers. |
+| **caveat** | Qualifies a number without invalidating it. |
+| **context** | Worth knowing; changes nothing on its own. |
+
+### Nothing removes it
+
+`collect_limitations` takes two arguments and neither of them is a flag. `build_run` has
+no parameter with "limit" or "skip" in its name. The page renders it with no condition,
+no ternary and no prop that can empty it. Tests assert each of those by inspecting the
+signatures rather than by trusting the code to stay that way.
+
+**And the list is never empty.** A run with nothing at all wrong with it still carries
+the standing caveats — this is an association rather than a cause, and everything here
+comes from one road — because a report whose limitations page said nothing would be
+making a claim it cannot support. `collect_limitations({}, None)` on a completely empty
+payload returns them, which is the strongest version of that test there is.
+
+If it somehow *does* arrive empty, the page says so and calls itself defective rather
+than rendering silence.
+
+### What it picks up
+
+Mode B's ranking-only status · the refusal and descent receipts · every failed check,
+hard ones as material and soft ones as caveats · every skipped check, because *a check
+that did not run is not a check that passed* · missing, collinear and constant factors ·
+sign contradictions · validation that failed or could not run · the default crash mix ·
+an undeclared context · the unpinned HSM edition · posted speed standing in for
+operating speed · crashes that did not land on the corridor, with their reasons · a
+self-intersecting centreline · stale cached source data · Tier B and lower factors,
+which *are not measurements* · factors carried rather than measured on most segments.
+
+### Two things fixed by printing it and reading it
+
+**A wall of registry prose.** The first version pasted every missing factor's
+`missing_behaviour` into one paragraph. On a corridor with twenty absent factors that
+produced half a page of developer documentation — *"On M51, adding speed doubled the
+curvature coefficient"*, *"the suppressor is lost"*, *"this is the factor iRAP charges
+50-200 USD/km to obtain"* — in the middle of a client report. The factor names are
+useful and traceable and stay. The prose is documentation for whoever maintains the
+registry, and it stays in the run record where it belongs.
+
+**Three pairs of duplicate headings.** Two items titled *"How the validation was set
+up"* with different text under each, and two more titled *"Something in the pipeline is
+worth knowing about"*. A repeated heading reads as a bug whatever it says underneath, so
+each group is now one entry. A test asserts no two limitations share a title.
+
+### On paper
+
+The page starts a new sheet — it is the one section a reader goes looking for, and it is
+last, so nothing is pushed around by giving it one.
+
+That exposed a paged-media subtlety worth recording: `break-after: avoid` on a heading
+only binds it to the element *immediately* after it, which here is the band's lead
+paragraph. Heading and lead were stranded together at the foot of a page with every item
+overleaf. The lead has to carry the avoidance on to the list, and the first item has to
+refuse to start a page on its own.
+
+**25 new tests, 753 passing.**
+
+### Known, and deliberately left
+
+- **Severity is assigned by rule, not judged.** A soft check failure is a caveat and a
+  hard one is material, always. There is no case yet where that is wrong, and a rule
+  that can be read off the code beats one that cannot.
+- **No per-limitation link to the section it came from.** A reader who wants the detail
+  behind *"check 4 failed"* scrolls to the checks table. Cross-links are cheap and can
+  wait for someone to ask.
+
+---
+
+## 2026-08-21 — Step 4.5: the PDF is the report printed, not a second one rendered
 
 **Delivered:** a six-page A4 document with the mode banner on every page, page counters,
 tables that keep their headers across a break, and the risk ramp still in colour.
