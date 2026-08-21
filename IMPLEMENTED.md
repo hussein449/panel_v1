@@ -3095,16 +3095,27 @@ Regression tests cover exact-zero, floating-point-zero and genuinely-varying col
 
 ## What is not built
 
-Stated plainly so nothing here is mistaken for more than it is.
+*Stated plainly so nothing here is mistaken for more than it is. Kept current — every
+line below was true on 2026-08-21, after Stage 4 closed. The list this replaced was
+written when Stage 1 was the whole product and had gone comprehensively out of date.*
 
-- **No geospatial pipeline.** The engine consumes a panel; it cannot yet build one from
-  two coordinates. Corridor resolution, segmentation, crash snapping and every Tier A/B
-  adapter are Stage 2.
-- **No GLMM, GAM or Bayesian rung.** Mode A is NB2 today. The standard errors are
-  understated for panel data, as shown above.
-- **No out-of-sample validation.** No spatial CV, no CURE plots, no held-out calibration.
-- **No report or PDF.** `as_dict()` is the seam that will feed it.
-- **No web layer, no hosting.** Nothing is deployed and there is no public URL yet.
-- **Mode B cannot score** until weights are sourced and cited.
-- **Still validated on one corridor.** Nothing here changes that. The second corridor
-  remains the critical path, and no amount of engine work substitutes for it.
+- **No web layer, no hosting.** No API, no worker, no accounts, no map UI. Nothing is
+  deployed and there is no public URL. The report page is React and Stage 5.3 will
+  import it, but Stage 5 has not begun.
+- **No persistence.** Every run is a directory of files. There is no database, no
+  project, and no way to compare two corridors or re-open yesterday's run except by
+  keeping the JSON.
+- **Still validated on two corridors.** B9 and N201. Nothing in Stages 3 or 4 changed
+  that, and nothing will: a third real road is the critical path, and no amount of
+  engine or report work substitutes for it.
+- **Two open decisions still need a human.** A licensed AASHTO HSM, to pin equations
+  read from a draft edition to a verifiable artefact; and one operating-speed survey, to
+  remove `speed_limit`'s permanent caveat. Both are recorded in
+  [`STEPS.md`](STEPS.md#open-decisions).
+- **PostGIS is still deferred.** A 100 km corridor fits in memory and the geographic
+  cache covers the repeat-fetch case. Persistence is a Stage 5 concern.
+- **No vision-model inference.** `roadside_object_density` comes from pre-extracted
+  Mapillary detections, not from running a model over imagery. Tier B factors beyond
+  the two that exist are unbuilt.
+- **The report is one page size.** A4 portrait, no Letter, no landscape. Its PDF path
+  needs Chrome or Edge; the HTML needs nothing, and any browser can print it by hand.

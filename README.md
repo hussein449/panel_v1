@@ -15,9 +15,10 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 |---|---|
 | **Stage 1 — engine core** | Built. Registry, contract, gates, ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from the AASHTO HSM, the Elvik Power Model and iRAP. |
 | **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
-| **Stage 3 — model depth** | Mostly done. Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. A spline diagnostic hunts the U-shape behind a wrong sign, reporting only the shape the smoothing grid agrees on. And `--bayes` fits a random-intercept GLMM that reports **credible intervals instead of p-values** and estimates how much segments differ from one another — in pure Python, seconds per fit, policing its own approximation on every run. `--priors` then makes the registry's own cited weights the starting belief and reports, per factor, how much of the answer came from the literature rather than from your road. Every Mode A run is then cross-validated over held-out stretches of the corridor — calibration, CURE plots and the optimism of random folds, reported by default and including when they fail. And `--spatial` fits a CAR field over the corridor chain, so neighbouring segments are correlated rather than strangers — reporting how much of the variation is spatial, and saying plainly when the corridor is too short to tell. **Stage 3 is complete.** |
-| **Stage 4 — report** | Started. Re-scoped: there is one renderer and it lives in the UI, so the PDF is a print stylesheet over the same page rather than a second template in a second language. **4.1 is done** — the engine and the geography now serialise to two JSON payloads that between them carry everything a report needs, including every factor's source, tier, licence and confidence, the corridor's geometry for the map, and what the client owes the people whose data this used. **4.2 is done** — one ranked table whichever mode produced it, worst segment first, with a confidence interval on every expected count in Mode A and no count at all in Mode B. Bad segments that sit together become blackspots with real chainage extents, and a run breaks wherever the road does. **4.3 is done** — `roadrisk corridor --out` now writes a `report.html` you open by double-clicking it. One self-contained file, no server, no network: the run is injected into the document rather than fetched, because a corridor assessed offline must produce a report readable offline. It is a React view over the JSON, so Stage 5.3 imports the same component rather than a copy of it. **4.4 is done** — a risk strip along the chainage, the corridor in plan, CURE plots, calibration and the spline diagnostic, all SVG drawn from arrays already in the payload, on a sequential ramp that was validated rather than chosen. Nothing is fetched: there is not one `<img>` in the document. **4.5 is done** — `--pdf` prints the report to a six-page A4 document with the mode banner on every page, page counters, tables that keep their headers across a break and the risk ramp still in colour. It is the same document printed, not a second one rendered, so the paper and the screen cannot disagree. **4.6 is done** — every report ends with a limitations page assembled from what the run actually did: failed checks, dropped terms, inferred factors, crashes that did not land on the road, and the caveats that apply to every assessment this tool produces. There is no flag, argument or config that removes it, and it is never empty. **4.7 is done** — `--shape`, `--bayes`, `--priors` and `--spatial` now reach the geometry path, which could not fit a Bayesian model at all before, and `--report` writes the report on its own. **Stage 4 is complete: coordinates in, a printed, sourced, caveated report out.** |
-| Stage 5 — web layer | Not started |
+| **Stage 3 — model depth** | **Complete.** Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. A spline diagnostic hunts the U-shape behind a wrong sign, reporting only the shape the smoothing grid agrees on. And `--bayes` fits a random-intercept GLMM that reports **credible intervals instead of p-values** and estimates how much segments differ from one another — in pure Python, seconds per fit, policing its own approximation on every run. `--priors` then makes the registry's own cited weights the starting belief and reports, per factor, how much of the answer came from the literature rather than from your road. Every Mode A run is then cross-validated over held-out stretches of the corridor — calibration, CURE plots and the optimism of random folds, reported by default and including when they fail. And `--spatial` fits a CAR field over the corridor chain, so neighbouring segments are correlated rather than strangers — reporting how much of the variation is spatial, and saying plainly when the corridor is too short to tell. |
+| **Stage 4 — report** | **Complete.** Two coordinates in, a report a client can read out. `roadrisk corridor --demo --out run/ --pdf` writes `report.html` — one self-contained file you open by double-clicking, no server and no network — and prints it to a paged PDF with the mode banner on every page. **There is one renderer and it lives in the UI**, so the paper and the screen cannot disagree and Stage 5.3 imports the same component rather than a copy of it. Inside: the ranked segments and the blackspot runs they form, with real chainage; a risk strip and a map of the corridor drawn from the centreline itself; every factor with its source, tier, licence and confidence; what the client owes the people whose data this used; and a limitations page assembled from what the run actually did, which no flag, argument or config removes. |
+| Stage 5 — web layer | Not started. Stage 4 paid most of it forward: the API's response body is a payload that already exists, and the report page is a React component that takes it as a prop. |
+| Stage 6 — deploy | Not started. |
 
 Full breakdown in [`STEPS.md`](STEPS.md). What has actually been built, and what each
 piece does, in [`IMPLEMENTED.md`](IMPLEMENTED.md).
@@ -139,6 +140,34 @@ GDAL, which is quarantined in its own extra:
 ```bash
 pip install "roadrisk-panel[raster]"
 ```
+
+### Getting a report out of it
+
+```bash
+roadrisk corridor --demo --out run/ --pdf
+```
+
+`run/report.html` is one self-contained file. No server, no network, no sibling assets:
+the run is written *into* the document rather than fetched, because a browser will not
+`fetch()` a local file and a corridor assessed offline has to produce a report readable
+offline. Open it by double-clicking it, or email it.
+
+`--pdf` prints that same page to A4 — the mode banner and a page number on every sheet,
+tables that keep their headers across a break, the risk ramp still in colour. It is the
+document *printed*, not a second one rendered, so the paper and the screen cannot
+disagree. It needs Chrome or Edge; without one the HTML is unaffected and any browser
+can print it by hand.
+
+When the report is all you want, and not the panel and the four CSVs beside it:
+
+```bash
+roadrisk corridor --demo --report out/
+```
+
+The report ends with a page titled *what this assessment cannot tell you*, assembled
+from what the run actually did — the checks that failed, the terms that were dropped,
+the factors that were inferred rather than measured, the crashes that never landed on
+the road. It takes no argument, it is never empty, and nothing removes it.
 
 ### The corridors this has been run against
 
@@ -353,6 +382,7 @@ src/roadrisk/
 │   ├── ladder.py            A-full → A-reduced → A-minimal → B
 │   ├── models/              Poisson (reference), NB2 (shipped), Mode B index
 │   ├── signguard.py         expected_sign enforcement and follow-up diagnostics
+│   ├── ranking.py           one ranked table for both modes; blackspots break at gaps
 │   ├── runlog.py            append-only event log, reproducibility manifest
 │   └── engine.py            the one entry point
 ├── geo/                     geography → panel. Optional extra; core never imports it
@@ -380,14 +410,19 @@ src/roadrisk/
 │   ├── cache.py             remember fetches by geography, and report their age
 │   ├── cached.py            the caching wrappers round each network client
 │   └── pipeline.py          the orchestrator
-├── report/                  the seam that puts a run inside the compiled page
+├── report/                  the seam between a finished run and the page that shows it
+│   ├── limitations.py       what this run cannot support, read off the run itself
+│   ├── pdf.py               print the written report; the browser is a dependency of nothing
 │   └── static/index.html    the built report — committed, so installing needs no Node
 ├── demo.py                  synthetic panels for tests and demonstration
 └── cli.py                   mode banner, refusal receipt, descent receipt
 
 web/                         the report page. One renderer: Stage 5.3 imports this
 ├── src/Report.tsx           the whole report — what a client reads, and what prints
-├── src/sections.tsx         banner, ranking, factors, checks, credits
+├── src/sections.tsx         banner, ranking, model, factors, checks, credits, limits
+├── src/figures.tsx          risk strip, corridor map, CURE, calibration, spline — all SVG
+├── src/format.ts            every formatter survives a null, because the payload has them
+├── src/styles.css           one stylesheet, screen and `@page` alike
 ├── src/types.ts             the JSON contract, as TypeScript
 └── src/main.tsx             reads the injected run, or offers a file picker
 ```

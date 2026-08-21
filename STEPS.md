@@ -9,6 +9,12 @@ know it is done. Status is tracked here; what was actually built is logged in
 **Sequencing rule, from the brief:** make the model defensible on two corridors → make it
 modular → then sell it. Stage 1 and Stage 3 are the credibility path. Stage 5 is not.
 
+**Where the build is, 2026-08-21.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
+in, a printed and sourced report out, with every number traceable and a limitations page
+nothing can remove. **Stage 5 is next.** The one thing no stage of it addresses is the
+critical path — this is still validated on two corridors, and a third real road is worth
+more than any of what follows.
+
 ---
 
 ## Stage 0 — Foundations
@@ -699,6 +705,21 @@ Client-side export is the browser's own print dialogue and needs no infrastructu
 Server-side generation — for a run that has to be stored or emailed — is headless Chrome
 against the same route, producing the same document.
 
+### 4.7 — the geometry path can finally reach every estimator
+
+`corridor` called `assess()` with a context and nothing else — no estimator, no priors,
+no spatial flag, no splines — so **the whole of Stage 3 was unreachable from the
+geometry path.** A corridor assessed from coordinates could only ever produce p-values,
+while the brief asks for credible intervals in the report and `assess` had offered them
+since 3.3. Both commands now share one definition of each option.
+
+Running that path through to a rendered page for the first time is what caught the
+mislabelling recorded in [`IMPLEMENTED.md`](IMPLEMENTED.md): `posterior.coefficients` is
+a mapping keyed by factor, the page treated it as a list, and every row silently fell
+back to its frequentist interval under a *credible interval* heading. Nothing caught it
+for three steps — the types agreed, the fallback was silent, and no test had ever
+rendered a converged posterior.
+
 ### 4.6 — the limitations page is data
 
 It is assembled from what the run actually did. Most of it is already on `as_dict()`:
@@ -715,6 +736,11 @@ as data, removing it is a code change with a failing test attached.
 ## Stage 5 — Web layer
 
 `core/` must never be imported *by* — only imported *from*.
+
+**Stage 4 paid most of 5.1 and 5.3 forward.** The report model is already the transport
+shape — `Assessment.as_dict()` plus `CorridorPanel.as_dict()`, JSON all the way down —
+so the API's response body is a payload that exists, and the report page is a React
+component that takes it as a prop. Neither should be written a second time.
 
 | | Step | Deliverable | Done when |
 |---|---|---|---|
