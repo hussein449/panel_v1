@@ -17,7 +17,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 | **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
 | **Stage 3 — model depth** | **Complete.** Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. A spline diagnostic hunts the U-shape behind a wrong sign, reporting only the shape the smoothing grid agrees on. And `--bayes` fits a random-intercept GLMM that reports **credible intervals instead of p-values** and estimates how much segments differ from one another — in pure Python, seconds per fit, policing its own approximation on every run. `--priors` then makes the registry's own cited weights the starting belief and reports, per factor, how much of the answer came from the literature rather than from your road. Every Mode A run is then cross-validated over held-out stretches of the corridor — calibration, CURE plots and the optimism of random folds, reported by default and including when they fail. And `--spatial` fits a CAR field over the corridor chain, so neighbouring segments are correlated rather than strangers — reporting how much of the variation is spatial, and saying plainly when the corridor is too short to tell. |
 | **Stage 4 — report** | **Complete.** Two coordinates in, a report a client can read out. `roadrisk corridor --demo --out run/ --pdf` writes `report.html` — one self-contained file you open by double-clicking, no server and no network — and prints it to a paged PDF with the mode banner on every page. **There is one renderer and it lives in the UI**, so the paper and the screen cannot disagree and Stage 5.3 imports the same component rather than a copy of it. Inside: the ranked segments and the blackspot runs they form, with real chainage; a risk strip and a map of the corridor drawn from the centreline itself; every factor with its source, tier, licence and confidence; what the client owes the people whose data this used; and a limitations page assembled from what the run actually did, which no flag, argument or config removes. |
-| Stage 5 — web layer | Not started. Stage 4 paid most of it forward: the API's response body is a payload that already exists, and the report page is a React component that takes it as a prop. |
+| Stage 5 — web layer | **Started, at the groundwork.** Stage 4 paid most of it forward: the API's response body is a payload that already exists, and the report page is a React component that takes it as a prop. Two things now hold that in place. The layering rule — `core` is imported *from*, never *by* — is a test rather than a convention, written before the packages that could break it exist. And the payload is a **frozen contract**: ~60 Pydantic models that forbid undeclared fields, checked against six real payloads, with `web/src/types.ts` generated from them instead of maintained by hand. Neither serves an HTTP request yet. |
 | Stage 6 — deploy | Not started. |
 
 Full breakdown in [`STEPS.md`](STEPS.md). What has actually been built, and what each
@@ -36,6 +36,14 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 
 Python 3.11+. Core has no geospatial or network dependencies — it is a plain library
 over a dataframe.
+
+**On Windows, check Smart App Control first.** With it on, Windows blocks unsigned native
+binaries, which is every compiled wheel here — numpy, pandas, pydantic-core — and the
+failure reads as `An Application Control policy has blocked this file`, not as anything to
+do with this package. Signed interpreters do not help: the block lands on the extension
+modules, not on `python.exe`. Development moved to WSL2 for this reason on 2026-08-24, and
+that is the recommendation — it also makes the `[raster]` extra, which needs GDAL, far
+easier to install.
 
 ## Try it
 

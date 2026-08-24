@@ -1794,6 +1794,12 @@ def _write_report_bundle(
     Either way the two JSON payloads land beside it — the report's own fallback tells
     a reader who cannot run scripts that the same numbers are in `assessment.json`
     and `corridor.json`, and that has to be true.
+
+    ``run.json`` is written too, and it is the whole envelope rather than a half. The
+    two halves cannot reconstitute a run on their own: the limitations are assembled by
+    :func:`~roadrisk.report.build_run` and live nowhere else, so a reader who opens the
+    bundle's file picker with only those two files gets a report missing the one page
+    step 4.6 says nothing may remove. The picker reads this file first.
     """
     if target.suffix.lower() == ".html":
         directory, path = target.parent, target
@@ -1803,6 +1809,7 @@ def _write_report_bundle(
     directory.mkdir(parents=True, exist_ok=True)
     run = build_run(assessment, built)
     write_report(run, path)
+    (directory / "run.json").write_text(json.dumps(run, indent=2), encoding="utf-8")
     (directory / "assessment.json").write_text(
         json.dumps(run["assessment"], indent=2), encoding="utf-8"
     )

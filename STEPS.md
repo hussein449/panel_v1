@@ -11,10 +11,16 @@ modular → then sell it. Stage 1 and Stage 3 are the credibility path. Stage 5 
 
 **Where the build is, 2026-08-24.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
 in, a printed and sourced report out, with every number traceable and a limitations page
-nothing can remove. **Stage 5 has started**, at 5.0 — the layering rule made a test,
-written before the packages that could break it. The one thing no part of Stage 5
-addresses is the critical path: this is still validated on two corridors with synthetic
-crashes, and one real police extract is worth more than any of what follows.
+nothing can remove. **Stage 5 has started.** 5.0 made the layering rule a test, before the
+packages that could break it existed; 5.1a froze the payload contract and made
+`web/src/types.ts` a generated file. The one thing no part of Stage 5 addresses is the
+critical path: this is still validated on two corridors with synthetic crashes, and one
+real police extract is worth more than any of what follows.
+
+**Development moved to WSL2 / Ubuntu on 2026-08-24**, because Windows enabled Smart App
+Control and it blocks unsigned native binaries — which is every compiled Python wheel this
+project depends on. Nothing about the package changed; the interpreter simply has to live
+somewhere it is allowed to run. The JavaScript toolchain is unaffected either way.
 
 ---
 
@@ -770,7 +776,7 @@ executes it.
 | | Step | Deliverable | Done when |
 |---|---|---|---|
 | `[x]` | **5.0** Boundary test | Import-graph assertion: `core` imports nothing from `geo`, `report`, `api`, `worker` | Adding such an import fails a test that names the offending module ✅ |
-| `[ ]` | **5.1a** Contract frozen | Pydantic models mirroring `as_dict()`, a `schema_version`, and `web/src/types.ts` generated from them rather than hand-written | A stored run round-trips through the models; the hand-maintained types are gone |
+| `[x]` | **5.1a** Contract frozen | Pydantic models mirroring `as_dict()`, a `schema_version`, and `web/src/types.ts` generated from them rather than hand-written | A stored run round-trips through the models ✅ · the hand-maintained types are gone ✅ |
 | `[ ]` | **5.1b** Storage | Postgres schema — tenant, project, corridor, job, run — payload as JSONB, artefacts by reference, migrations | A run written by the CLI imports and re-renders from the database with no refit |
 | `[ ]` | **5.1c** FastAPI | Project and corridor CRUD, `POST /jobs` → 202, `GET /jobs/{id}`, `GET /runs/{id}`, artefact download | OpenAPI generated, with factors, tiers and licences read from `factors.yaml` |
 | `[ ]` | **5.1d** In-process executor | A runner interface with a synchronous implementation behind it | A demo corridor goes submit → report with no broker running |
@@ -826,15 +832,45 @@ layer into a generic error handler:
 
 A test should assert that a Mode B descent is a 200 carrying its descent receipt.
 
-### 5.1a — why the contract is frozen before the API is written
+### 5.1a — the contract, frozen before the API is written *(done)*
 
-`web/src/types.ts` is hand-written and deliberately narrow, which was right when one
+```bash
+python tools/generate_types.py          # rewrite web/src/types.ts from the models
+python tools/generate_types.py --check  # what the test runs
+pytest tests/test_payload_contract.py
+```
+
+`web/src/types.ts` was hand-written and deliberately narrow, which was right when one
 renderer read one file. With an API it becomes two hand-maintained descriptions of one
 contract in two languages, and **4.7 already recorded what that costs**:
 `posterior.coefficients` is a mapping and the page typed it as a list, so every row fell
 back silently to its frequentist interval under a *credible interval* heading, and
-survived three steps. Generating one description from the other is the fix that bug
-argues for, which is why this precedes 5.1c rather than following it.
+survived three steps. So there is one description now — `roadrisk/contract/`, 60-odd
+Pydantic models at the **bottom** of the layer order, importing nothing — and the
+TypeScript is projected from it.
+
+**`extra="forbid"` is the whole mechanism.** A permissive model accepts any payload
+containing the fields it knows about, so the engine can grow a key and nothing notices.
+Forbidding extras makes a new key in `as_dict()` a failing test until it is declared.
+The conformance suite runs six *real* payloads through it — Mode A, Mode B, corridor,
+Bayes, priors, spatial — chosen so the optional sections are actually populated, because
+validation passes trivially against a payload whose branches are all `None`.
+
+**Generating the types immediately caught a modelling error of my own.** 135 fields were
+written with `Field(default_factory=list)`, which reads as convenience and means
+*optional* — so they projected as `?` in TypeScript. The engine emits those keys
+unconditionally; only 4.2's deliberately-omitted count fields are ever absent. Making
+them required and re-running six payloads is what proved it.
+
+**And it found a real gap in the run record.** `Run` requires `limitations`, which are
+assembled by `build_run` and live in neither `assessment.json` nor `corridor.json` — so
+the report bundle's file picker could not reconstruct them, and a report recovered that
+way lost the page 4.6 says nothing may remove. `run.json`, the whole envelope, is now
+written beside the two halves and the picker reads it first.
+
+Two further mismatches the old hand-written types carried, both now impossible to state:
+`checks[].threshold` and `.observed` are prose (*"max VIF < 5"*), typed `number | null`;
+and blackspot chainage is nullable, which the page tested for with `=== undefined`.
 
 ### 5.2 — two traps that are specific to this pipeline
 

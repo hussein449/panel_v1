@@ -174,7 +174,7 @@ export function RankingSection({
                   <td>{spot.n_units}</td>
                   <td>{extent(spot.start_m, spot.end_m) ?? "chainage unknown"}</td>
                   <td>
-                    {spot.length_m !== undefined
+                    {spot.length_m != null
                       ? `${count(Math.round(spot.length_m))} m`
                       : "—"}
                   </td>

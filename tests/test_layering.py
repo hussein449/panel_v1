@@ -35,20 +35,40 @@ PACKAGE_ROOT = SRC / "roadrisk"
 #: The layers, lowest first. A module may import from its own layer and from any layer
 #: to its left, and from nothing to its right.
 #:
+#: `contract` is beneath everything, including `core`. It is pure description — the
+#: shape a payload is allowed to have — and it imports nothing, so anything may depend
+#: on it without acquiring a dependency on anything else.
+#:
 #: `api` and `worker` are declared before they are built, deliberately — the point of
 #: this step is that the rule exists before there is code able to break it.
 #:
 #: `demo` sits above `core` because it *produces* what the engine consumes: a synthetic
 #: panel is an input to the library, not part of it, and an engine that reached for its
 #: own test fixture would be a different kind of package.
-LAYERS: tuple[str, ...] = ("core", "demo", "geo", "report", "api", "worker", "cli")
+LAYERS: tuple[str, ...] = (
+    "contract",
+    "core",
+    "demo",
+    "geo",
+    "report",
+    "api",
+    "worker",
+    "cli",
+)
 
 RANK: dict[str, int] = {name: index for index, name in enumerate(LAYERS)}
 
 #: `report` renders from JSON and never from a live engine object — step 4.1's
 #: done-when, and what lets a run stored months ago be re-rendered without a refit.
 #: The general layering rule would let it import `core`; this one does not.
+#:
+#: `contract` is admitted deliberately, and it is the only admission. The models there
+#: describe JSON and name no engine type, so importing them cannot put an engine object
+#: in the report's scope — which is the property this rule exists to protect. Anything
+#: else added to this set should be argued for the same way.
 DICT_ONLY: frozenset[str] = frozenset({"report"})
+
+DICT_ONLY_MAY_IMPORT: frozenset[str] = frozenset({"contract"})
 
 
 @dataclass(frozen=True)
@@ -183,11 +203,11 @@ def test_report_renders_from_json_alone(references: list[Reference]) -> None:
     engine type, the cheapest way to fix a missing field is to reach for it — and a
     run stored last month stops rendering, because the object it needs is gone.
     """
+    allowed = (None, *DICT_ONLY, *DICT_ONLY_MAY_IMPORT)
     reached = [
         reference
         for reference in references
-        if reference.source_layer in DICT_ONLY
-        and reference.target_layer not in (None, *DICT_ONLY)
+        if reference.source_layer in DICT_ONLY and reference.target_layer not in allowed
     ]
     assert not reached, (
         "The report layer must consume plain JSON, not engine objects:\n  "

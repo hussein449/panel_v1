@@ -5,7 +5,163 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-24 (latest) — Step 5.0: the rule, before there is code able to break it
+## 2026-08-24 (latest) — Step 5.1a: one description of the payload, and TypeScript projected from it
+
+**Delivered:** `roadrisk/contract/` — the JSON payload as ~60 Pydantic models at the
+bottom of the layer order — the conformance suite that keeps it honest, and
+`web/src/types.ts` generated from it rather than maintained by hand.
+
+```bash
+python tools/generate_types.py            # rewrite the TypeScript
+python tools/generate_types.py --check    # what the test runs
+pytest tests/test_payload_contract.py
+```
+
+### Why a second description of the payload is worth its cost
+
+`as_dict()` decides what travels. The contract decides what is *allowed* to travel. Those
+are the same information written twice, which is normally a defect — and here it is the
+point, because the test between them is the only thing that can notice drift.
+
+The argument is step 4.7, which this file already records: `posterior.coefficients` is a
+mapping keyed by factor, the page had it typed as a list, `.find()` returned nothing, every
+coefficient silently fell back to its **frequentist** interval, and the column header kept
+saying *credible interval*. It survived three steps because the types agreed with
+themselves. Nothing ever compared them against a real payload.
+
+Now something does, on every run of the suite.
+
+### `extra="forbid"` is the mechanism, not a style choice
+
+A permissive model accepts any payload that happens to contain the fields it knows about.
+The engine can grow a key, the report can start depending on it, and the two descriptions
+drift apart in silence — which is exactly the failure this package exists to prevent, so a
+permissive contract would be theatre.
+
+Forbidding extras inverts it: a new key in `as_dict()` fails the conformance test until it
+is declared. Adding a field to the engine is now a two-file change, and that is the price.
+A test asserts every model in the package still forbids extras, because relaxing one to
+`extra="ignore"` would make it quietly partial again and nothing else would notice.
+
+### Six real payloads, chosen so the branches are populated
+
+Validation passes trivially against a payload whose optional sections are all `None`, so
+the fixtures are genuine engine runs picked to light up different halves of the shape:
+
+| Fixture | What it populates |
+|---|---|
+| Mode A | `fit`, `predictions`, `ranking`, `validation`, a named spline |
+| Mode B | `index`, refusal and descent receipts, a ranking with no counts |
+| Bayes | `posterior` — the section the 4.7 defect lived in |
+| Priors | `evidence` — textbook, corridor and mixture side by side |
+| Spatial | `spatial` — the Leroux field and whether it was identified |
+| Corridor | the whole geography half: geometry, provenance, attribution, cache |
+
+A separate test asserts those branches are *actually* non-null, so that a fixture quietly
+ceasing to reach a rung — a tightened gate, a dependency change — shows up as a failure
+rather than as coverage silently evaporating.
+
+### Generating the TypeScript immediately caught a modelling error of mine
+
+135 fields were written `Field(default_factory=list)`. That reads as convenience and means
+**optional** to Pydantic, so every one of them projected into TypeScript as `?` — and
+`tsc` produced about thirty errors of the form *'ranking.units' is possibly 'undefined'*.
+
+The engine emits those keys unconditionally. Only 4.2's deliberately-omitted count fields
+are ever genuinely absent. I had modelled the convenience of the Python constructor rather
+than the shape of the payload, and nothing on the Python side would ever have told me:
+validation passes either way. It took projecting the models into a language with a stricter
+reading of *optional* to see it.
+
+Fixed, and then re-verified the only way that means anything — all six payloads still
+conform with the 135 fields required, which is the proof that the engine really does always
+emit them.
+
+### It also found a real gap in the run record
+
+`Run` requires `limitations`. They are assembled by `build_run` and stored in neither
+`assessment.json` nor `corridor.json` — so the report bundle's own file picker, which
+reassembles a run from those two halves, **could not reconstruct them**. A reader who had
+a run directory but not the generated report got a report missing the one page step 4.6
+says nothing may remove.
+
+The page was already honest about it — handed nothing, the limitations section prints
+*"No limitations were recorded for this run. That is itself a defect"* — so nothing was
+silently lost. But it was a false alarm every time, and the fix is to stop discarding them:
+`run.json`, the whole envelope, is now written beside the two halves, and the picker reads
+it first.
+
+That defect had been sitting in the bundle since 4.3. It surfaced as a **type error**.
+
+### Two more mismatches the hand-written types carried
+
+- **`checks[].threshold` and `.observed` are prose**, not numbers — `"max VIF < 5"` against
+  `"max 1.3 (lit)"`. The hand-written types declared both `number | null`, which no run has
+  ever produced. Latent, because the page never reads either field.
+- **Blackspot chainage is nullable**, and the page tested for it with `=== undefined`.
+  A corridor-less run would have put `null` through `Math.round` and into an `x` coordinate.
+
+Both are now unstateable: the contract is the only description, and `tsc --noEmit` passes
+against it.
+
+### `schema_version`, and why it is not the engine version
+
+Every run now carries `schema_version` — `1.0` — separate from `engine_version`. It moves
+when the payload's *shape* changes, not when the engine does, so a consumer reading a run
+stored months ago can tell whether it still knows how to read it. That is what 5.1b's
+promise — a stored run re-renders without a refit — actually rests on. It is optional on
+the model rather than required, because runs written before this step do not have it, and
+a contract that refused to read them would defeat its own purpose.
+
+### Where it sits in the layer order
+
+`contract` is beneath everything, including `core`. It imports nothing, so anything may
+depend on it without acquiring a dependency on anything else. The 5.0 layering test was
+extended for it, and `report` — which is otherwise forbidden from importing any other
+layer — is allowed this one, on the grounds that the models name no engine type and so
+cannot put an engine object in the report's scope. That exception is written down in the
+test rather than merely taken.
+
+**16 new tests, 782 passing, 3 skipped. `ruff check` clean, `tsc --noEmit` clean.**
+
+### Known, and deliberately left
+
+- **Enum-valued fields are typed `str`, not literal unions.** `mode`, `rung`, `family` and
+  their neighbours carry an enum's `.value`, and a union would describe today better. It
+  would also mean a run stored under one engine version failing to validate under the next
+  one that adds a rung — the exact property 5.1b must not have.
+- **`predictions` is the payload's bulk.** 960 records on a 40×12 demo, 5,760 on a real
+  120-unit corridor over 24 periods, and `run.json` for the demo corridor is 311 kB. That
+  is a live question for 5.1c's response size, not for this step.
+- **The generator emits no runtime validators**, only types. The page trusts the payload it
+  is handed, which is correct while the payload comes from the same process that wrote it
+  and becomes a question again when it arrives over a network.
+
+### Fixed on the way past: the cache's failure handler was the thing that failed
+
+Development moved to WSL this day, because Windows enabled Smart App Control and it blocks
+unsigned native binaries — numpy, pandas and pydantic-core among them. The first full suite
+on Linux failed one test, and it was not an artefact of the move.
+
+`FileCache.put` wraps its write in `except OSError`, under the comment *"a cache that cannot
+write is a slow pipeline, not a broken one"*. The handler then calls
+`temporary.unlink(missing_ok=True)` to tidy up — **outside any try**. `missing_ok` swallows
+`FileNotFoundError` and nothing else, so on a cache path whose parent is a file the unlink
+raises `NotADirectoryError`, and the handler written to absorb the failure became the thing
+that propagated it.
+
+Windows had hidden it by reporting that same condition as `ENOENT`, which `missing_ok` does
+absorb. So the test that names the promise —
+`test_an_unwritable_cache_is_a_slow_pipeline_not_a_broken_one` — passed on one platform and
+failed on the other, for the whole of Stage 2, and only ever ran on the one where it passed.
+
+The cleanup now sits inside `suppress(OSError)`. Three other tests skip on Linux for
+environmental reasons rather than defects: `arviz` is absent, and there is no Chrome or Edge
+in WSL for the two PDF-printing tests.
+
+---
+
+## 2026-08-24 — Step 5.0: the rule, before there is code able to break it
 
 **Delivered:** the layering rule, as a test. `roadrisk.core` must never be imported *by* —
 only imported *from*. That has been written in the package docstring and in `STEPS.md`
@@ -3214,13 +3370,14 @@ Regression tests cover exact-zero, floating-point-zero and genuinely-varying col
 ## What is not built
 
 *Stated plainly so nothing here is mistaken for more than it is. Kept current — every
-line below was true on 2026-08-24, after step 5.0. The list this replaced was written
+line below was true on 2026-08-24, after step 5.1a. The list this replaced was written
 when Stage 1 was the whole product and had gone comprehensively out of date.*
 
 - **No web layer, no hosting.** No API, no worker, no accounts, no map UI. Nothing is
   deployed and there is no public URL. The report page is React and Stage 5.3 will
-  import it. Stage 5 has begun, and what exists of it is a **test**: the layering rule
-  that the web layer must not break, written before the web layer.
+  import it. Stage 5 has begun, and what exists of it is groundwork rather than a web
+  layer: the layering rule as a test, and the payload contract that the API will return
+  and the worker will store. Neither serves an HTTP request.
 - **No persistence.** Every run is a directory of files. There is no database, no
   project, and no way to compare two corridors or re-open yesterday's run except by
   keeping the JSON.

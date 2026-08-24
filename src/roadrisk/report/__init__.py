@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from roadrisk import __version__
+from roadrisk.contract import SCHEMA_VERSION
 from roadrisk.report.limitations import Limitation, as_dicts, collect_limitations
 from roadrisk.report.pdf import (
     PDF_FILENAME,
@@ -92,6 +93,11 @@ def build_run(
         ),
         "generated_at": stamp,
         "engine_version": __version__,
+        # The payload's own version, separate from the engine's. It moves when the
+        # *shape* changes, so a consumer reading a run stored months ago can tell
+        # whether it still knows how to read it — which is what 5.1b's promise that a
+        # stored run re-renders without a refit actually rests on.
+        "schema_version": SCHEMA_VERSION,
     }
 
 

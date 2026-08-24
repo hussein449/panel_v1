@@ -36,6 +36,7 @@ import math
 import os
 import time
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -171,8 +172,14 @@ class FileCache:
                 )
             temporary.replace(path)
         except OSError:
-            # A cache that cannot write is a slow pipeline, not a broken one.
-            temporary.unlink(missing_ok=True)
+            # A cache that cannot write is a slow pipeline, not a broken one — and
+            # that has to include the tidying up. missing_ok= only swallows
+            # FileNotFoundError, so on a path whose parent is a file this unlink
+            # raises NotADirectoryError and the handler meant to absorb the failure
+            # becomes the thing that propagates it. Windows hid this by reporting the
+            # same condition as ENOENT, which missing_ok= does absorb.
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 @dataclass

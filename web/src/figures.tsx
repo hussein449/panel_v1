@@ -152,7 +152,7 @@ export function RiskStrip({
         })}
 
         {ranking.blackspots.map((spot) =>
-          spot.start_m === undefined || spot.end_m === undefined ? null : (
+          spot.start_m == null || spot.end_m == null ? null : (
             <rect
               key={spot.rank}
               x={x(spot.start_m)}
@@ -170,7 +170,7 @@ export function RiskStrip({
         )}
 
         {/* One direct label, on the one that matters. Not a number on every mark. */}
-        {worst?.start_m !== undefined && worst.end_m !== undefined ? (
+        {worst?.start_m != null && worst.end_m != null ? (
           <text
             x={Math.min(W - PAD, Math.max(PAD, (x(worst.start_m) + x(worst.end_m)) / 2))}
             y={spotY + 17}

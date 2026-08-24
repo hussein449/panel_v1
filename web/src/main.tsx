@@ -47,14 +47,32 @@ function Loader({ onLoad }: { onLoad: (run: Run) => void }) {
         return;
       }
     }
+    // `run.json` is the whole envelope and is preferred, because it is the only file
+    // carrying the limitations. They are assembled when the run is built and live
+    // nowhere else, so a report reassembled from the two halves alone is missing the
+    // page step 4.6 says nothing may remove.
+    const whole = byName["run.json"] as Run | undefined;
+    if (whole?.assessment) {
+      onLoad(whole);
+      return;
+    }
+
     const assessment = byName["assessment.json"];
     if (!assessment) {
-      setError("Select assessment.json — and corridor.json alongside it, if you have one.");
+      setError(
+        "Select run.json — or assessment.json, with corridor.json beside it if you have one.",
+      );
       return;
     }
     onLoad({
       assessment: assessment as Run["assessment"],
       corridor: (byName["corridor.json"] as Run["corridor"]) ?? null,
+      // Absent by construction on this path: all three are properties of a *built*
+      // run, not of either half. Empty rather than invented — the limitations section
+      // prints its own warning when handed nothing, which is the honest outcome.
+      limitations: [],
+      generated_at: "",
+      engine_version: "",
     });
   };
 
