@@ -9,11 +9,12 @@ know it is done. Status is tracked here; what was actually built is logged in
 **Sequencing rule, from the brief:** make the model defensible on two corridors → make it
 modular → then sell it. Stage 1 and Stage 3 are the credibility path. Stage 5 is not.
 
-**Where the build is, 2026-08-21.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
+**Where the build is, 2026-08-24.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
 in, a printed and sourced report out, with every number traceable and a limitations page
-nothing can remove. **Stage 5 is next.** The one thing no stage of it addresses is the
-critical path — this is still validated on two corridors, and a third real road is worth
-more than any of what follows.
+nothing can remove. **Stage 5 has started**, at 5.0 — the layering rule made a test,
+written before the packages that could break it. The one thing no part of Stage 5
+addresses is the critical path: this is still validated on two corridors with synthetic
+crashes, and one real police extract is worth more than any of what follows.
 
 ---
 
@@ -742,12 +743,118 @@ shape — `Assessment.as_dict()` plus `CorridorPanel.as_dict()`, JSON all the wa
 so the API's response body is a payload that exists, and the report page is a React
 component that takes it as a prop. Neither should be written a second time.
 
+**What this stage is for, plainly.** Today the product is a command you run on your own
+machine, and a run is a folder you must not delete. Stage 5 makes it a website: runs are
+stored, long fits happen in the background under a spend cap, a client picks a road on a
+map instead of typing coordinates, and more than one client can do it without seeing each
+other. **It buys reach, not credibility.** The numbers do not improve, and the sequencing
+rule at the top of this file still holds — Stages 1 and 3 are the credibility path, and
+this is not. It is worth building when the bottleneck is *nobody else can use this*, not
+while the bottleneck is *two corridors and synthetic crashes*.
+
+**Two things were re-ordered against the original four steps.**
+
+*Tenancy moved out of 5.4 and into the first migration.* "Two tenants cannot see each
+other's runs" is a property of **storage**, not of authentication — auth is who you are,
+tenancy is which rows exist at all. Retro-fitting an owner key onto project, job and run
+means rewriting every query and every test the stage has accumulated by then. The key
+lands in 5.1b; 5.4 puts real identities behind it.
+
+*The API is asynchronous from its first endpoint.* Measured in this repository already: a
+cold corridor is 55.5 s (2.9), `--bayes` on the demo corridor runs for tens of minutes
+(4.7), and MCMC is minutes when it is reached at all. No HTTP request survives that. If
+`POST /jobs` only starts returning 202 once Celery exists, 5.2 changes the contract and
+breaks every client written against 5.1. So the job resource is 5.1's, and 5.2 swaps what
+executes it.
+
 | | Step | Deliverable | Done when |
 |---|---|---|---|
-| `[ ]` | **5.1** FastAPI | Project CRUD, job submit, result read | OpenAPI schema generated from the registry |
-| `[ ]` | **5.2** Celery worker | Pipeline as a chord: fan-out adapters, join, fit | Per-project spend cap enforced in the runner |
-| `[ ]` | **5.3** Next.js + MapLibre | Corridor map, ranked units, factor provenance, mode banner. The report page from **4.3** becomes the report tab — imported, not rebuilt | Mode banner unmissable on every screen |
-| `[ ]` | **5.4** Accounts + storage | Supabase auth, saved projects, corridor comparison | Two tenants cannot see each other's runs |
+| `[x]` | **5.0** Boundary test | Import-graph assertion: `core` imports nothing from `geo`, `report`, `api`, `worker` | Adding such an import fails a test that names the offending module ✅ |
+| `[ ]` | **5.1a** Contract frozen | Pydantic models mirroring `as_dict()`, a `schema_version`, and `web/src/types.ts` generated from them rather than hand-written | A stored run round-trips through the models; the hand-maintained types are gone |
+| `[ ]` | **5.1b** Storage | Postgres schema — tenant, project, corridor, job, run — payload as JSONB, artefacts by reference, migrations | A run written by the CLI imports and re-renders from the database with no refit |
+| `[ ]` | **5.1c** FastAPI | Project and corridor CRUD, `POST /jobs` → 202, `GET /jobs/{id}`, `GET /runs/{id}`, artefact download | OpenAPI generated, with factors, tiers and licences read from `factors.yaml` |
+| `[ ]` | **5.1d** In-process executor | A runner interface with a synchronous implementation behind it | A demo corridor goes submit → report with no broker running |
+| `[ ]` | **5.2a** Celery chord | Fan-out adapters, join, fit | An adapter failure fails its own branch — the factor is reported missing, the job is not failed |
+| `[ ]` | **5.2b** Cost model + cap | Per-source request accounting, a price table, a per-project cap enforced *before* the call | A job that would breach stops at the boundary, names the source, and the partial run is still a run |
+| `[ ]` | **5.2c** Secrets per tenant | Per-project keys, validated at entry, and an Overpass identity with a rate budget | A scope-less Mapillary token is refused when the key is entered, not rediscovered per run |
+| `[ ]` | **5.3a** Report as a library | `web/src/` splits into `<Report run={run} />` and two thin entry points | The single-file bundle still opens from `file://`; the app renders the same component tree |
+| `[ ]` | **5.3b** Next.js shell | Routes, layout, and the mode banner as a *layout* element | Mode banner unmissable on every screen — no route can omit it |
+| `[ ]` | **5.3c** MapLibre map | Corridor geometry, units coloured by rank, factor provenance on click | Tiles never enter the report path; the document keeps its own SVG map |
+| `[ ]` | **5.3d** Interactive layer | The hover and detail layer 4.4 deferred as screen-only | Native `<title>` still works with JavaScript off |
+| `[ ]` | **5.4a** Auth + RLS | Supabase auth, row-level policies | The *database* refuses a cross-tenant read, proven by querying as tenant B |
+| `[ ]` | **5.4b** Projects + history | Saved runs, re-open, re-render | Yesterday's run opens without a refit |
+| `[ ]` | **5.4c** Corridor comparison | Two corridors side by side with mode, factor coverage and validation outcome | Every number shows the context it was valid in |
+
+### 5.0 — the rule, before there is code able to break it *(done)*
+
+```bash
+pytest tests/test_layering.py
+```
+
+Four rules, checked by parsing the source with `ast` rather than by importing anything —
+half this package is behind optional extras the test suite never installs, so a test that
+imported modules could not see the layers it most needs to police.
+
+| Rule | What it stops |
+|---|---|
+| Imports point downhill only | The layering rule itself, `core → demo → geo → report → api → worker → cli` |
+| `core` imports nothing but `core` | The engine staying runnable on pandas and statsmodels alone |
+| `report` imports nothing but `report` | 4.1's promise — a report renders from JSON, so a run stored months ago still renders |
+| `roadrisk/__init__.py` stays a leaf | **The loophole**, below |
+
+**The loophole is the reason this was worth a step.** `core` imports `roadrisk` for its
+version string. The day the package root re-exports something from `roadrisk.geo`,
+importing the engine imports shapely — while every direct import still points downhill and
+every other check here still passes. The rule as written in the docstring for five stages
+would not have caught it.
+
+A fifth test plants a violation and reads the failure back, because a test that cannot fail
+is decoration. All four were also verified against violations planted in the real source:
+each names the file, the line and the rule.
+
+### The refusal contract — a refusal is a result, not an HTTP error
+
+The largest design risk in this stage. Three outcomes have to stay distinct, and a REST
+instinct collapses all three onto 4xx and 5xx, which would swallow the entire honesty
+layer into a generic error handler:
+
+| Outcome | HTTP | Why |
+|---|---|---|
+| `ContractViolation` at submit | **422**, column named, no job created | The panel was rejected. This is the CLI's refusal receipt, over the wire |
+| Descent to Mode B, dropped terms, a refused weight | **200, completed** | Mode B is the floor. The engine's refusals are *content*, and the run carries them |
+| Overpass 429, absent token, no GDAL | job status `failed`, with a cause | Infrastructure failed. Never a 500 with a stack trace |
+
+A test should assert that a Mode B descent is a 200 carrying its descent receipt.
+
+### 5.1a — why the contract is frozen before the API is written
+
+`web/src/types.ts` is hand-written and deliberately narrow, which was right when one
+renderer read one file. With an API it becomes two hand-maintained descriptions of one
+contract in two languages, and **4.7 already recorded what that costs**:
+`posterior.coefficients` is a mapping and the page typed it as a list, so every row fell
+back silently to its frequentist interval under a *credible interval* heading, and
+survived three steps. Generating one description from the other is the fix that bug
+argues for, which is why this precedes 5.1c rather than following it.
+
+### 5.2 — two traps that are specific to this pipeline
+
+**Nothing counts spend today.** There is no budget accounting anywhere in `src/`; the
+only cost figure in the repository is the 50–150 USD per corridor recorded against the
+unbuilt `mapillary_vision`. The done-when says *enforced in the runner*, so the cost model
+is built here, not wired up — and a cap refusal enters the run log like every other
+refusal in this project.
+
+**The chord is where the cache stops being a cache.** 2.9's store is content-addressed on
+disk for a single user. Parallel adapter branches racing on the same half-degree grid cell
+need a lock or a shared store, or the first corridor pays its 55.5 s several times over.
+
+### 5.3 — the map on the screen is not the map in the document
+
+4.4 drew the corridor as inline SVG in equirectangular projection so that **no external
+image request exists anywhere in the report** — that is its done-when, and it is what lets
+a report be emailed. MapLibre needs a tile source, which is both a network dependency and
+a new attribution obligation. So MapLibre is the screen and the SVG stays the document;
+they are not consolidated.
 
 ---
 

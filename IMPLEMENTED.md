@@ -5,7 +5,125 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-21 (latest) — Step 4.7: coordinates to a readable report in one command. Stage 4 complete.
+## 2026-08-24 (latest) — Step 5.0: the rule, before there is code able to break it
+
+**Delivered:** the layering rule, as a test. `roadrisk.core` must never be imported *by* —
+only imported *from*. That has been written in the package docstring and in `STEPS.md`
+since Stage 0, it has held for five stages, and nothing enforced it.
+
+```bash
+pytest tests/test_layering.py
+```
+
+### Why now, and not later
+
+Stage 5 adds two packages whose entire job is to sit above `core` and call into it. That is
+exactly when a convention stops being enough: an import in the wrong direction is one line
+to write, invisible in review, and a refactor to undo once anything depends on it.
+
+The rule is also the reason several other things in this package are true. The geospatial
+dependencies are an optional extra because `core` never reaches for them. GDAL — needed by
+two adapters of seventeen — is never pulled in by an assessment. `report` renders from JSON
+because it cannot name an engine type. None of those survive a single wrong import, and
+none of them announce their own death when it happens.
+
+### Parsed, not imported
+
+Half this package is behind extras the test suite deliberately does not install: `geo`
+needs shapely and pyproj, the raster adapters need GDAL through rasterio, the MCMC fallback
+needs emcee. A test that imported modules to inspect their dependencies **could not see the
+layers it most needs to police** — it would skip them, or fail for the wrong reason.
+
+So the whole thing is `ast` over the source. It sees every import in the repository whether
+or not it could be executed on this machine, and it costs 0.3 s.
+
+### Four rules, and the fourth is the one the docstring would have missed
+
+| Rule | What it protects |
+|---|---|
+| Imports point downhill only | `core → demo → geo → report → api → worker → cli` |
+| `core` imports nothing but `core` | The engine runs on pandas and statsmodels alone |
+| `report` imports nothing but `report` | 4.1's done-when — a stored run re-renders without a refit |
+| `roadrisk/__init__.py` stays a leaf | The loophole |
+
+**The loophole.** `core` imports `roadrisk` for `__version__`. If the package root ever
+re-exported something from `roadrisk.geo`, then importing the engine would import shapely —
+and every direct import would still point downhill, and the other three rules would still
+pass. The rule as stated for five stages does not cover it, because the violation is
+transitive and the rule is about direct imports.
+
+Proven rather than argued: planting `from roadrisk.geo import demo` in `__init__.py` did not
+merely fail this test, it broke `import roadrisk` outright with a circular-import error
+from `roadrisk.geo.adapters`. The loophole is not theoretical and it is not cheap.
+
+### `demo` sits above `core`, which took a moment's thought
+
+`roadrisk/demo.py` generates the synthetic panels the engine is tested on, so the instinct
+is to file it as a utility underneath everything. It is the opposite: a synthetic panel is
+an *input* to the library, not part of it, and an engine able to reach for its own test
+fixture is a different and worse package. It ranks above `core` and `core` may not import
+it.
+
+Verified as a side effect: `demo.py` imports nothing from `roadrisk` at all.
+
+### `api` and `worker` are declared before they exist
+
+They are in the layer order with nothing in them. That is the point of doing this as 5.0
+rather than after 5.1 — the constraint is in place before the code that could violate it is
+written, so it never has to be retro-fitted against work that already assumed otherwise.
+
+A separate test fails on any package that appears on disk without being placed in the order,
+so a future `roadrisk/billing/` cannot pass by being unmentioned. A layer nobody has placed
+is a layer nothing constrains.
+
+### A test that cannot fail is decoration
+
+Everything above passes today because the rule has held, which means none of it demonstrates
+that a violation would be *caught*. Two answers to that:
+
+- One test plants a violation in a temporary file and reads the failure back, so the
+  detection logic is exercised on every run.
+- All four rules were checked once against violations planted in the real source and then
+  reverted. Each names the file, the line and the rule it broke:
+
+```
+roadrisk\core\engine.py:1196 imports roadrisk.geo.pipeline — 'core' may not import 'geo'
+roadrisk\report\limitations.py:587 imports roadrisk.core.engine
+roadrisk\__init__.py:11 imports roadrisk.report
+```
+
+### The graph as it stands
+
+Clean, and strictly layered, with no relative imports anywhere:
+
+| Layer | Imports |
+|---|---|
+| `core` | `core`, and `roadrisk` for the version string |
+| `demo` | nothing from `roadrisk` |
+| `geo` | `core`, `geo` |
+| `report` | `report` — **not `core`, not `geo`** |
+| `cli` | everything |
+
+`report` importing neither `core` nor `geo` is worth noticing: 4.1 said a report renders
+from `assessment.json` and `corridor.json` with no engine object in scope, and the import
+graph now shows that this is structurally true rather than merely observed. `build_run` is
+duck-typed against anything with an `as_dict()`.
+
+**6 new tests, 769 passing. `ruff check` clean.**
+
+### Known, and deliberately left
+
+- **The relative-import branch is untested against real code**, because the package has no
+  relative imports. It is implemented anyway, so the test does not quietly cease to apply
+  the first time somebody writes one.
+- **`DICT_ONLY` will need to admit the contract package at 5.1a.** The payload schema is
+  pure description with no engine types, so importing it does not cost `report` the property
+  this test exists to protect — but it is a deliberate relaxation and should be recorded as
+  one rather than made quietly.
+
+---
+
+## 2026-08-21 — Step 4.7: coordinates to a readable report in one command. Stage 4 complete.
 
 **Delivered:** the seam. One command from a road to something a client can open, with
 every estimator the engine has reachable from the geometry path — and a mislabelling bug
@@ -3096,12 +3214,13 @@ Regression tests cover exact-zero, floating-point-zero and genuinely-varying col
 ## What is not built
 
 *Stated plainly so nothing here is mistaken for more than it is. Kept current — every
-line below was true on 2026-08-21, after Stage 4 closed. The list this replaced was
-written when Stage 1 was the whole product and had gone comprehensively out of date.*
+line below was true on 2026-08-24, after step 5.0. The list this replaced was written
+when Stage 1 was the whole product and had gone comprehensively out of date.*
 
 - **No web layer, no hosting.** No API, no worker, no accounts, no map UI. Nothing is
   deployed and there is no public URL. The report page is React and Stage 5.3 will
-  import it, but Stage 5 has not begun.
+  import it. Stage 5 has begun, and what exists of it is a **test**: the layering rule
+  that the web layer must not break, written before the web layer.
 - **No persistence.** Every run is a directory of files. There is no database, no
   project, and no way to compare two corridors or re-open yesterday's run except by
   keeping the JSON.
