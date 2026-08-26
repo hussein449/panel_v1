@@ -243,3 +243,9 @@ class Corridor(Payload):
     cache: CacheReport
     fusion_notes: list[str]
     warnings: list[str]
+    #: The centreline, the crashes, or both were invented rather than measured.
+    #:
+    #: Optional rather than required, because runs stored before step 5.1d do not carry
+    #: it at all — and an absent flag means the run predates the question, not that the
+    #: answer is no. `collect_limitations` says only what it knows.
+    synthetic: bool | None = None

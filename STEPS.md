@@ -15,9 +15,13 @@ nothing can remove. **Stage 5 has started.** 5.0 made the layering rule a test, 
 packages that could break it existed; 5.1a froze the payload contract and made
 `web/src/types.ts` a generated file; 5.1b put runs in Postgres, tenant-scoped from the
 first migration; 5.1c serves all of it over HTTP, with the refusal contract enforced by
-exception handler rather than by intention. **Nothing executes a job yet** — `POST /jobs`
-returns 202 and the job stays queued until 5.1d, and `GET /health` says so rather than
-leaving it to be discovered. The one thing no part of Stage 5 addresses is the critical
+exception handler rather than by intention; and 5.1d put a runner behind it, so **the
+whole product now works over HTTP**: `roadrisk serve`, then `POST /jobs` with
+`{"demo": true}`, and a finished assessment comes back in seconds with no broker, no
+network and no data. Step 5.1 is complete. What is still missing is throughput and
+durability — work in flight does not survive a restart, which is 5.2a — and a website
+rather than an API explorer, which is 5.3b. The one thing no part of Stage 5 addresses is
+the critical
 path: this is still validated on two corridors with synthetic crashes, and one real
 police extract is worth more than any of what follows.
 
@@ -783,7 +787,7 @@ executes it.
 | `[x]` | **5.1a** Contract frozen | Pydantic models mirroring `as_dict()`, a `schema_version`, and `web/src/types.ts` generated from them rather than hand-written | A stored run round-trips through the models ✅ · the hand-maintained types are gone ✅ |
 | `[x]` | **5.1b** Storage | Postgres schema — tenant, project, corridor, job, run — payload as JSONB, artefacts by reference, migrations | A run written by the CLI imports and re-renders from the database with no refit ✅ |
 | `[x]` | **5.1c** FastAPI | Project and corridor CRUD, `POST /jobs` → 202, `GET /jobs/{id}`, `GET /runs/{id}`, artefact download | OpenAPI generated ✅ · factors, tiers and licences read from `factors.yaml` ✅ |
-| `[ ]` | **5.1d** In-process executor | A runner interface with a synchronous implementation behind it | A demo corridor goes submit → report with no broker running |
+| `[x]` | **5.1d** In-process executor | A runner interface with a synchronous implementation behind it | A demo corridor goes submit → report with no broker running ✅ |
 | `[ ]` | **5.2a** Celery chord | Fan-out adapters, join, fit | An adapter failure fails its own branch — the factor is reported missing, the job is not failed |
 | `[ ]` | **5.2b** Cost model + cap | Per-source request accounting, a price table, a per-project cap enforced *before* the call | A job that would breach stops at the boundary, names the source, and the partial run is still a run |
 | `[ ]` | **5.2c** Secrets per tenant | Per-project keys, validated at entry, and an Overpass identity with a rate budget | A scope-less Mapillary token is refused when the key is entered, not rediscovered per run |
@@ -832,7 +836,7 @@ layer into a generic error handler:
 |---|---|---|
 | `ContractViolation` at submit | **422**, column named, no job created ✅ | The panel was rejected. This is the CLI's refusal receipt, over the wire |
 | Descent to Mode B, dropped terms, a refused weight | **200, completed** ✅ | Mode B is the floor. The engine's refusals are *content*, and the run carries them |
-| Overpass 429, absent token, no GDAL | job status `failed`, with a cause | Infrastructure failed. Never a 500 with a stack trace ✅ |
+| Overpass 429, absent token, no GDAL | job status `failed`, with a cause ✅ | Infrastructure failed. Never a 500 with a stack trace ✅ |
 
 Enforced in `roadrisk/api/errors.py` as exception handlers rather than as a rule each
 route remembers, and pinned by `tests/test_api.py`: a Mode B descent is a 200 carrying
@@ -841,8 +845,15 @@ and an unhandled exception is a 500 with a logged reference and no traceback in 
 
 **One shape for every refusal, including FastAPI's own.** Its default validation error is
 a bare `{"detail": [...]}`, so it is re-shaped into the same envelope as everything else —
-a client that has to parse two error shapes will parse one and guess at the other. The
-third row's `failed` half waits for something that can fail, which is 5.1d.
+a client that has to parse two error shapes will parse one and guess at the other.
+
+The third row closed at 5.1d, when there was finally something that could fail:
+`roadrisk.api.runner.execute` never raises, because its caller is a pool thread with
+nobody to raise at. Every outcome becomes a status — `rejected` for a panel that broke
+the contract, `failed` with a one-sentence cause for anything else — and the traceback
+goes to the log rather than to the client. **A Mode B run is `succeeded`**, and a test
+says so, because collapsing that into `failed` would put every one of the engine's
+refusals into an error log where nobody reads them.
 
 ### 5.1a — the contract, frozen before the API is written *(done)*
 
@@ -981,6 +992,59 @@ backends like everything else in 5.1b. The delete is guarded *in the store*: mig
 0001 cascades from project through corridor, job and run, so an unguarded
 `DELETE /projects/{id}` destroys every stored assessment filed under it. There is no force
 flag — emptying a project means deleting what is in it, deliberately.
+
+### 5.1d — the runner, and the honesty tax on making demos producible *(done)*
+
+```bash
+roadrisk serve
+# POST /jobs {"project_id": "…", "demo": true} → 202
+# GET  /jobs/{id}          → queued → running → succeeded, in about three seconds
+# GET  /jobs/{id}/run      → the assessment
+```
+
+Three things, deliberately separate. **`execute`** is the work: a plain function over a
+store and a job id, with no web framework, no broker and no runner object in scope — 5.2a's
+Celery task calls this same function, and what changes is who calls it. **`Runner`** is the
+interface, one method, which says nothing about *when*. **Two implementations**, because
+the step asks for a synchronous one and the 202 promised in 5.1c forbids using it behind
+HTTP: `InlineRunner` runs the job before `submit` returns, which is what the tests and a
+CLI want, and `ThreadedRunner` hands it to a bounded pool, which is what keeps a 55.5 s
+cold corridor from becoming a request a proxy times out.
+
+**A thread pool is not a job queue, which is exactly why 5.2a exists.** Work in flight is
+lost on restart, there is no retry, and nothing survives a deploy. What the pool buys is a
+*bound* — unbounded background work inside a web process is how the web process dies — and
+jobs past the limit sit in `queued`, which is what that status means.
+
+**`execute` never raises**, because its caller is a pool thread and there is nobody to
+raise at. A job that ended without a status change is a job nobody can diagnose, so every
+outcome is written down: `rejected` for a panel that broke the input contract, `failed`
+with a one-sentence cause for anything else, and the traceback to the log. It also refuses
+to start a job that is not `queued` — two runners racing one submission, or a retry after a
+restart, must not produce two runs, and this is the only place that can be decided.
+
+**The demo is a product feature, and it has a tax.** `POST /jobs` with `{"demo": true}`
+assesses a synthetic 10 km corridor with an invented crash table: no network, no data, no
+database. It is what makes the API demonstrable, and it is also the first time a
+demonstration report can reach somebody who did not type `--demo` and has no way to tell.
+
+So `synthetic` now travels **in the payload**. `build_corridor_panel` takes it — the caller
+declares it, because nothing in a list of coordinates says whether anybody ever drove it —
+the contract carries it, and the limitations page reports it at **material** severity and
+sorts it ahead of everything else at that severity. A demo report that led with *a factor's
+sign is wrong* would be inviting the reader to take the sign seriously. `roadrisk corridor
+--demo` sets it too, which closes the same gap on the command line where it had been open
+since Stage 4.
+
+**A demo may not use adapters**, and that is refused at submit. Its centreline is invented,
+so an OSM ribbon query along it asks about a road that is not there — and the result would
+be a provenance table naming real sources that were queried somewhere else entirely, which
+is a lie told in the one section whose whole job is saying where numbers came from.
+
+**`GET /jobs/{id}/run`** was added because the reference points from run to job, not the
+other way round: a job exists before its run does. Without it, every client would write the
+same loop over `/runs?project_id=`. A job with no run yet is a 404 that names the status,
+because `queued` means wait and `failed` means never.
 
 ### 5.2 — two traps that are specific to this pipeline
 

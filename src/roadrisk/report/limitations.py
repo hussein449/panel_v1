@@ -92,7 +92,21 @@ def collect_limitations(
     found.extend(_standing(assessment, corridor))
 
     order = {MATERIAL: 0, CAVEAT: 1, CONTEXT: 2}
-    return sorted(found, key=lambda item: order.get(item.severity, 3))
+    # `synthetic_corridor` sorts ahead of everything else that shares its severity, and
+    # it is the only code that gets that. Every other limitation qualifies a real
+    # assessment of a real road; this one says there is no road, which changes how the
+    # reader should read the ones after it. A demo report that led with "a factor's sign
+    # is wrong" would be inviting somebody to take the sign seriously.
+    #
+    # Not a fourth severity level, because the vocabulary is three words with stated
+    # meanings and bending it for one code would cost more than it buys.
+    return sorted(
+        found,
+        key=lambda item: (
+            order.get(item.severity, 3),
+            item.code != "synthetic_corridor",
+        ),
+    )
 
 
 def as_dicts(limitations: Sequence[Limitation]) -> list[dict[str, str]]:
@@ -414,6 +428,31 @@ def _evidence(assessment: Mapping[str, Any]) -> list[Limitation]:
 
 def _geography(corridor: Mapping[str, Any]) -> list[Limitation]:
     found: list[Limitation] = []
+
+    if corridor.get("synthetic"):
+        # Material, because this is not a qualification of the numbers — it is the
+        # statement that there are none. Everything else in this module says a real
+        # road is described less well than it might be; this says there is no road.
+        #
+        # It exists because of step 5.1d. Until then a demonstration report could only
+        # be produced by somebody who had just typed `--demo` and knew what they had.
+        # An API hands one to a person who did not ask for it, and a report that looks
+        # exactly like an assessment is the most expensive thing this tool could get
+        # wrong.
+        found.append(
+            Limitation(
+                code="synthetic_corridor",
+                severity=MATERIAL,
+                title="This is a demonstration. There is no real road here",
+                detail=(
+                    "The centreline, the crash table, or both were generated to "
+                    "exercise the pipeline. The segments, the ranking and every number "
+                    "attached to them describe invented data. Nothing in this report "
+                    "says anything about any road, and none of it may be cited, quoted "
+                    "or acted on."
+                ),
+            )
+        )
 
     snap = corridor.get("snap")
     if snap and snap.get("n_supplied"):

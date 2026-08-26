@@ -35,7 +35,13 @@ pytest.importorskip(
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from roadrisk.api import create_app, shared_store  # noqa: E402
+from roadrisk.api import (  # noqa: E402
+    InlineRunner,
+    ThreadedRunner,
+    create_app,
+    execute,
+    shared_store,
+)
 from roadrisk.api.settings import ApiSettings  # noqa: E402
 from roadrisk.core.engine import assess  # noqa: E402
 from roadrisk.core.registry import (  # noqa: E402
@@ -88,7 +94,35 @@ def settings(tmp_path: Path) -> ApiSettings:
 
 @pytest.fixture
 def client(store: MemoryStore, settings: ApiSettings) -> TestClient:
-    return TestClient(create_app(store_provider=shared_store(store), settings=settings))
+    """An app with **no runner**, so a job stays queued and the test is about the API.
+
+    Everything in this file except the executor tests below is about what the boundary
+    accepts and refuses. Attaching a runner to all of it would fit a model on every
+    submission and turn a fast suite into a slow one for no coverage.
+    """
+    return TestClient(
+        create_app(
+            store_provider=shared_store(store), settings=settings, runner=None
+        )
+    )
+
+
+@pytest.fixture
+def running_client(store: MemoryStore, settings: ApiSettings) -> TestClient:
+    """An app whose jobs actually run, inline.
+
+    Inline rather than threaded on purpose: a test that has to poll a pool for a result
+    is a test that fails on a slow machine. `ThreadedRunner` is what the server uses and
+    is exercised on its own below, where the thing under test *is* the handover.
+    """
+    provider = shared_store(store)
+    return TestClient(
+        create_app(
+            store_provider=provider,
+            settings=settings,
+            runner=InlineRunner(provider),
+        )
+    )
 
 
 @pytest.fixture
@@ -512,16 +546,21 @@ def test_a_submitted_job_is_202_queued_with_a_location(
     assert client.get(f"/jobs/{job['id']}", headers=auth).json()["status"] == "queued"
 
 
-def test_health_admits_that_nothing_executes_jobs(client: TestClient) -> None:
-    """A job that will never run, reported as `queued`, is a service that lies.
+def test_health_names_the_runner_or_admits_there_is_none(
+    client: TestClient, running_client: TestClient
+) -> None:
+    """A job sitting in `queued` means two different things and polling cannot tell them
+    apart.
 
-    `runner: null` is the honest answer at 5.1c, and it is why the client can tell the
-    difference between "not started yet" and "nothing is listening".
+    With a runner it means wait; without one it means nothing is listening and it never
+    will. So `GET /health` names the runner, and reports null when there is not one.
     """
+    assert client.get("/health").json()["runner"] is None
+    assert running_client.get("/health").json()["runner"] == "inline"
+
     body = client.get("/health").json()
     assert body["status"] == "ok"
-    assert body["runner"] is None
-    assert body["auth"] is None
+    assert body["auth"] is None, "Still nobody's identity, until 5.4a."
 
 
 def test_a_job_carries_everything_needed_to_run_it_later(
@@ -637,6 +676,302 @@ def test_a_panel_larger_than_this_deployment_accepts_is_413(
     )
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "too_large"
+
+
+# -- the executor (5.1d) -------------------------------------------------------
+
+
+def test_a_demo_corridor_goes_submit_to_report_with_no_broker_running(
+    running_client: TestClient, auth: dict[str, str], project: dict[str, Any]
+) -> None:
+    """Step 5.1d's done-when, end to end and in one test.
+
+    Submit, follow the job to its run, and render that run into the same report a client
+    receives — with no broker, no network, no database and no crash extract. Everything
+    downstream of `execute` is the machinery Stages 1 to 4 already built; what this
+    proves is that the API reaches it.
+    """
+    from roadrisk.report import render_report
+
+    submitted = running_client.post(
+        "/jobs", json={"project_id": project["id"], "demo": True}, headers=auth
+    )
+    assert submitted.status_code == 202
+    job_id = submitted.json()["id"]
+
+    job = running_client.get(f"/jobs/{job_id}", headers=auth).json()
+    assert job["status"] == "succeeded", job["error"]
+    assert job["started_at"] and job["finished_at"]
+
+    run = running_client.get(f"/jobs/{job_id}/run", headers=auth)
+    assert run.status_code == 200
+    payload = run.json()["payload"]
+    assert payload["corridor"]["segmentation"]["n_units"] > 1
+    assert payload["assessment"]["ranking"]["units"]
+
+    report = render_report(payload)
+    assert report.lstrip().startswith("<!")
+    assert len(report) > 100_000
+
+
+def test_a_demo_report_says_on_its_own_face_that_there_is_no_road(
+    running_client: TestClient, auth: dict[str, str], project: dict[str, Any]
+) -> None:
+    """The honesty tax on making demos producible over an API.
+
+    Before 5.1d a demonstration report could only be made by somebody who had just typed
+    `--demo` and knew exactly what they were holding. An API hands one to a person who
+    did not ask for it, over a link, with no context — and a report that looks exactly
+    like an assessment of a real road is the most expensive thing this tool could get
+    wrong.
+
+    So `synthetic` travels in the payload, the limitations page reports it as material,
+    and it sorts ahead of everything else at that severity — a demo report that led with
+    "a factor's sign is wrong" would be inviting the reader to take the sign seriously.
+    """
+    from roadrisk.report import render_report
+
+    job_id = running_client.post(
+        "/jobs", json={"project_id": project["id"], "demo": True}, headers=auth
+    ).json()["id"]
+    payload = running_client.get(f"/jobs/{job_id}/run", headers=auth).json()["payload"]
+
+    assert payload["corridor"]["synthetic"] is True
+
+    limitations = payload["limitations"]
+    assert limitations[0]["code"] == "synthetic_corridor"
+    assert limitations[0]["severity"] == "material"
+    assert "no real road" in limitations[0]["title"]
+    assert limitations[0]["detail"] in render_report(payload)
+
+
+def test_a_real_corridor_run_is_not_marked_synthetic(
+    store: MemoryStore, tenant: Tenant, mode_a_payload: dict[str, Any]
+) -> None:
+    """The flag has to be able to be false, or it says nothing when it is true.
+
+    `mode_a_payload` is a panel assessed directly, so it has no corridor at all — which
+    is the other half of the same point: a run that never went through the pipeline
+    cannot be marked either way, and `collect_limitations` says only what it knows.
+    """
+    assert mode_a_payload["corridor"] is None
+    codes = {limitation["code"] for limitation in mode_a_payload["limitations"]}
+    assert "synthetic_corridor" not in codes
+
+
+def test_a_panel_job_runs_and_stores_a_run_linked_to_it(
+    running_client: TestClient,
+    auth: dict[str, str],
+    store: MemoryStore,
+    tenant: Tenant,
+    project: dict[str, Any],
+) -> None:
+    """The other source, and the link between a job and what it produced.
+
+    A tiny panel: this is about the executor reaching the engine, not about whether four
+    rows support a model — the engine's answer to that is Mode B, which is a result.
+    """
+    job_id = running_client.post(
+        "/jobs",
+        json={"project_id": project["id"], "panel": a_valid_panel(rows=8)},
+        headers=auth,
+    ).json()["id"]
+
+    job = running_client.get(f"/jobs/{job_id}", headers=auth).json()
+    assert job["status"] == "succeeded", job["error"]
+
+    run = running_client.get(f"/jobs/{job_id}/run", headers=auth).json()
+    assert run["job_id"] == job_id
+    assert run["payload"]["corridor"] is None, "A supplied panel has no geography."
+
+
+def test_mode_b_is_a_succeeded_job_and_not_a_failed_one(
+    running_client: TestClient, auth: dict[str, str], project: dict[str, Any]
+) -> None:
+    """The refusal contract, now that there is something that can actually fail.
+
+    A crash-free panel cannot support Mode A. The engine descends, which is the floor
+    working as designed — so the job **succeeded** and the run carries the descent. If
+    this ever became `failed`, every one of the engine's refusals would end up in an
+    error log where nobody reads them.
+    """
+    crash_free = [dict(row, n_crashes=0) for row in a_valid_panel(rows=8)]
+
+    job_id = running_client.post(
+        "/jobs", json={"project_id": project["id"], "panel": crash_free}, headers=auth
+    ).json()["id"]
+
+    job = running_client.get(f"/jobs/{job_id}", headers=auth).json()
+    assert job["status"] == "succeeded", job["error"]
+    assert job["error"] is None
+
+    run = running_client.get(f"/jobs/{job_id}/run", headers=auth).json()
+    assert run["mode"] == "B"
+    assert run["payload"]["assessment"]["receipts"], "The descent must be explained."
+
+
+def test_a_job_that_breaks_is_failed_with_a_cause_and_not_a_traceback(
+    store: MemoryStore, tenant: Tenant, settings: ApiSettings
+) -> None:
+    """The third row of the refusal contract, which 5.1c could only write down.
+
+    Infrastructure failing is the job's status, with a cause. Not a 500 — nobody is
+    waiting on an HTTP request by then — and not a traceback, because the `error` field
+    is read by a client and a stack trace tells them the shape of our source tree.
+    """
+    from roadrisk.store import Job, JobStatus, Project
+
+    project = store.create_project(Project(tenant_id=tenant.id, name="p"))
+    job = store.create_job(
+        Job(
+            tenant_id=tenant.id,
+            project_id=project.id,
+            # A spec the runner will accept and then fail on: `source` says corridor,
+            # and there is no corridor to read.
+            params={"source": "corridor", "options": {}, "panel": None},
+        )
+    )
+
+    assert execute(store, tenant.id, job.id) is None
+
+    after = store.get_job(tenant.id, job.id)
+    assert after.status is JobStatus.FAILED
+    assert after.error and "Traceback" not in after.error
+    assert after.finished_at is not None
+
+
+def test_a_job_is_executed_once_however_many_times_it_is_submitted(
+    store: MemoryStore, tenant: Tenant
+) -> None:
+    """Two runners racing one job, or a retry after a restart, must not make two runs.
+
+    `create_job` happened in another process, so the only place this can be decided is
+    here — by refusing to start a job that is not `queued`. It is deliberately silent:
+    a second attempt is not an error, it is a duplicate.
+    """
+    from roadrisk.store import Job, Project
+
+    project = store.create_project(Project(tenant_id=tenant.id, name="p"))
+    job = store.create_job(
+        Job(
+            tenant_id=tenant.id,
+            project_id=project.id,
+            params={
+                "source": "panel",
+                "options": {},
+                "panel": a_valid_panel(rows=8),
+            },
+        )
+    )
+
+    first = execute(store, tenant.id, job.id)
+    second = execute(store, tenant.id, job.id)
+
+    assert first is not None
+    assert second is None
+    assert len(store.list_runs(tenant.id, project.id)) == 1
+
+
+def test_the_threaded_runner_returns_before_the_job_finishes(
+    store: MemoryStore, tenant: Tenant
+) -> None:
+    """Which is the whole reason it exists, and why `POST /jobs` is still a 202.
+
+    A cold corridor is 55.5 s. An inline runner behind HTTP would make that a
+    minute-long request that a proxy times out, so the server hands the job to a pool
+    and answers immediately.
+    """
+    from roadrisk.store import Job, JobStatus, Project
+
+    project = store.create_project(Project(tenant_id=tenant.id, name="p"))
+    job = store.create_job(
+        Job(
+            tenant_id=tenant.id,
+            project_id=project.id,
+            params={
+                "source": "panel",
+                "options": {},
+                "panel": a_valid_panel(rows=8),
+            },
+        )
+    )
+
+    runner = ThreadedRunner(shared_store(store), max_workers=1)
+    try:
+        runner.submit(tenant.id, job.id)
+        # `shutdown(wait=True)` is the join. Without it this test would be a race
+        # against the pool rather than an assertion about it.
+        runner.shutdown(wait=True)
+    finally:
+        runner.shutdown(wait=False)
+
+    assert store.get_job(tenant.id, job.id).status is JobStatus.SUCCEEDED
+    assert runner.name == "in-process"
+
+
+def test_a_job_with_no_run_yet_says_why(
+    client: TestClient,
+    auth: dict[str, str],
+    project: dict[str, Any],
+    corridor: dict[str, Any],
+) -> None:
+    """404 naming the status, because "not found" alone is not something to act on.
+
+    `queued` and `running` mean wait; `rejected` and `failed` mean there will never be
+    one and the job's own `error` says what happened. This client has no runner, so the
+    job is queued for ever — which is exactly the case a message has to cover.
+    """
+    job_id = client.post(
+        "/jobs",
+        json={"project_id": project["id"], "corridor_id": corridor["id"]},
+        headers=auth,
+    ).json()["id"]
+
+    response = client.get(f"/jobs/{job_id}/run", headers=auth)
+
+    assert response.status_code == 404
+    assert "queued" in response.json()["error"]["message"]
+
+
+def test_a_demo_may_not_reach_for_real_sources(
+    client: TestClient, auth: dict[str, str], project: dict[str, Any]
+) -> None:
+    """Its centreline is invented, so an adapter would be asking about a road that is
+    not there.
+
+    Refused at submit rather than producing a corridor whose provenance table lists real
+    sources that were queried somewhere else entirely — which would be a lie told in the
+    one section of the report whose whole job is saying where numbers came from.
+    """
+    response = client.post(
+        "/jobs",
+        json={
+            "project_id": project["id"],
+            "demo": True,
+            "params": {"adapters": ["osm", "rasters"]},
+        },
+        headers=auth,
+    )
+
+    assert response.status_code == 422
+    assert "does not exist" in response.json()["error"]["message"]
+
+
+def test_exactly_one_source_still_holds_with_three_of_them(
+    client: TestClient, auth: dict[str, str], project: dict[str, Any]
+) -> None:
+    for body in (
+        {"project_id": project["id"]},
+        {"project_id": project["id"], "demo": True, "panel": a_valid_panel()},
+        {
+            "project_id": project["id"],
+            "demo": True,
+            "corridor_id": "00000000-0000-0000-0000-000000000001",
+        },
+    ):
+        response = client.post("/jobs", json=body, headers=auth)
+        assert response.status_code == 422, body
+        assert "exactly one" in response.json()["error"]["message"]
 
 
 # -- runs and artefacts --------------------------------------------------------

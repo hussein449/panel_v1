@@ -261,6 +261,15 @@ class MemoryStore:
         ]
         return sorted(matching, key=_created, reverse=True)[:limit]
 
+    def find_run_for_job(self, tenant_id: UUID, job_id: UUID) -> Run | None:
+        self.get_job(tenant_id, job_id)
+        matching = [
+            r
+            for r in self._runs.values()
+            if r.tenant_id == tenant_id and r.job_id == job_id
+        ]
+        return max(matching, key=_created) if matching else None
+
     # -- artefacts -------------------------------------------------------------
 
     def add_artefact(self, artefact: Artefact) -> Artefact:

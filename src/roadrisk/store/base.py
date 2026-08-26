@@ -229,6 +229,20 @@ class Store(Protocol):
         """Newest first. Returns rows with their payloads; see the note in the module."""
         ...
 
+    def find_run_for_job(self, tenant_id: UUID, job_id: UUID) -> Run | None:
+        """The run a job produced, or None if it has not produced one.
+
+        The reference points from run to job rather than the other way round — a job
+        exists before its run does, so the column has to live on the row created second.
+        That makes "what did this job produce" a lookup rather than a field, which is
+        what this is.
+
+        None rather than :class:`NotFound`, because a queued job legitimately has no
+        run and that is not an error. `NotFound` is still raised for a job that is not
+        this tenant's, so the disclosure rule holds.
+        """
+        ...
+
     # -- artefacts -------------------------------------------------------------
 
     def add_artefact(self, artefact: Artefact) -> Artefact: ...

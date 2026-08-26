@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import Depends, Header, Request, status
@@ -96,6 +96,16 @@ def get_store(request: Request) -> Iterator[Store]:
         yield store
 
 
+def get_runner(request: Request) -> Any | None:
+    """What executes jobs, or None when nothing does.
+
+    Optional on purpose. A deployment that only serves stored runs — a read replica, a
+    reporting front end — has no reason to be able to fit a model, and `GET /health`
+    reports `runner: null` so a client can tell that from a runner that is merely busy.
+    """
+    return request.app.state.runner
+
+
 def get_tenant(
     x_tenant_id: Annotated[
         str | None,
@@ -136,16 +146,22 @@ TenantId = Annotated[UUID, Depends(get_tenant)]
 StoreDep = Annotated[Store, Depends(get_store)]
 SettingsDep = Annotated[ApiSettings, Depends(get_settings)]
 RegistryDep = Annotated[Registry, Depends(get_registry)]
+# Typed loosely rather than as `Runner | None`, because FastAPI would otherwise try to
+# build a request model out of the protocol. Nothing is gained by the narrower
+# annotation here — the only caller checks for None and calls `submit`.
+RunnerDep = Annotated[Any, Depends(get_runner)]
 
 
 __all__ = [
     "TENANT_HEADER",
     "RegistryDep",
+    "RunnerDep",
     "SettingsDep",
     "StoreDep",
     "StoreProvider",
     "TenantId",
     "get_registry",
+    "get_runner",
     "get_settings",
     "get_store",
     "get_tenant",

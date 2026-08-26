@@ -53,6 +53,7 @@ from __future__ import annotations
 from roadrisk.api.app import create_app
 from roadrisk.api.deps import StoreProvider, per_request_postgres, shared_store
 from roadrisk.api.errors import ApiRefusal, ErrorBody, ErrorCode, Refusal
+from roadrisk.api.runner import InlineRunner, Runner, ThreadedRunner, execute
 from roadrisk.api.settings import ApiSettings
 
 __all__ = [
@@ -60,9 +61,13 @@ __all__ = [
     "ApiSettings",
     "ErrorBody",
     "ErrorCode",
+    "InlineRunner",
     "Refusal",
+    "Runner",
     "StoreProvider",
+    "ThreadedRunner",
     "create_app",
+    "execute",
     "per_request_postgres",
     "shared_store",
 ]

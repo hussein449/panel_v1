@@ -367,6 +367,19 @@ class PostgresStore:
             )
         return [_run(row) for row in rows]
 
+    def find_run_for_job(self, tenant_id: UUID, job_id: UUID) -> Run | None:
+        # `get_job` first, so a job belonging to another tenant raises NotFound rather
+        # than returning None. None has to mean "this job has produced nothing yet";
+        # letting it also mean "not yours" would tell a caller that a guessed id is not
+        # real, which is the disclosure `NotFound` exists to prevent.
+        self.get_job(tenant_id, job_id)
+        row = self._maybe(
+            f"SELECT {self._RUN_COLUMNS} FROM run WHERE tenant_id = %s AND job_id = %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (tenant_id, job_id),
+        )
+        return _run(row) if row is not None else None
+
     # -- artefacts -------------------------------------------------------------
 
     _ARTEFACT_COLUMNS = (

@@ -30,7 +30,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response, status
 
-from roadrisk.api.deps import RegistryDep, SettingsDep, StoreDep, TenantId
+from roadrisk.api.deps import (
+    RegistryDep,
+    RunnerDep,
+    SettingsDep,
+    StoreDep,
+    TenantId,
+)
 from roadrisk.api.errors import (
     HTTP_413,
     HTTP_422,
@@ -41,7 +47,7 @@ from roadrisk.api.errors import (
 from roadrisk.api.schemas import JobSpec, JobSubmission
 from roadrisk.core.contract import prepare_panel
 from roadrisk.core.registry import Registry
-from roadrisk.store import Job
+from roadrisk.store import Job, JobStatus, Run
 
 router = APIRouter(tags=["jobs"], responses=REFUSAL_RESPONSES)
 
@@ -66,6 +72,7 @@ def submit_job(
     store: StoreDep,
     settings: SettingsDep,
     registry: RegistryDep,
+    runner: RunnerDep,
     response: Response,
 ) -> Job:
     """Accept a job, or refuse it before it exists.
@@ -78,7 +85,9 @@ def submit_job(
     store.get_project(tenant_id, body.project_id)
     _reject_unknown_shape_factors(body.params.shape_factors, registry)
 
-    if body.corridor_id is not None:
+    if body.demo:
+        spec = JobSpec(source="demo", options=body.params)
+    elif body.corridor_id is not None:
         corridor = store.get_corridor(tenant_id, body.corridor_id)
         if corridor.project_id != body.project_id:
             raise ApiRefusal(
@@ -116,6 +125,15 @@ def submit_job(
             params=spec.model_dump(mode="json"),
         )
     )
+
+    # Handed over only once the row exists, and only after every check above. A runner
+    # given an id it cannot read yet is a race; a runner given a job that should have
+    # been refused is work nobody asked for. With no runner configured the job stays
+    # `queued` and `GET /health` reports `runner: null` — which is the honest state, not
+    # a broken one.
+    if runner is not None:
+        runner.submit(tenant_id, job.id)
+
     response.headers["Location"] = f"/jobs/{job.id}"
     return job
 
@@ -134,10 +152,53 @@ def get_job(job_id: UUID, tenant_id: TenantId, store: StoreDep) -> Job:
     `error` and never a stack trace. `rejected` is the panel breaking the input
     contract, where nothing malfunctioned.
 
-    At 5.1c nothing executes jobs, so every job here stays `queued`. `GET /health`
-    reports `runner: null` for exactly that reason.
+    A job that stays `queued` for ever means no runner is attached; `GET /health` says
+    which one is, by name, so that is answerable without guessing.
     """
     return store.get_job(tenant_id, job_id)
+
+
+@router.get(
+    "/jobs/{job_id}/run",
+    response_model=Run,
+    summary="The run a job produced",
+    responses={
+        404: {"description": "No such job, or it has not produced a run."},
+    },
+)
+def get_job_run(job_id: UUID, tenant_id: TenantId, store: StoreDep) -> Run:
+    """Follow a finished job to its result, without searching for it.
+
+    The reference points from run to job rather than the other way round, because a job
+    exists before its run does and the column has to live on the row created second. So
+    this is a lookup, and it is here because the alternative — listing a project's runs
+    and matching on `job_id` yourself — is a thing every client would have to write.
+
+    A job with no run yet is a 404 that says *why*, naming the status: `queued` and
+    `running` mean wait, `rejected` and `failed` mean there will never be one and the
+    job's own `error` says what happened.
+    """
+    found = store.find_run_for_job(tenant_id, job_id)
+    if found is not None:
+        return found
+
+    job = store.get_job(tenant_id, job_id)
+    raise ApiRefusal(
+        status.HTTP_404_NOT_FOUND,
+        ErrorCode.NOT_FOUND,
+        f"Job {job_id} has produced no run: it is {job.status.value}."
+        + (
+            f" {job.error}"
+            if job.error
+            else " Poll this job until it succeeds."
+            if job.status in _PENDING
+            else ""
+        ),
+    )
+
+
+#: Statuses from which a run may still appear. The rest are terminal without one.
+_PENDING = frozenset({JobStatus.QUEUED, JobStatus.RUNNING})
 
 
 @router.get(

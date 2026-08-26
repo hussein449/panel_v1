@@ -736,7 +736,7 @@
       },
       "JobSubmission": {
         "additionalProperties": false,
-        "description": "One request to assess something. Exactly one of `corridor_id` or `panel`.\n\nTwo ways in, because the command line has two: `roadrisk corridor` builds a panel\nfrom geography, `roadrisk assess` judges one you already have. Neither is the\ndegraded case.",
+        "description": "One request to assess something. Exactly one of `corridor_id`, `panel` or `demo`.\n\nThree ways in. Two of them are the command line's: `roadrisk corridor` builds a\npanel from geography, `roadrisk assess` judges one you already have, and neither is\nthe degraded case. The third is the demonstration, which exists so that this API can\nbe tried end to end without a road, a crash extract or a network.",
         "properties": {
           "corridor_id": {
             "anyOf": [
@@ -749,6 +749,12 @@
               }
             ],
             "title": "Corridor Id"
+          },
+          "demo": {
+            "default": false,
+            "description": "Assess a synthetic 10 km corridor with an invented crash table. Needs no network and no data. **The resulting report says on its own face that there is no real road in it** \u2014 the flag travels into the payload and the limitations page reports it as material, so a demonstration cannot be mistaken for an assessment by whoever you send it to.",
+            "title": "Demo",
+            "type": "boolean"
           },
           "panel": {
             "anyOf": [
@@ -1316,7 +1322,7 @@
     }
   },
   "info": {
-    "description": "\nCorridor road-risk assessment from open data, with provenance.\n\n**Two things this deployment does not yet do, stated here rather than discovered.**\n\n* **Nothing executes jobs.** `POST /jobs` stores a job and returns `202`. It stays\n  `queued` until step 5.1d attaches a runner. `GET /health` reports `runner: null`.\n* **`X-Tenant-Id` is not authentication.** It scopes every read to one tenant, which is\n  what keeps two clients' runs apart, but nothing verifies the claim. Step 5.4a\n  replaces it with real identities and row-level policies in the database.\n\n**A refusal is a result, not an error.** A panel that breaks the input contract is a\n`422` naming the column, and no job is created. An assessment that descended to Mode B,\ndropped a term or declined to score an unsourced weight is a **`200`** \u2014 those are\nfindings the run carries, not failures. Infrastructure breaking is a job whose status is\n`failed`, with a cause.\n\nPayload shape version `1.0`. Factors, tiers and licences come from\n`factors.yaml`; `GET /registry` serves it with the hash of the file it was read from.\n",
+    "description": "\nCorridor road-risk assessment from open data, with provenance.\n\n**Start here: `POST /jobs` with `{\"project_id\": \"\u2026\", \"demo\": true}`.** It assesses a\nsynthetic 10 km corridor, needs no data and no network, and finishes in seconds \u2014 submit\nit, poll `GET /jobs/{id}` until it succeeds, then read `GET /jobs/{id}/run`. The\nreport that comes back says on its own face that there is no real road in it.\n\n**Two things about this deployment, stated here rather than discovered.**\n\n* **Jobs run inside this process.** `POST /jobs` returns `202` and a bounded pool picks\n  the job up; work in flight does not survive a restart, and there is no retry. Step\n  5.2a moves execution onto workers. `GET /health` names the runner this process has,\n  and reports `null` if it has none \u2014 in which case a job stays `queued` for ever.\n* **`X-Tenant-Id` is not authentication.** It scopes every read to one tenant, which is\n  what keeps two clients' runs apart, but nothing verifies the claim. Step 5.4a\n  replaces it with real identities and row-level policies in the database.\n\n**A refusal is a result, not an error.** A panel that breaks the input contract is a\n`422` naming the column, and no job is created. An assessment that descended to Mode B,\ndropped a term or declined to score an unsourced weight is a **`200`** \u2014 those are\nfindings the run carries, not failures. Infrastructure breaking is a job whose status is\n`failed`, with a cause and never a stack trace.\n\nPayload shape version `1.0`. Factors, tiers and licences come from\n`factors.yaml`; `GET /registry` serves it with the hash of the file it was read from.\n",
     "summary": "Corridor risk from open data, with every number traceable.",
     "title": "Road Risk Panel",
     "version": "0.1.0"
@@ -1631,7 +1637,7 @@
     },
     "/health": {
       "get": {
-        "description": "Report the versions and the two capabilities this deployment does not yet have.\n\n`runner` and `auth` are null at 5.1c and that is the point of returning them: a\nclient can tell that a job it posts will be stored and queued and never executed,\nrather than watching one sit in `queued` and drawing its own conclusions.",
+        "description": "Report the versions, and what this deployment can and cannot actually do.\n\n`runner` names what executes jobs, or is null when nothing does. That distinction is\nthe point of returning it: a job sitting in `queued` means \"wait\" if there is a\nrunner and \"nothing is listening\" if there is not, and no amount of polling tells\nthe two apart. `auth` is still null and will be until step 5.4a.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -1751,7 +1757,7 @@
     },
     "/jobs/{job_id}": {
       "get": {
-        "description": "Read a job's status.\n\n`succeeded` means the job ran to completion, **not** that Mode A was reached. A run\nthat descended to Mode B, dropped a term or refused an unsourced weight succeeded,\nand carries those findings. `failed` is the machinery breaking, with a cause in\n`error` and never a stack trace. `rejected` is the panel breaking the input\ncontract, where nothing malfunctioned.\n\nAt 5.1c nothing executes jobs, so every job here stays `queued`. `GET /health`\nreports `runner: null` for exactly that reason.",
+        "description": "Read a job's status.\n\n`succeeded` means the job ran to completion, **not** that Mode A was reached. A run\nthat descended to Mode B, dropped a term or refused an unsourced weight succeeded,\nand carries those findings. `failed` is the machinery breaking, with a cause in\n`error` and never a stack trace. `rejected` is the panel breaking the input\ncontract, where nothing malfunctioned.\n\nA job that stays `queued` for ever means no runner is attached; `GET /health` says\nwhich one is, by name, so that is answerable without guessing.",
         "operationId": "get_job_jobs__job_id__get",
         "parameters": [
           {
@@ -1846,6 +1852,101 @@
           }
         },
         "summary": "Where a job got to",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/jobs/{job_id}/run": {
+      "get": {
+        "description": "Follow a finished job to its result, without searching for it.\n\nThe reference points from run to job rather than the other way round, because a job\nexists before its run does and the column has to live on the row created second. So\nthis is a lookup, and it is here because the alternative \u2014 listing a project's runs\nand matching on `job_id` yourself \u2014 is a thing every client would have to write.\n\nA job with no run yet is a 404 that says *why*, naming the status: `queued` and\n`running` mean wait, `rejected` and `failed` mean there will never be one and the\njob's own `error` says what happened.",
+        "operationId": "get_job_run_jobs__job_id__run_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "description": "No such job, or it has not produced a run."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "The run a job produced",
         "tags": [
           "jobs"
         ]

@@ -635,6 +635,11 @@ def corridor(
                 else None
             ),
             ref=ref,
+            # Declared here because only the caller knows: nothing in a list of
+            # coordinates says whether anybody ever drove it. It travels in the payload
+            # and the limitations page reports it at material severity, so a demo report
+            # that leaves this machine cannot be mistaken for an assessment.
+            synthetic=demo_corridor,
         )
     except RoadRiskError as exc:
         _print_rejection(exc)
@@ -996,8 +1001,13 @@ def serve(
 
     from roadrisk.store.postgres import DSN_ENV
 
+    # Both inside the guard, and in this order. `roadrisk.api.app` imports fastapi at
+    # module scope, so pulling it in above would raise a ModuleNotFoundError at the user
+    # before the branch written to explain what is missing could run.
     try:
         import uvicorn
+
+        from roadrisk.api.app import RUNNER_ENV
     except ImportError as exc:
         # The backslash escapes the bracket for Rich, which would otherwise read
         # `[api]` as a markup tag, find no such style, and drop it — printing an
@@ -1018,8 +1028,12 @@ def serve(
         f"http://{host}:{port}  ·  docs at /docs"
     )
     console.print(
-        f"[dim]Storage: {storage}  ·  Runner: none until step 5.1d  ·  "
-        "Auth: none until 5.4a[/dim]"
+        f"[dim]Storage: {storage}  ·  Runner: {os.environ.get(RUNNER_ENV, 'in-process')}"
+        "  ·  Auth: none until 5.4a[/dim]"
+    )
+    console.print(
+        '[dim]Try it: POST /jobs with \\{"project_id": "…", "demo": true} — '
+        "a synthetic corridor, no data and no network needed.[/dim]"
     )
     # The factory, by name, rather than an app object: with --reload uvicorn re-imports
     # the target in a fresh process, and an app built here would be built once in a

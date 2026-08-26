@@ -5,7 +5,161 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-26 (latest) — Step 5.1c: the product, over HTTP
+## 2026-08-26 (latest) — Step 5.1d: something that actually runs the job
+
+**Delivered:** `roadrisk/api/runner.py` — the work, the interface, and two
+implementations of it. A demo corridor goes submit → report with no broker, no network,
+no data and no database. **Step 5.1 is complete**, and the whole product now works over
+HTTP.
+
+```bash
+roadrisk serve
+# POST /jobs {"project_id": "…", "demo": true}  → 202, immediately
+# GET  /jobs/{id}                                → queued → running → succeeded, ~3 s
+# GET  /jobs/{id}/run                            → the assessment
+```
+
+### Three things, kept apart on purpose
+
+`execute` is **the work**: a plain function over a store and a job id, with no web
+framework, no broker and no runner object anywhere in scope. 5.2a's Celery task calls
+this same function; what changes is who calls it and from where. `Runner` is **the
+interface** — one method, `submit`, which deliberately says nothing about *when*. And
+there are **two implementations**, which is the part worth arguing.
+
+The step asks for "a synchronous implementation", and 5.1c promised a **202**. Those
+pull in opposite directions: an inline runner behind HTTP turns the 55.5 s cold corridor
+into a request a proxy times out. So `InlineRunner` runs the job before `submit` returns
+— which is what a test wants, because a test that polls a thread pool is a test that
+fails on a slow machine — and `ThreadedRunner` hands it to a bounded pool and answers
+immediately, which is what the server uses.
+
+**A thread pool is not a job queue, and that is precisely why 5.2a exists.** Work in
+flight is lost if the process stops, there is no retry, and nothing survives a deploy.
+What the pool does buy is a **bound**: unbounded background work inside a web process is
+how the web process dies. Jobs past the limit sit in `queued`, which is exactly what
+that status means, so nobody is lied to. Two workers by default, because a fit is
+CPU-bound and this is sharing a process with the web server.
+
+### `execute` never raises, and that is a rule rather than a style
+
+Its caller is a pool thread. There is nobody to raise at: an exception would be swallowed
+by an executor whose future nobody awaits, and the job would sit in `running` for ever
+with no cause recorded. So every outcome becomes a status.
+
+That is the **third row of the refusal contract**, which 5.1c could only write down
+because there was nothing yet that could fail:
+
+| Outcome | Status | Why |
+|---|---|---|
+| Panel breaks the input contract | `rejected` | Nothing malfunctioned. The receipt naming the column is the whole result |
+| Anything else breaks | `failed`, one sentence | The traceback goes to the log; the `error` field is read by a client |
+| **Descent to Mode B** | **`succeeded`** | Mode B is the floor. The engine's refusals are findings the run carries |
+
+The third line has a test, because collapsing it would put every one of the engine's
+refusals into an error log where nobody reads them.
+
+`execute` also refuses to start a job that is not `queued`, silently. Two runners racing
+one submission, or a retry after a restart, must not produce two runs from one job — and
+since `create_job` happened in another process, this is the only place that can be
+decided.
+
+### The demo is a feature, and it came with a bill
+
+`POST /jobs` with `{"demo": true}` assesses a synthetic 10 km corridor with an invented
+crash table. It needs no network, no crash extract and no database, and it is what makes
+this API something you can actually try. It is also the first time in this project's life
+that **a demonstration report can reach somebody who did not ask for one**. Until now it
+took typing `--demo`, and whoever typed it knew what they were holding.
+
+A report that looks exactly like an assessment of a real road is the most expensive thing
+this tool could get wrong. So:
+
+- `build_corridor_panel` takes `synthetic`, and the **caller declares it** — nothing in a
+  list of coordinates says whether anybody ever drove it;
+- it travels in the payload, so `roadrisk.contract` carries it and a stored run keeps it;
+- `collect_limitations` reads it and emits `synthetic_corridor` at **material** severity;
+- and it sorts **ahead of everything else at that severity**, which is the only code that
+  gets that. A demo report leading with *"a factor's effect came out opposite to what the
+  evidence expects"* would be inviting the reader to take the sign seriously. The right
+  first sentence is *"This is a demonstration. There is no real road here."*
+
+Not a fourth severity level: the vocabulary is three words with stated meanings, and
+bending it for one code would cost more than it buys.
+
+**`roadrisk corridor --demo` sets it too.** That gap had been open since Stage 4 — the
+CLI's demo report was already indistinguishable from a real one — and leaving the two
+surfaces inconsistent would have been worse than either.
+
+**A demo may not use adapters**, refused at submit. The centreline is invented, so an OSM
+ribbon query along it asks about a road that is not there, and a DEM sample returns
+whatever happens to be at those coordinates. The result would be a provenance table naming
+real sources that were queried somewhere else entirely — a lie told in the one section of
+the report whose entire job is saying where the numbers came from.
+
+### `GET /jobs/{id}/run`, because the reference points the other way
+
+A job exists before its run does, so `job_id` lives on the run and there is no `run_id` on
+the job. Without this endpoint every client writes the same loop over
+`/runs?project_id=…` matching on `job_id`. `find_run_for_job` went into the store — both
+backends, conformance-tested — and returns `None` for a job that has produced nothing
+while still raising `NotFound` for a job that is not yours, because letting `None` mean
+both would tell a caller that a guessed id is real.
+
+A job with no run yet is a 404 that **names the status**: `queued` and `running` mean
+wait, `rejected` and `failed` mean there will never be one and the job's own `error` says
+what happened.
+
+### The factory is called by name, so the environment is the only channel
+
+`roadrisk serve` hands uvicorn `"roadrisk.api.app:create_app"` as a string — that is what
+makes `--reload` work, since uvicorn re-imports the target in a fresh process. There is
+nowhere for the CLI to pass a runner in. So `$ROADRISK_RUNNER` picks one (`in-process`,
+`inline`, `none`), which is the same answer storage already gives, and the `runner=`
+argument exists for tests and for whoever composes the process at 5.2a.
+
+That needed a sentinel: "no runner argument was given" and "a runner of `None` was given"
+are both meaningful and they are not the same. The first takes the environment's answer;
+the second is a caller stating that this deployment executes nothing.
+
+**A Celery runner cannot be imported from here**, and that is the layering rule doing its
+job: `worker` sits above `api`, so 5.2a's runner arrives as an argument rather than as a
+branch in `create_app`.
+
+### The drift check earned its keep on its first outing
+
+Adding `GET /jobs/{id}/run` failed `tests/test_api.py` with
+
+```
+docs/openapi.json no longer describes this API. Run: python tools/generate_openapi.py
+  added path:   GET /jobs/{job_id}/run
+```
+
+which is exactly what it was written to do a step earlier — name what moved, rather than
+say the document had drifted and leave somebody to diff 100 kB of JSON.
+
+**15 new tests, 884 passing, 3 skipped. `ruff check` clean.** Verified beyond the suite
+against a real uvicorn process over a socket and real Postgres: `POST /jobs` returned 202
+immediately, the job went `queued → running → succeeded` in about three seconds, and the
+run came back marked synthetic with the demonstration notice leading its limitations.
+
+### Known, and deliberately left
+
+- **A corridor job needs the network and has no test.** The demo and panel paths are
+  covered end to end; `source: "corridor"` fetches from Overpass, which a suite must not.
+  It is exercised by the same `build_corridor_panel` call the CLI has used since Stage 2.
+- **No cancellation.** A submitted job runs. `ThreadedRunner.shutdown` waits for the pool
+  and is called by nothing — a process that stops loses what is in flight, which is the
+  honest description of an in-process executor and the reason 5.2a is next.
+- **No artefacts are written by the runner.** A finished job stores a run, not a
+  `report.html`. Rendering on demand is what 5.3a and 5.3b are for, and writing files the
+  API would then have to serve from an allow-list is work that step will make redundant.
+- **The pool is per process.** Two uvicorn workers means two pools and twice the
+  configured concurrency. Correct for one process, which is what `roadrisk serve` starts.
+
+---
+
+## 2026-08-26 (earlier) — Step 5.1c: the product, over HTTP
 
 **Delivered:** `roadrisk/api/` — thirteen paths over 5.1b's store, the refusal contract
 enforced by exception handler rather than by intention, `factors.yaml` served with the

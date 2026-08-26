@@ -184,11 +184,12 @@ PanelRows = list[dict[str, Any]]
 
 
 class JobSubmission(Body):
-    """One request to assess something. Exactly one of `corridor_id` or `panel`.
+    """One request to assess something. Exactly one of `corridor_id`, `panel` or `demo`.
 
-    Two ways in, because the command line has two: `roadrisk corridor` builds a panel
-    from geography, `roadrisk assess` judges one you already have. Neither is the
-    degraded case.
+    Three ways in. Two of them are the command line's: `roadrisk corridor` builds a
+    panel from geography, `roadrisk assess` judges one you already have, and neither is
+    the degraded case. The third is the demonstration, which exists so that this API can
+    be tried end to end without a road, a crash extract or a network.
     """
 
     project_id: UUID
@@ -199,14 +200,59 @@ class JobSubmission(Body):
         "the input contract before the job exists, so a panel that could never be "
         "assessed never becomes a queued job.",
     )
+    demo: bool = Field(
+        default=False,
+        description=(
+            "Assess a synthetic 10 km corridor with an invented crash table. Needs no "
+            "network and no data. **The resulting report says on its own face that "
+            "there is no real road in it** — the flag travels into the payload and the "
+            "limitations page reports it as material, so a demonstration cannot be "
+            "mistaken for an assessment by whoever you send it to."
+        ),
+    )
     params: JobOptions = Field(default_factory=JobOptions)
+
+    @property
+    def source(self) -> Literal["corridor", "panel", "demo"]:
+        if self.demo:
+            return "demo"
+        return "panel" if self.panel is not None else "corridor"
 
     @model_validator(mode="after")
     def _exactly_one_source(self) -> JobSubmission:
-        if (self.corridor_id is None) == (self.panel is None):
+        chosen = [
+            name
+            for name, given in (
+                ("corridor_id", self.corridor_id is not None),
+                ("panel", self.panel is not None),
+                ("demo", self.demo),
+            )
+            if given
+        ]
+        if len(chosen) != 1:
             raise ValueError(
-                "give exactly one of 'corridor_id' (build the panel from geography) "
-                "or 'panel' (assess one you already have)."
+                "give exactly one of 'corridor_id' (build the panel from geography), "
+                "'panel' (assess one you already have) or 'demo': true (a synthetic "
+                f"corridor that needs nothing). Got {chosen or 'none of them'}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _a_demo_fetches_nothing(self) -> JobSubmission:
+        """Adapters over a synthetic corridor would query the sea.
+
+        The demo centreline is invented, so its coordinates are not a road: an OSM
+        ribbon query along it returns nothing and a DEM sample returns whatever is at
+        those coordinates, which is unrelated to anything in the report. Refused at
+        submit rather than producing a corridor whose provenance table is full of
+        sources that were asked about somewhere else entirely.
+        """
+        if self.demo and self.params.adapters:
+            raise ValueError(
+                "a demo corridor cannot use adapters "
+                f"({', '.join(sorted(self.params.adapters))}): its centreline is "
+                "invented, so a query along it would be asking real sources about a "
+                "road that does not exist."
             )
         return self
 
@@ -220,7 +266,7 @@ class JobSpec(Body):
     somebody forgot to read.
     """
 
-    source: Literal["corridor", "panel"]
+    source: Literal["corridor", "panel", "demo"]
     options: JobOptions
     #: Present only for a panel job. Stored as submitted, not as prepared: `exposure`
     #: and `log_exposure` are derived, and keeping the derivation would freeze a copy of
@@ -373,7 +419,9 @@ class Health(BaseModel):
     engine_version: str
     schema_version: str
     registry_version: str
-    #: What executes jobs. Null means nothing does — see 5.1d.
+    #: What executes jobs, by name — `in-process` for a pool inside this process,
+    #: `inline` for one that runs before the request returns. Null means nothing does,
+    #: and a job posted here will sit in `queued` for ever.
     runner: str | None
     #: How identity is established. Null means the tenant header is taken at its word —
     #: see 5.4a.

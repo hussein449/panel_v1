@@ -324,6 +324,40 @@ def test_artefacts_are_stored_by_reference_never_as_bytes(
         store.list_artefacts(intruder.id, run.id)
 
 
+def test_a_job_leads_to_the_run_it_produced(store, tenant, project, mode_a_payload):
+    """Added at 5.1d, because a client that submits a job needs to find its result.
+
+    The reference points from run to job rather than the other way round — a job exists
+    before its run does, so the column has to live on the row created second. That makes
+    this a lookup rather than a field, and it belongs in the store so both backends
+    answer it the same way.
+    """
+    job = store.create_job(Job(tenant_id=tenant.id, project_id=project.id))
+    assert store.find_run_for_job(tenant.id, job.id) is None
+
+    run = store.store_run(tenant.id, project.id, mode_a_payload, job_id=job.id)
+
+    found = store.find_run_for_job(tenant.id, job.id)
+    assert found is not None and found.id == run.id
+
+
+def test_finding_a_run_for_someone_elses_job_is_not_found_rather_than_none(
+    store, tenant, project
+):
+    """None has to mean "no run yet". Letting it also mean "not your job" would tell a
+    caller that a guessed id is real, which is the disclosure `NotFound` exists to
+    prevent — and it would do it while looking like the ordinary empty answer.
+    """
+    intruder = store.create_tenant(Tenant(name="intruder"))
+    theirs_project = store.create_project(Project(tenant_id=intruder.id, name="t"))
+    theirs = store.create_job(
+        Job(tenant_id=intruder.id, project_id=theirs_project.id)
+    )
+
+    with pytest.raises(NotFound):
+        store.find_run_for_job(tenant.id, theirs.id)
+
+
 # -- editing and deleting ------------------------------------------------------
 #
 # Added at 5.1c, because "project and corridor CRUD" over HTTP needs a U and a D under

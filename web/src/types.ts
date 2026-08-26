@@ -235,6 +235,7 @@ export interface Corridor {
   cache: CacheReport;
   fusion_notes: string[];
   warnings: string[];
+  synthetic?: boolean | null;
 }
 
 /**

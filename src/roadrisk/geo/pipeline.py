@@ -83,6 +83,15 @@ class CorridorPanel:
     cache: CacheReport = field(default_factory=CacheReport)
     factor_columns: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: True when the centreline, the crashes, or both were invented rather than
+    #: measured — the `--demo` corridor, and the API's demo job.
+    #:
+    #: It travels in the payload so the limitations page can read it off the run and say
+    #: so at `material` severity, the same way it reports everything else the run cannot
+    #: support. Step 5.1d is why it exists: until then a demo report could only be
+    #: produced by somebody who had just typed `--demo`, and from 5.1d one can reach a
+    #: person who did not ask for it and has no other way to tell.
+    synthetic: bool = False
 
     @property
     def n_units(self) -> int:
@@ -259,6 +268,7 @@ class CorridorPanel:
             },
             "fusion_notes": list(self.fusion.notes),
             "warnings": list(self.warnings),
+            "synthetic": self.synthetic,
         }
 
 
@@ -299,6 +309,7 @@ def build_corridor_panel(
     longitude_column: str = "longitude",
     period_column: str = "period",
     time_slot_column: str | None = None,
+    synthetic: bool = False,
 ) -> CorridorPanel:
     """Turn a centreline and a crash table into a panel the engine can assess.
 
@@ -346,6 +357,12 @@ def build_corridor_panel(
             reported with the age of what it served.
         latitude_column, longitude_column, period_column, time_slot_column: Column
             names in ``crashes``.
+        synthetic: Declare that the centreline, the crashes, or both were invented
+            rather than measured. It travels in the payload and the limitations page
+            reports it at `material` severity, so a demonstration report cannot be
+            mistaken for an assessment of a real road. The caller declares it because
+            only the caller knows — nothing in a coordinate list says whether anybody
+            drove it.
 
     Returns:
         A :class:`CorridorPanel`. Pass ``.panel`` and ``.snap`` to
@@ -481,6 +498,7 @@ def build_corridor_panel(
         cache=cache_report,
         factor_columns=fusion.columns,
         warnings=warnings,
+        synthetic=synthetic,
     )
 
 
