@@ -16,7 +16,13 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from roadrisk.store.base import InUse, NotFound, PayloadRejected, refuse_if_held
+from roadrisk.store.base import (
+    InUse,
+    NotFound,
+    PayloadRejected,
+    give_up_reason,
+    refuse_if_held,
+)
 from roadrisk.store.payload import read_run_columns, storable
 from roadrisk.store.records import (
     Artefact,
@@ -204,12 +210,47 @@ class MemoryStore:
     ) -> Job:
         job = self.get_job(tenant_id, job_id)
         changes: dict[str, Any] = {"status": status, "error": error}
-        if status is JobStatus.RUNNING and job.started_at is None:
-            changes["started_at"] = _now()
+        if status is JobStatus.RUNNING:
+            changes["attempts"] = job.attempts + 1
+            if job.started_at is None:
+                changes["started_at"] = _now()
         if status in _TERMINAL:
             changes["finished_at"] = _now()
         stored = job.model_copy(update=changes)
         self._jobs[job_id] = stored
+        return stored
+
+    def reclaim_running_jobs(
+        self,
+        *,
+        started_before: datetime | None = None,
+        max_attempts: int = 3,
+    ) -> list[Job]:
+        reclaimed: list[Job] = []
+        for job in sorted(self._jobs.values(), key=_created):
+            if job.status is not JobStatus.RUNNING:
+                continue
+            if started_before is not None and (
+                job.started_at is None or job.started_at >= started_before
+            ):
+                continue
+            reclaimed.append(self._reclaim(job, max_attempts))
+        return reclaimed
+
+    def _reclaim(self, job: Job, max_attempts: int) -> Job:
+        if job.attempts < max_attempts:
+            stored = job.model_copy(
+                update={"status": JobStatus.QUEUED, "error": None, "finished_at": None}
+            )
+        else:
+            stored = job.model_copy(
+                update={
+                    "status": JobStatus.FAILED,
+                    "error": give_up_reason(job.attempts),
+                    "finished_at": _now(),
+                }
+            )
+        self._jobs[job.id] = stored
         return stored
 
     # -- runs ------------------------------------------------------------------

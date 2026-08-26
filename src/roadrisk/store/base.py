@@ -19,6 +19,7 @@ faithful stand-in rather than a convenient fiction.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -68,6 +69,30 @@ class InUse(StoreError):
     deleting what is in it, deliberately. The message names what is still there,
     because "cannot delete" is not something anybody can act on.
     """
+
+
+#: The give-up message, in two halves with the attempt count between them.
+#:
+#: Split rather than formatted, because Postgres builds it per row inside one `UPDATE`
+#: — ``%s || attempts::text || %s`` — while the memory store formats it in Python. One
+#: wording, two ways of assembling it, and the conformance suite asserts they agree.
+#: Writing the sentence twice is how they would stop agreeing.
+GIVE_UP_PREFIX = "Started "
+GIVE_UP_SUFFIX = (
+    " time(s) and never finished — the process running it stopped each time. Not "
+    "started again, in case running it is what stops the process. Submit it again to "
+    "try once more."
+)
+
+
+def give_up_reason(attempts: int) -> str:
+    """What a job says when reclaiming has stopped trying to rescue it.
+
+    Shared by both backends for the same reason :func:`refuse_if_held` is: the
+    conformance suite asserts on the wording, and a caller who has learned to read one
+    refusal must not meet a different sentence from the other backend.
+    """
+    return f"{GIVE_UP_PREFIX}{attempts}{GIVE_UP_SUFFIX}"
 
 
 def refuse_if_held(what: str, held: dict[str, int]) -> None:
@@ -196,7 +221,44 @@ class Store(Protocol):
         *,
         error: str | None = None,
     ) -> Job:
-        """Move a job along. `error` is a cause, never a traceback."""
+        """Move a job along. `error` is a cause, never a traceback.
+
+        Moving a job to `running` counts an attempt, because that is the moment the
+        thing that might not survive begins.
+        """
+        ...
+
+    def reclaim_running_jobs(
+        self,
+        *,
+        started_before: datetime | None = None,
+        max_attempts: int = 3,
+    ) -> list[Job]:
+        """Take back jobs left `running` by a process that is gone.
+
+        **The one read here that is not scoped to a tenant, and it is deliberate.**
+        Every other method takes a tenant with no default, because a query that forgets
+        the filter returns somebody else's rows and looks healthy doing it. This one is
+        an *operator* action — a process is starting, and a process does not belong to a
+        tenant — so pretending it could be tenant-scoped would mean asking a caller to
+        supply an identity that has nothing to do with what is being done. It is named
+        so that reading it says as much.
+
+        A job under the attempt limit goes back to `queued`; one at or over it is
+        `failed`, with a cause naming the attempts. See `Job.attempts` for why the
+        second case has to exist.
+
+        Args:
+            started_before: Only reclaim jobs that started before this. `None` means all
+                of them, which is correct for a single-process deployment where anything
+                still `running` at startup is by definition nobody's. Set it above your
+                longest job if more than one process shares this database, or a starting
+                process will reclaim a job another one is still working on.
+            max_attempts: Past this many starts, a job is failed instead of requeued.
+
+        Returns:
+            The jobs that were changed, with their new status.
+        """
         ...
 
     # -- runs ------------------------------------------------------------------

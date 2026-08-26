@@ -46,7 +46,15 @@ from roadrisk.geo.adapters import (
     read_client_values,
     read_tags,
 )
+from roadrisk.geo.adapters.curvature import slots_for as curvature_slots
+from roadrisk.geo.adapters.grade import SLOTS as GRADE_SLOTS
+from roadrisk.geo.adapters.graph import SLOTS as GRAPH_SLOTS
+from roadrisk.geo.adapters.landcover import SLOTS as LANDCOVER_SLOTS
+from roadrisk.geo.adapters.mapillary import SLOTS as MAPILLARY_SLOTS
+from roadrisk.geo.adapters.osm_density import SLOTS as OSM_DENSITY_SLOTS
+from roadrisk.geo.adapters.osm_tags import SLOTS as OSM_TAG_SLOTS
 from roadrisk.geo.attribution import AttributionReport, collect_attributions
+from roadrisk.geo.branches import Branch, Fanout, SequentialFanout
 from roadrisk.geo.cache import Cache, CacheReport, NullCache
 from roadrisk.geo.cache import collect_notes as collect_cache_notes
 from roadrisk.geo.cached import cached_mapillary, cached_overpass
@@ -310,6 +318,7 @@ def build_corridor_panel(
     period_column: str = "period",
     time_slot_column: str | None = None,
     synthetic: bool = False,
+    fanout: Fanout | None = None,
 ) -> CorridorPanel:
     """Turn a centreline and a crash table into a panel the engine can assess.
 
@@ -357,6 +366,12 @@ def build_corridor_panel(
             reported with the age of what it served.
         latitude_column, longitude_column, period_column, time_slot_column: Column
             names in ``crashes``.
+        fanout: How the adapter branches are run. Defaults to
+            :class:`~roadrisk.geo.branches.SequentialFanout` — one after another, in
+            declaration order. :class:`~roadrisk.geo.branches.ThreadedFanout` overlaps
+            the network-bound ones, which is where a cold corridor's 55.5 s goes.
+            Whichever is used, results come back in declaration order, so the payload is
+            identical either way.
         synthetic: Declare that the centreline, the crashes, or both were invented
             rather than measured. It travels in the payload and the limitations page
             reports it at `material` severity, so a demonstration report cannot be
@@ -407,71 +422,29 @@ def build_corridor_panel(
         panel = apply_counts(panel, outcome.counts)
         warnings.extend(outcome.warnings)
 
-    results: list[AdapterResult] = []
+    # Curvature is computed here rather than inside its branch, because the result is
+    # kept on the CorridorPanel in its own right — the report draws the alignment from
+    # it. Its adapter still runs as a branch like everything else.
+    curvature: CurvatureResult | None = compute_curvature(segmentation) if with_curvature else None
 
-    curvature: CurvatureResult | None = None
-    if with_curvature:
-        curvature = compute_curvature(segmentation)
-        results.append(
-            curvature_adapter(
-                curvature,
-                segmentation,
-                registry=active_registry,
-                adapter=centreline_adapter,
-            )
-        )
-
-    extract = osm
-    if extract is None and osm_client is not None:
-        extract, fetch_warnings = _fetch_extract(corridor, osm_client, ref)
-        warnings.extend(fetch_warnings)
-
-    if extract is not None:
-        warnings.extend(extract.warnings)
-        results.append(
-            read_tags(
-                extract, segmentation, registry=active_registry, ref=ref or extract.ref
-            )
-        )
-        results.append(count_densities(extract, segmentation, registry=active_registry))
-
-    if elevation is not None:
-        results.append(
-            compute_grade(segmentation, elevation, registry=active_registry)
-        )
-    if landcover is not None:
-        results.append(
-            compute_landcover(segmentation, landcover, registry=active_registry)
-        )
-
-    graph = network
-    if graph is None and network_client is not None:
-        graph, network_warnings = _fetch_network(corridor, network_client)
-        warnings.extend(network_warnings)
-    if graph is not None:
-        results.append(
-            compute_traffic_proxy(segmentation, graph, registry=active_registry)
-        )
-
-    if mapillary_client is not None:
-        features, mapillary_warnings = _fetch_features(corridor, mapillary_client)
-        warnings.extend(mapillary_warnings)
-        if features is not None:
-            results.append(
-                compute_object_density(
-                    segmentation, features, registry=active_registry
-                )
-            )
-
-    if client_values is not None:
-        results.append(
-            read_client_values(
-                client_values,
-                segmentation,
-                registry=active_registry,
-                source=client_source,
-            )
-        )
+    branches = _branches(
+        corridor=corridor,
+        segmentation=segmentation,
+        registry=active_registry,
+        curvature=curvature,
+        centreline_adapter=centreline_adapter,
+        osm=osm,
+        osm_client=osm_client,
+        ref=ref,
+        elevation=elevation,
+        landcover=landcover,
+        network=network,
+        network_client=network_client,
+        mapillary_client=mapillary_client,
+        client_values=client_values,
+        client_source=client_source,
+    )
+    results = (fanout or SequentialFanout()).run(branches)
 
     fusion = fuse(results, active_registry)
     values = fusion.values_frame()
@@ -500,6 +473,198 @@ def build_corridor_panel(
         warnings=warnings,
         synthetic=synthetic,
     )
+
+
+def _branches(
+    *,
+    corridor: Corridor,
+    segmentation: Segmentation,
+    registry: Registry,
+    curvature: CurvatureResult | None,
+    centreline_adapter: str,
+    osm: OsmExtract | None,
+    osm_client: OverpassClient | None,
+    ref: str | None,
+    elevation: PointSampler | None,
+    landcover: PointSampler | None,
+    network: RoadGraph | None,
+    network_client: OverpassClient | None,
+    mapillary_client: MapillaryClient | None,
+    client_values: pd.DataFrame | None,
+    client_source: str | None,
+) -> list[Branch]:
+    """Declare the work, in the order its results must come back in.
+
+    **A branch is a source, not a factor.** The OSM ribbon fetch and the two adapters
+    that read it are one branch, because neither adapter can run without the fetch and
+    the fetch is the thing that fails — splitting them would produce two receipts for
+    one failure and imply the second was independently attempted.
+
+    Nothing here runs. The list is a description, which is what lets a fanout choose to
+    run it in place, across threads, or — at the chord — across machines.
+    """
+    branches: list[Branch] = []
+
+    if curvature is not None:
+        branches.append(
+            Branch(
+                name="Curvature from the centreline",
+                slots=curvature_slots(centreline_adapter),
+                run=lambda c=curvature: [
+                    curvature_adapter(
+                        c,
+                        segmentation,
+                        registry=registry,
+                        adapter=centreline_adapter,
+                    )
+                ],
+            )
+        )
+
+    if osm is not None or osm_client is not None:
+        branches.append(
+            Branch(
+                name="The OSM attribute fetch",
+                slots=OSM_TAG_SLOTS + OSM_DENSITY_SLOTS,
+                run=lambda: _osm_branch(corridor, segmentation, registry, osm, osm_client, ref),
+                needs_network=osm is None,
+            )
+        )
+
+    if elevation is not None:
+        branches.append(
+            Branch(
+                name="The Copernicus DEM sample",
+                slots=GRADE_SLOTS,
+                run=lambda: [compute_grade(segmentation, elevation, registry=registry)],
+                needs_network=True,
+            )
+        )
+
+    if landcover is not None:
+        branches.append(
+            Branch(
+                name="The ESA WorldCover sample",
+                slots=LANDCOVER_SLOTS,
+                run=lambda: [
+                    compute_landcover(segmentation, landcover, registry=registry)
+                ],
+                needs_network=True,
+            )
+        )
+
+    if network is not None or network_client is not None:
+        branches.append(
+            Branch(
+                name="The strategic network fetch",
+                slots=GRAPH_SLOTS,
+                run=lambda: _network_branch(
+                    corridor, segmentation, registry, network, network_client
+                ),
+                needs_network=network is None,
+            )
+        )
+
+    if mapillary_client is not None:
+        branches.append(
+            Branch(
+                name="The Mapillary fetch",
+                slots=MAPILLARY_SLOTS,
+                run=lambda: _mapillary_branch(
+                    corridor, segmentation, registry, mapillary_client
+                ),
+                needs_network=True,
+            )
+        )
+
+    if client_values is not None:
+        branches.append(
+            Branch(
+                # No slots: which factors a client table fills depends on which columns
+                # it turned out to carry, and a table that failed while being read never
+                # got far enough to say. A failure here is a note rather than a list of
+                # named absences, which is the honest shape of not knowing.
+                name="The client's own values",
+                slots=(),
+                run=lambda: [
+                    read_client_values(
+                        client_values,
+                        segmentation,
+                        registry=registry,
+                        source=client_source,
+                    )
+                ],
+            )
+        )
+
+    return branches
+
+
+def _osm_branch(
+    corridor: Corridor,
+    segmentation: Segmentation,
+    registry: Registry,
+    osm: OsmExtract | None,
+    client: OverpassClient | None,
+    ref: str | None,
+) -> list[AdapterResult]:
+    """Fetch the ribbon once, then read tags and count densities off it.
+
+    The fetch keeps its own `CorridorError` handler rather than leaning on the branch's:
+    a busy Overpass mirror is the expected failure here and deserves the sentence that
+    was written for it, not a generic receipt. Anything else the fetch or either adapter
+    can throw is caught by the branch.
+    """
+    extract = osm
+    notes: list[str] = []
+    if extract is None and client is not None:
+        extract, fetch_warnings = _fetch_extract(corridor, client, ref)
+        notes.extend(fetch_warnings)
+
+    if extract is None:
+        return [AdapterResult(name="osm", notes=notes)]
+
+    notes.extend(extract.warnings)
+    tags = read_tags(extract, segmentation, registry=registry, ref=ref or extract.ref)
+    densities = count_densities(extract, segmentation, registry=registry)
+    tags.notes.extend(notes)
+    return [tags, densities]
+
+
+def _network_branch(
+    corridor: Corridor,
+    segmentation: Segmentation,
+    registry: Registry,
+    network: RoadGraph | None,
+    client: OverpassClient | None,
+) -> list[AdapterResult]:
+    graph = network
+    notes: list[str] = []
+    if graph is None and client is not None:
+        graph, network_warnings = _fetch_network(corridor, client)
+        notes.extend(network_warnings)
+
+    if graph is None:
+        return [AdapterResult(name="traffic_proxy", notes=notes)]
+
+    result = compute_traffic_proxy(segmentation, graph, registry=registry)
+    result.notes.extend(notes)
+    return [result]
+
+
+def _mapillary_branch(
+    corridor: Corridor,
+    segmentation: Segmentation,
+    registry: Registry,
+    client: MapillaryClient,
+) -> list[AdapterResult]:
+    features, notes = _fetch_features(corridor, client)
+    if features is None:
+        return [AdapterResult(name="mapillary", notes=list(notes))]
+
+    result = compute_object_density(segmentation, features, registry=registry)
+    result.notes.extend(notes)
+    return [result]
 
 
 def _fetch_extract(

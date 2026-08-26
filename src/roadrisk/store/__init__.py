@@ -36,6 +36,7 @@ from roadrisk.store.base import (
     PayloadRejected,
     Store,
     StoreError,
+    give_up_reason,
     refuse_if_held,
 )
 from roadrisk.store.memory import MemoryStore
@@ -79,6 +80,7 @@ __all__ = [
     "StoreError",
     "Tenant",
     "discover",
+    "give_up_reason",
     "migrate",
     "read_run_columns",
     "refuse_if_held",

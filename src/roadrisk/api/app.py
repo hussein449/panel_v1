@@ -10,7 +10,9 @@ a factory makes that an argument rather than a monkey-patch.
 
 from __future__ import annotations
 
+import logging
 import os
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI
@@ -23,8 +25,15 @@ from roadrisk.api.runner import InlineRunner, Runner, ThreadedRunner
 from roadrisk.api.settings import ApiSettings
 from roadrisk.contract import SCHEMA_VERSION
 from roadrisk.core.registry import Registry, load_registry
-from roadrisk.store import MemoryStore
+from roadrisk.store import JobStatus, MemoryStore
 from roadrisk.store.postgres import DSN_ENV
+
+log = logging.getLogger("roadrisk.api")
+
+#: How old a `running` job must be before a starting process reclaims it, in seconds.
+#: Unset means reclaim everything — correct for one process, wrong for several. See
+#: :func:`_reclaim_before`.
+RECLAIM_AFTER_ENV = "ROADRISK_RECLAIM_AFTER_SECONDS"
 
 #: Which runner this process gets: ``in-process`` (a bounded thread pool, the default),
 #: ``inline`` (runs inside the request — for a single-user machine that would rather
@@ -125,7 +134,75 @@ def create_app(
     errors.install(app)
     for router in ROUTERS:
         app.include_router(router)
+
+    if app.state.runner is not None:
+        _reclaim_orphans(app.state.store_provider, app.state.runner)
     return app
+
+
+def _reclaim_orphans(provider: StoreProvider, runner: Runner) -> None:
+    """Take back jobs a previous process left `running`, and start them again.
+
+    **The hole step 5.1d left.** A process that stops mid-job leaves that row `running`
+    for ever: the runner refuses to start a job that is not `queued` — which is what
+    stops two runners producing two runs from one submission — so nothing ever picks it
+    up again, and `GET /jobs/{id}` goes on answering *running, please wait* to a client
+    who will wait for the rest of their life. The inputs were never at risk; the only
+    thing missing was any way to know the work should be done again.
+
+    Done here rather than in a request, because a restart is exactly when it is knowable
+    and because doing it per request would mean every reader paying for a sweep.
+
+    Only when there is a runner. A deployment that executes nothing must not requeue
+    work it cannot do — that would be moving jobs from one kind of stuck to another.
+
+    Failures are logged and swallowed: a database that cannot be reached at startup is a
+    problem, and refusing to serve `GET /health` because of it makes that problem harder
+    to diagnose rather than easier.
+    """
+    try:
+        with provider() as store:
+            reclaimed = store.reclaim_running_jobs(started_before=_reclaim_before())
+    except Exception:
+        log.exception("Could not reclaim orphaned jobs at startup")
+        return
+
+    requeued = [job for job in reclaimed if job.status is JobStatus.QUEUED]
+    for job in requeued:
+        runner.submit(job.tenant_id, job.id)
+
+    if reclaimed:
+        log.warning(
+            "Reclaimed %d job(s) left running by a previous process: %d requeued, "
+            "%d failed after too many attempts.",
+            len(reclaimed),
+            len(requeued),
+            len(reclaimed) - len(requeued),
+        )
+
+
+def _reclaim_before() -> datetime | None:
+    """How old a `running` job must be before a starting process takes it back.
+
+    `None` — reclaim everything still running — is the default and is correct for the
+    deployment that exists: `roadrisk serve` starts one uvicorn process with one pool,
+    so anything `running` when it starts is by definition nobody's.
+
+    Set `$ROADRISK_RECLAIM_AFTER_SECONDS` above your longest job if more than one
+    process shares a database, or a starting process will take back a job another one is
+    still working on. That is the case a heartbeat or a lease owner solves properly, and
+    it belongs with the Celery work in 5.2a rather than here.
+    """
+    raw = os.environ.get(RECLAIM_AFTER_ENV)
+    if not raw:
+        return None
+    try:
+        seconds = float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"${RECLAIM_AFTER_ENV} must be a number of seconds, got {raw!r}."
+        ) from exc
+    return datetime.now(UTC) - timedelta(seconds=seconds)
 
 
 def _default_provider() -> StoreProvider:
@@ -173,6 +250,7 @@ def _worker_count() -> int:
 __all__ = [
     "DEFAULT_RUNNER_WORKERS",
     "DESCRIPTION",
+    "RECLAIM_AFTER_ENV",
     "RUNNER_ENV",
     "RUNNER_WORKERS_ENV",
     "create_app",

@@ -116,6 +116,14 @@ class Job(Record):
     corridor_id: UUID | None = None
     status: JobStatus = JobStatus.QUEUED
     params: dict[str, Any] = Field(default_factory=dict)
+    #: How many times a runner has started this job.
+    #:
+    #: It exists so that reclaiming an orphaned job after a restart is safe rather than
+    #: merely possible. A job whose own execution is what stopped the process would
+    #: otherwise be requeued on every start, and the service would take itself down in a
+    #: loop, on a schedule set by the one thing it cannot survive. Past the limit,
+    #: reclaiming gives up and says so in `error`.
+    attempts: int = 0
     #: Why the machinery failed, or why the panel was refused. Never both, and never a
     #: stack trace — a caller reading this is owed a cause, not a traceback.
     error: str | None = None

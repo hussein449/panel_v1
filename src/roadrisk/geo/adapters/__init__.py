@@ -55,6 +55,7 @@ emits a confidence tier per factor per unit.
 from __future__ import annotations
 
 from roadrisk.geo.adapters.base import (
+    AdapterNotDeclared,
     AdapterResult,
     FactorValues,
     SkippedFactor,
@@ -115,6 +116,7 @@ __all__ = [
     "COPERNICUS_DEM",
     "ESA_WORLDCOVER",
     "OSM_GEOMETRY_ADAPTER",
+    "AdapterNotDeclared",
     "AdapterResult",
     "CarrierMatch",
     "CogSampler",

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -36,6 +37,7 @@ from roadrisk.store import (
     PayloadRejected,
     Project,
     Tenant,
+    give_up_reason,
 )
 
 DSN = os.environ.get("ROADRISK_DATABASE_URL")
@@ -322,6 +324,109 @@ def test_artefacts_are_stored_by_reference_never_as_bytes(
     intruder = store.create_tenant(Tenant(name="intruder"))
     with pytest.raises(NotFound):
         store.list_artefacts(intruder.id, run.id)
+
+
+def test_a_job_left_running_by_a_dead_process_is_requeued(store, tenant, project):
+    """The hole step 5.1d left, closed.
+
+    A process that stops mid-job leaves the row `running`. The runner refuses to start a
+    job that is not `queued` — that is what stops one submission producing two runs — so
+    nothing ever picks it up again, and the API goes on answering "running, please wait"
+    to somebody who will wait for ever.
+    """
+    job = store.create_job(Job(tenant_id=tenant.id, project_id=project.id))
+    store.update_job_status(tenant.id, job.id, JobStatus.RUNNING)
+
+    reclaimed = store.reclaim_running_jobs()
+
+    assert [j.id for j in reclaimed] == [job.id]
+    after = store.get_job(tenant.id, job.id)
+    assert after.status is JobStatus.QUEUED
+    assert after.error is None
+    assert after.attempts == 1, "The start that did not finish still counts."
+
+
+def test_reclaiming_gives_up_on_a_job_that_keeps_killing_the_process(
+    store, tenant, project
+):
+    """A job whose own execution stops the process would otherwise loop for ever.
+
+    Requeued on every start, taking the service down again on a schedule set by the one
+    thing it cannot survive. Past the limit it is failed, and the message says what
+    happened rather than leaving somebody to infer it from a status.
+    """
+    job = store.create_job(Job(tenant_id=tenant.id, project_id=project.id))
+    for _ in range(3):
+        store.update_job_status(tenant.id, job.id, JobStatus.RUNNING)
+        store.reclaim_running_jobs(max_attempts=3)
+
+    store.update_job_status(tenant.id, job.id, JobStatus.RUNNING)
+    (reclaimed,) = store.reclaim_running_jobs(max_attempts=3)
+
+    assert reclaimed.status is JobStatus.FAILED
+    assert reclaimed.error == give_up_reason(4)
+    assert reclaimed.finished_at is not None
+
+
+def test_reclaiming_leaves_jobs_that_are_not_running_alone(
+    store, tenant, project, mode_a_payload
+):
+    """Only `running` is ambiguous. Everything else already said what it was."""
+    queued = store.create_job(Job(tenant_id=tenant.id, project_id=project.id))
+    done = store.create_job(Job(tenant_id=tenant.id, project_id=project.id))
+    store.update_job_status(tenant.id, done.id, JobStatus.RUNNING)
+    store.update_job_status(tenant.id, done.id, JobStatus.SUCCEEDED)
+
+    # Asserted about *these* jobs rather than about the whole sweep. The sweep is
+    # global on purpose — see the cross-tenant test below — so the shared Postgres
+    # session legitimately contains rows other tests left behind, and a test that
+    # demanded an empty result would be asserting the absence of other people's work.
+    touched = {job.id for job in store.reclaim_running_jobs()}
+    assert queued.id not in touched
+    assert done.id not in touched
+    assert store.get_job(tenant.id, queued.id).status is JobStatus.QUEUED
+    assert store.get_job(tenant.id, done.id).status is JobStatus.SUCCEEDED
+
+
+def test_reclaiming_can_spare_a_job_that_is_still_young(store, tenant, project):
+    """`started_before` is what makes this safe with more than one process.
+
+    Unset, a starting process takes back everything running — correct when it is the
+    only one. Set above the longest job, it leaves a live process's work alone.
+    """
+    job = store.create_job(Job(tenant_id=tenant.id, project_id=project.id))
+    store.update_job_status(tenant.id, job.id, JobStatus.RUNNING)
+
+    spared = store.reclaim_running_jobs(
+        started_before=datetime.now(UTC) - timedelta(hours=1)
+    )
+
+    assert job.id not in {reclaimed.id for reclaimed in spared}
+    assert store.get_job(tenant.id, job.id).status is JobStatus.RUNNING
+
+
+def test_reclaiming_crosses_tenants_because_a_restart_has_no_tenant(store, tenant):
+    """The one read here that is not tenant-scoped, asserted rather than assumed.
+
+    Every other method takes a tenant with no default. This one cannot: a process
+    starting up does not belong to one, and requiring an identity that has nothing to do
+    with the operation would make the rule harder to read rather than easier to keep.
+    """
+    other = store.create_tenant(Tenant(name="somebody else"))
+    mine = store.create_project(Project(tenant_id=tenant.id, name="mine"))
+    theirs = store.create_project(Project(tenant_id=other.id, name="theirs"))
+
+    planted = set()
+    for owner, project in ((tenant, mine), (other, theirs)):
+        job = store.create_job(Job(tenant_id=owner.id, project_id=project.id))
+        store.update_job_status(owner.id, job.id, JobStatus.RUNNING)
+        planted.add(job.id)
+
+    reclaimed = {job.id: job for job in store.reclaim_running_jobs()}
+
+    # Both, from two different tenants, in one sweep taking no tenant argument.
+    assert planted <= set(reclaimed)
+    assert {reclaimed[job_id].tenant_id for job_id in planted} == {tenant.id, other.id}
 
 
 def test_a_job_leads_to_the_run_it_produced(store, tenant, project, mode_a_payload):

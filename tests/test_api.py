@@ -909,6 +909,85 @@ def test_the_threaded_runner_returns_before_the_job_finishes(
     assert runner.name == "in-process"
 
 
+def test_a_restart_picks_up_a_job_the_previous_process_left_running(
+    store: MemoryStore, tenant: Tenant, settings: ApiSettings, auth: dict[str, str]
+) -> None:
+    """The hole 5.1d left, closed end to end.
+
+    A process that stops mid-job leaves the row `running`, and `execute` refuses to
+    start anything that is not `queued` — so nothing ever picked it up and the API went
+    on answering *running, please wait* to a client who would wait for ever. Starting an
+    app now reclaims it and hands it back to the runner, so the restart that lost the
+    work is also the thing that redoes it.
+    """
+    from roadrisk.store import Job, JobStatus, Project
+
+    project = store.create_project(Project(tenant_id=tenant.id, name="p"))
+    job = store.create_job(
+        Job(
+            tenant_id=tenant.id,
+            project_id=project.id,
+            params={"source": "panel", "options": {}, "panel": a_valid_panel(rows=8)},
+        )
+    )
+    # What a killed process leaves behind: started, never finished, nobody's.
+    store.update_job_status(tenant.id, job.id, JobStatus.RUNNING)
+
+    provider = shared_store(store)
+    create_app(
+        store_provider=provider, settings=settings, runner=InlineRunner(provider)
+    )
+
+    after = store.get_job(tenant.id, job.id)
+    assert after.status is JobStatus.SUCCEEDED, after.error
+    assert store.find_run_for_job(tenant.id, job.id) is not None
+
+
+def test_a_deployment_with_no_runner_does_not_requeue_work_it_cannot_do(
+    store: MemoryStore, tenant: Tenant, settings: ApiSettings
+) -> None:
+    """Moving a job from one kind of stuck to another is not an improvement.
+
+    A read-only deployment — a reporting front end, a replica — has no business taking
+    a job back, because it has nothing to do with it afterwards.
+    """
+    from roadrisk.store import Job, JobStatus, Project
+
+    project = store.create_project(Project(tenant_id=tenant.id, name="p"))
+    job = store.create_job(Job(tenant_id=tenant.id, project_id=project.id))
+    store.update_job_status(tenant.id, job.id, JobStatus.RUNNING)
+
+    create_app(
+        store_provider=shared_store(store), settings=settings, runner=None
+    )
+
+    assert store.get_job(tenant.id, job.id).status is JobStatus.RUNNING
+
+
+def test_a_store_that_cannot_be_reached_at_startup_does_not_stop_the_app(
+    settings: ApiSettings,
+) -> None:
+    """A database that is down is a problem; refusing to serve `/health` because of it
+    makes that problem harder to diagnose rather than easier.
+    """
+    from contextlib import contextmanager
+
+    class Unreachable(MemoryStore):
+        def reclaim_running_jobs(self, **kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("psycopg: connection refused")
+
+    @contextmanager
+    def provider():
+        yield Unreachable()
+
+    app = create_app(
+        store_provider=provider, settings=settings, runner=InlineRunner(provider)
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+
+
 def test_a_job_with_no_run_yet_says_why(
     client: TestClient,
     auth: dict[str, str],

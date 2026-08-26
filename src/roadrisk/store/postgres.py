@@ -21,7 +21,12 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from roadrisk.store.base import NotFound, refuse_if_held
+from roadrisk.store.base import (
+    GIVE_UP_PREFIX,
+    GIVE_UP_SUFFIX,
+    NotFound,
+    refuse_if_held,
+)
 from roadrisk.store.migrate import migrate
 from roadrisk.store.payload import read_run_columns, storable
 from roadrisk.store.records import (
@@ -234,7 +239,7 @@ class PostgresStore:
     # -- jobs ------------------------------------------------------------------
 
     _JOB_COLUMNS = (
-        "id, tenant_id, project_id, corridor_id, status, params, error, "
+        "id, tenant_id, project_id, corridor_id, status, params, attempts, error, "
         "created_at, started_at, finished_at"
     )
 
@@ -281,17 +286,67 @@ class PostgresStore:
     ) -> Job:
         row = self._maybe(
             "UPDATE job SET status = %s, error = %s, "
+            # An attempt is counted at the moment the thing that might not survive
+            # begins, not when it ends — the whole point is to number the starts that
+            # never reached an end.
+            "attempts = CASE WHEN %s = 'running' THEN attempts + 1 ELSE attempts END, "
             "started_at = CASE WHEN %s = 'running' AND started_at IS NULL "
             "                  THEN now() ELSE started_at END, "
             "finished_at = CASE WHEN %s IN ('succeeded', 'failed', 'rejected') "
             "                   THEN now() ELSE finished_at END "
             f"WHERE tenant_id = %s AND id = %s RETURNING {self._JOB_COLUMNS}",
-            (status.value, error, status.value, status.value, tenant_id, job_id),
+            (
+                status.value,
+                error,
+                status.value,
+                status.value,
+                status.value,
+                tenant_id,
+                job_id,
+            ),
         )
         if row is None:
             raise NotFound(f"No job {job_id}.")
         self._connection.commit()
         return _job(row)
+
+    def reclaim_running_jobs(
+        self,
+        *,
+        started_before: datetime | None = None,
+        max_attempts: int = 3,
+    ) -> list[Job]:
+        # No tenant predicate, and it is the only query in this file without one. See
+        # the interface: a process starting up does not belong to a tenant, and asking
+        # a caller for an identity that has nothing to do with the operation would make
+        # the rule harder to read rather than easier to keep.
+        #
+        # One statement rather than a select and a loop of updates, so that two
+        # processes starting at the same moment cannot both reclaim the same row and
+        # both count it.
+        rows = self._all(
+            "UPDATE job SET "
+            "  status = CASE WHEN attempts < %s THEN 'queued' ELSE 'failed' END, "
+            # Built per row from this row's own attempts, so the sentence reports what
+            # actually happened to *this* job rather than the limit it hit.
+            "  error = CASE WHEN attempts < %s THEN NULL "
+            "                ELSE %s || attempts::text || %s END, "
+            "  finished_at = CASE WHEN attempts < %s THEN NULL ELSE now() END "
+            "WHERE status = 'running' "
+            "  AND (%s::timestamptz IS NULL OR started_at < %s::timestamptz) "
+            f"RETURNING {self._JOB_COLUMNS}",
+            (
+                max_attempts,
+                max_attempts,
+                GIVE_UP_PREFIX,
+                GIVE_UP_SUFFIX,
+                max_attempts,
+                started_before,
+                started_before,
+            ),
+        )
+        self._connection.commit()
+        return [_job(row) for row in rows]
 
     # -- runs ------------------------------------------------------------------
 
@@ -505,10 +560,11 @@ def _job(row: tuple[Any, ...]) -> Job:
         corridor_id=row[3],
         status=JobStatus(row[4]),
         params=row[5] or {},
-        error=row[6],
-        created_at=row[7],
-        started_at=row[8],
-        finished_at=row[9],
+        attempts=row[6],
+        error=row[7],
+        created_at=row[8],
+        started_at=row[9],
+        finished_at=row[10],
     )
 
 

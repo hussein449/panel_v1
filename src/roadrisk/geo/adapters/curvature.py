@@ -35,6 +35,21 @@ _FACTORS = {
     "curve_density": CURVE_DENSITY_COLUMN,
 }
 
+#: The factors this module fills. Public because step 5.2a's branches read what a
+#: failure would cost from the adapter's own declaration rather than restating it.
+FACTORS: tuple[str, ...] = tuple(_FACTORS)
+
+
+def slots_for(adapter: str) -> tuple[tuple[str, str], ...]:
+    """The ``(factor, adapter)`` pairs this module fills, for one centreline source.
+
+    A function rather than the `SLOTS` constant every other adapter module carries,
+    because this one's registry slot depends on where the line came from: identical
+    arithmetic over an OSM export and over a client's own alignment, different tier and
+    different licence.
+    """
+    return tuple((factor, adapter) for factor in FACTORS)
+
 
 def curvature_adapter(
     curvature: CurvatureResult,
@@ -95,6 +110,8 @@ def curvature_adapter(
 
 __all__ = [
     "CLIENT_ALIGNMENT_ADAPTER",
+    "FACTORS",
     "OSM_GEOMETRY_ADAPTER",
     "curvature_adapter",
+    "slots_for",
 ]

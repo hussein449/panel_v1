@@ -5,7 +5,162 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-26 (latest) — Step 5.1d: something that actually runs the job
+## 2026-08-26 (latest) — Step 5.2a, part one: a failing adapter costs a factor, not the corridor
+
+**Delivered:** `roadrisk/geo/branches.py` — every adapter is an independently-failable
+branch, the network-bound ones run concurrently, and three cache defects that only exist
+under concurrency are fixed. Plus the hole 5.1d left: a job orphaned by a restart is
+reclaimed instead of sitting in `running` for ever.
+
+**Celery is not built, and this step is `[~]` because of it.** The boxed note under 5.2a
+in [`STEPS.md`](STEPS.md) says what that costs and what picking it up involves.
+
+```bash
+pytest tests/test_branches.py
+```
+
+### The pipeline said "fan out adapters" for three stages and never did
+
+That phrase has been in the module docstring since Stage 2. The adapters ran in a straight
+line, and any one of them raising took the corridor with it. Two things were wrong, and
+the order they were fixed in matters: **isolation first**, because a branch that can poison
+its neighbours poisons a chord too.
+
+Before this, three network fetches degraded — on `CorridorError` only — and **none of the
+eight compute adapters degraded at all**. A `KeyError` out of a malformed Overpass
+response, a rasterio error on a DEM window, a `Timeout` that is not a `CorridorError`: any
+of those lost a corridor whose crashes were already snapped and whose curvature was already
+computed.
+
+Now a failing branch returns a receipt: a `SkippedFactor` per factor it would have filled,
+naming the adapter and the exception type, plus a warning at the top of the run and a
+`factors_absent` entry on the limitations page. "We looked and it broke" and "we did not
+look" have been different statements in this codebase since Stage 2; this is the first
+thing that puts a real failure into the first category.
+
+### What a failure cost is read from the registry, not restated
+
+Every adapter module already publishes `SLOTS` — the `(factor, adapter)` pairs it fills,
+checked against `factors.yaml` before any work is done. A `Branch` carries those, so the
+list of now-missing factors comes from the declaration. Writing it out again inside the
+pipeline would be the drift 5.1a exists to prevent: it would agree with itself for ever
+and with the registry never. A test walks every skipped factor back to `factors.yaml` and
+asserts the adapter really is declared for it.
+
+### One failure is never swallowed, and that needed a new exception type
+
+`resolve()` raises when the code fills a slot the registry does not declare — a renamed
+declaration, a typo'd adapter name. It was a plain `GeoError`, which is also what a bad
+client CSV and an unopenable raster window raise, so branch isolation would have swallowed
+it with the rest.
+
+That distinction is worth a type. A registry mismatch is a bad **build**, not a bad day:
+it is wrong on every corridor for ever, and degrading it would dress a permanently broken
+adapter as a flaky source — the factor would go quietly missing on every run, and the
+report would say in good faith that the data was not there. So `AdapterNotDeclared` exists
+now, four raises use it, and `NEVER_SWALLOWED` names it.
+
+### Threads, not processes, and the reason is what is being overlapped
+
+The measured 55.5 s cold corridor is almost entirely network wait — an OSM ribbon query, a
+much larger regional query, and Mapillary — and those three do not depend on each other.
+The GIL is released for exactly that wait. Processes would have to pickle the segmentation
+out to every branch and `pandas.Series` back, which is real expense to parallelise work
+that was never CPU-bound.
+
+**Results come back in declaration order however the branches finish.** Not incidental:
+fusion groups by factor and the panel takes its column order from the result, so
+completion order would otherwise decide how a report is laid out, and two runs of one
+corridor would differ for a reason nobody could explain. A test asserts a threaded run and
+a sequential run produce byte-identical payloads.
+
+### Three cache defects that only exist under concurrency
+
+STEPS.md warned about this step specifically: *"the chord is where the cache stops being a
+cache."* All three appear only when more than one thing runs at once — which is to say in
+production and nowhere else.
+
+- **The temporary file was named by process id.** Two threads writing one key opened the
+  same path, interleaved their gzip streams, and one renamed a half-written file into
+  place while the other still held it. `get` treats a corrupt entry as a miss and deletes
+  it, so the symptom is not corruption but *a key that silently never caches*, on the
+  busiest region.
+- **`CacheReport.hits += 1` was unguarded.** A load, an add and a store, from branches on
+  different threads sharing one report — and the number that goes wrong is the one printed
+  in the sentence telling a reader how much of their assessment rests on stored data.
+- **Two concurrent misses on one key both fetched.** Two corridors in the same county,
+  running as two jobs in 5.1d's pool. Single-flight now makes the loser wake to a hit.
+
+### And a finding about my own tests, which is the part worth reading
+
+I wrote a test for each of those three, then checked whether they would actually have
+caught the bugs. **Two of them would not.** Racing four writers at the temporary-file bug
+passes against the old code — the payload is small, gzip buffers, and the GIL keeps the
+interleaving from landing most of the time. Racing eight threads at the unguarded counter
+lost nothing in three consecutive runs, for the same reason.
+
+They were decoration: green against the fix and green against the bug. A test that only
+fails sometimes is worse than no test, because it is *believed*.
+
+The temporary-file one was rewritten to assert the property that actually changed — two
+writes to one key take two different temporary paths — which is deterministic, and which I
+verified fails outright against the old implementation. The counter one was deleted: the
+lock is correct by construction, and a passing race proves nothing about a race. The
+single-flight test was kept unchanged, because it fails against the old code every time,
+five fetches against one.
+
+### The hole 5.1d left, which was not in this step's plan
+
+A process that stops mid-job leaves the row `running`. `execute` refuses to start anything
+that is not `queued` — that is what stops one submission producing two runs — so **nothing
+ever picked it up again**, and `GET /jobs/{id}` went on answering *running, please wait* to
+a client who would wait for the rest of their life. The inputs were never at risk;
+`params` holds the panel or the corridor reference. What was missing was any way to know
+the work should be done again.
+
+Migration `0002` adds `job.attempts`, counted at the moment a runner starts a job — the
+moment the thing that might not survive begins. On startup the app reclaims every job left
+`running` and hands the requeued ones straight back to the runner.
+
+`attempts` is what makes that safe rather than merely possible: a job whose own execution
+is what stopped the process would otherwise be requeued on every start, and the service
+would take itself down in a loop, on a schedule set by the one thing it cannot survive.
+Past the limit it is `failed`, with a sentence saying so.
+
+**`reclaim_running_jobs` is the one read in this schema that takes no tenant**, and it is
+named so that reading it says as much. A process starting up does not belong to a tenant,
+and requiring an identity that has nothing to do with the operation would make the rule
+harder to keep rather than easier. It also does nothing when there is no runner — moving a
+job from one kind of stuck to another is not an improvement — and a store that cannot be
+reached at startup is logged and swallowed, because refusing to serve `/health` because
+the database is down makes that problem harder to diagnose.
+
+Verified by killing a real server with `kill -9` mid-job: the row sat at `running` with
+`attempts: 1`, the restart logged *"Reclaimed 1 job(s) left running by a previous process:
+1 requeued"*, and the job ran again to `succeeded`.
+
+### Known, and deliberately left
+
+- **Celery.** See the boxed note in `STEPS.md` under 5.2a. Jobs still run in the web
+  process; there is no retry and nothing survives a deploy.
+- **Single-flight is per process.** Two uvicorn workers, or two machines, still duplicate
+  a fetch. A lock *file* with an expiry and stale-owner recovery is a distributed lock,
+  with everything that implies, to save one duplicated fetch on a cold cache.
+- **Reclaiming assumes one process.** Unset, it takes back everything `running` at
+  startup, which is right for `roadrisk serve` and wrong for two processes sharing a
+  database. `$ROADRISK_RECLAIM_AFTER_SECONDS` is the stopgap; a heartbeat or a lease owner
+  is the answer, and it belongs with Celery.
+- **The client-values branch declares no slots.** Which factors a client table fills
+  depends on which columns it turned out to carry, and a table that failed while being read
+  never got far enough to say. A note and no list of named absences is the honest shape of
+  not knowing.
+- **`ThreadedFanout` is not wired into the API.** The pipeline defaults to sequential and
+  the runner does not override it. Turning it on is one argument, and it should be turned
+  on against a measurement rather than on principle.
+
+---
+
+## 2026-08-26 (earlier) — Step 5.1d: something that actually runs the job
 
 **Delivered:** `roadrisk/api/runner.py` — the work, the interface, and two
 implementations of it. A demo corridor goes submit → report with no broker, no network,

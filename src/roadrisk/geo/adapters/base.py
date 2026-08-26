@@ -35,6 +35,22 @@ from roadrisk.core.registry import Licence, Registry, Tier
 from roadrisk.geo.errors import GeoError
 
 
+class AdapterNotDeclared(GeoError):
+    """The code fills a registry slot that `factors.yaml` does not declare.
+
+    Its own type, rather than a bare `GeoError`, because step 5.2a has to tell two kinds
+    of failure apart. Every other way an adapter can fail is a bad day — a busy Overpass
+    mirror, a DEM window that would not open, a tag that is simply absent — and the
+    branch degrades into a factor reported missing with the reason attached to it.
+
+    This one is a bad *build*. A renamed declaration or a typo'd adapter name is wrong on
+    every corridor and for ever, and degrading it would dress a permanently broken
+    adapter as a flaky source: the factor would go quietly missing on every run and the
+    report would say, in good faith, that the data was not there. So it is never
+    swallowed — see :data:`roadrisk.geo.branches.NEVER_SWALLOWED`.
+    """
+
+
 @dataclass(frozen=True)
 class FactorValues:
     """One factor resolved for every unit, and everything needed to defend it.
@@ -148,22 +164,23 @@ def resolve(
     """Build a :class:`FactorValues`, taking tier and licence from the registry.
 
     Raises:
-        GeoError: The registry does not declare ``adapter_name`` for ``factor_name``.
-            That is a code-versus-registry mismatch, not a data problem: either the
-            adapter is filling a slot nobody declared, or the declaration was renamed
-            and the implementation was not.
+        AdapterNotDeclared: The registry does not declare ``adapter_name`` for
+            ``factor_name``. That is a code-versus-registry mismatch, not a data
+            problem: either the adapter is filling a slot nobody declared, or the
+            declaration was renamed and the implementation was not. Step 5.2a's branch
+            isolation never swallows it, for that reason.
     """
     try:
         factor = registry.by_name(factor_name)
     except KeyError as exc:
-        raise GeoError(
+        raise AdapterNotDeclared(
             f"adapter '{adapter_name}' produced values for '{factor_name}', which is "
             f"not a factor in registry v{registry.version}"
         ) from exc
 
     declared = next((a for a in factor.adapters if a.name == adapter_name), None)
     if declared is None:
-        raise GeoError(
+        raise AdapterNotDeclared(
             f"registry v{registry.version} does not declare an adapter named "
             f"'{adapter_name}' for factor '{factor_name}'. Declared: "
             + ", ".join(a.name for a in factor.adapters)
@@ -197,12 +214,12 @@ def require_slots(registry: Registry, slots: Iterable[tuple[str, str]]) -> None:
         try:
             factor = registry.by_name(factor_name)
         except KeyError as exc:
-            raise GeoError(
+            raise AdapterNotDeclared(
                 f"adapter slot '{adapter_name}' targets factor '{factor_name}', which "
                 f"registry v{registry.version} does not declare"
             ) from exc
         if not any(a.name == adapter_name for a in factor.adapters):
-            raise GeoError(
+            raise AdapterNotDeclared(
                 f"registry v{registry.version} does not declare an adapter named "
                 f"'{adapter_name}' for factor '{factor_name}'. Declared: "
                 + ", ".join(a.name for a in factor.adapters)
@@ -245,6 +262,7 @@ def collect_notes(
 
 
 __all__ = [
+    "AdapterNotDeclared",
     "AdapterResult",
     "FactorValues",
     "SkippedFactor",

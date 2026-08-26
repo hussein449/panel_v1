@@ -34,6 +34,7 @@ import hashlib
 import json
 import math
 import os
+import threading
 import time
 from collections.abc import Iterable
 from contextlib import suppress
@@ -41,6 +42,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 #: Where entries live unless a caller says otherwise. Overridable so a CI run, a
 #: container or a test never writes into somebody's home directory.
@@ -154,7 +156,15 @@ class FileCache:
 
     def put(self, key: str, source: str, payload: Any) -> None:
         path = self.path_for(key)
-        temporary = path.with_suffix(f".{os.getpid()}.tmp")
+        # Unique per *writer*, not per process. The pid alone was enough while one
+        # corridor ran at a time. Step 5.1d put two jobs in a thread pool and 5.2a fans
+        # the adapters out inside each, so two writers now share a pid and genuinely
+        # race: they would open the same temporary path, interleave their gzip streams,
+        # and one would rename a half-written file into place while the other still had
+        # it open. `get` treats a corrupt entry as a miss and deletes it, so the symptom
+        # is not corruption — it is a key that silently never caches, in the busiest
+        # region, which is the hardest kind of performance bug to go looking for.
+        temporary = path.with_suffix(f".{os.getpid()}.{uuid4().hex}.tmp")
 
         try:
             # Inside the try, not before it: a cache directory that cannot be created —
@@ -193,13 +203,21 @@ class CacheReport:
     hits: int = 0
     misses: int = 0
     ages: list[tuple[str, float, str]] = field(default_factory=list)
+    #: One report is shared by every cached client in a corridor, and from step 5.2a
+    #: those clients run on different threads. `self.hits += 1` is a load, an add and a
+    #: store, so two branches recording a hit at once lose one of them — and the number
+    #: that goes wrong is the one printed in the sentence telling a reader how much of
+    #: their assessment rests on stored data.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def record_hit(self, entry: CacheEntry) -> None:
-        self.hits += 1
-        self.ages.append((entry.source, entry.age_days, entry.fetched_on))
+        with self._lock:
+            self.hits += 1
+            self.ages.append((entry.source, entry.age_days, entry.fetched_on))
 
     def record_miss(self) -> None:
-        self.misses += 1
+        with self._lock:
+            self.misses += 1
 
     @property
     def used(self) -> bool:
@@ -225,6 +243,42 @@ class CacheReport:
                 "cache and re-run before presenting this as a current assessment."
             )
         return [note]
+
+
+class SingleFlight:
+    """One in-flight fetch per key, so concurrent misses do not all pay for it.
+
+    Step 5.2a's note in `STEPS.md`: *"the chord is where the cache stops being a cache
+    — parallel adapter branches racing on the same half-degree grid cell need a lock or
+    a shared store, or the first corridor pays its 55.5 s several times over."* Two
+    corridors in the same county, running as two jobs in 5.1d's pool, both miss on the
+    grid-rounded network query and both fetch it. The second one's answer is discarded
+    the moment the first is written.
+
+    So a miss takes a lock named by the key, and re-checks the cache under it: the loser
+    of the race wakes up to a hit. Different keys take different locks and never wait
+    for each other, which is what keeps the fan-out a fan-out.
+
+    **In-process only, and deliberately.** Two uvicorn workers, or two Celery workers on
+    two machines, still duplicate the fetch. Making that not so needs a lock *file* with
+    an expiry and stale-owner recovery — a distributed lock, with everything that
+    implies — to save one duplicated fetch on a cold cache. The correctness of the write
+    does not depend on it: `FileCache.put` renames into place, so the loser overwrites
+    the winner with an identical answer.
+    """
+
+    def __init__(self) -> None:
+        self._locks: dict[str, threading.Lock] = {}
+        # Guards the dictionary itself, and is held only long enough to look a key up.
+        # Never held across a fetch, or every key would wait for every other one.
+        self._guard = threading.Lock()
+
+    def lock_for(self, key: str) -> threading.Lock:
+        with self._guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = self._locks.setdefault(key, threading.Lock())
+            return lock
 
 
 def digest(*parts: object) -> str:
@@ -291,6 +345,7 @@ __all__ = [
     "CacheReport",
     "FileCache",
     "NullCache",
+    "SingleFlight",
     "collect_notes",
     "digest",
     "quantise_bbox",

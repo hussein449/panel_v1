@@ -10,7 +10,9 @@ question "did we go out to the internet" has a definite answer.
 
 from __future__ import annotations
 
+import gzip
 import math
+import threading
 import time
 
 import pytest
@@ -390,3 +392,122 @@ def test_the_network_query_is_the_thing_that_gets_quantised() -> None:
 
     assert "around" not in query, "a corridor-shaped query could not be shared"
     assert query.count("(") >= 1
+
+
+# -- concurrency (5.2a) --------------------------------------------------------
+#
+# None of this mattered while one corridor ran at a time. Step 5.1d put two jobs in a
+# thread pool and 5.2a fans the adapters out inside each, so the cache now has several
+# writers and one shared report. Every defect below appears only under that load — which
+# is to say in production and nowhere else.
+
+
+class _MemoryCache:
+    """A cache with no disk, so a test measures the lock rather than the filesystem."""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, CacheEntry] = {}
+
+    def get(self, key: str) -> CacheEntry | None:
+        return self._entries.get(key)
+
+    def put(self, key: str, source: str, payload: object) -> None:
+        self._entries[key] = CacheEntry(
+            key=key, source=source, payload=payload, fetched_at=time.time()
+        )
+
+
+def test_two_writers_on_one_key_do_not_share_a_temporary_file(
+    tmp_path, monkeypatch
+) -> None:
+    """The temporary name used to be keyed on the pid alone, which is no longer enough.
+
+    Two threads writing one key opened the same path, interleaved their gzip streams,
+    and one renamed a half-written file into place while the other still held it open.
+    `get` treats a corrupt entry as a miss and deletes it, so the symptom is not
+    corruption but a key that silently never caches, on the busiest region.
+
+    **Asserted as a property, not raced for.** Racing two writers and checking the file
+    afterwards passes against the old code: the payload is small, gzip buffers, and the
+    GIL keeps the interleaving from landing most of the time. A test that only fails
+    sometimes is worse than no test, so this asserts the thing that actually changed —
+    two writes to one key take two different temporary paths — which is deterministic
+    and which the old implementation fails outright.
+    """
+    store = FileCache(directory=tmp_path)
+    opened: list[str] = []
+    real_open = gzip.open
+
+    def spy(path, *args, **kwargs):
+        opened.append(str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(gzip, "open", spy)
+    store.put("shared", "overpass", {"n": 1})
+    store.put("shared", "overpass", {"n": 2})
+
+    temporaries = [path for path in opened if path.endswith(".tmp")]
+    assert len(temporaries) == 2
+    assert temporaries[0] != temporaries[1], (
+        "two writers on one key shared a temporary path"
+    )
+    assert list(tmp_path.glob("*.tmp")) == [], "a temporary file was left behind"
+
+
+def test_concurrent_misses_on_one_key_fetch_once() -> None:
+    """STEPS.md's own warning for this step, made a test.
+
+    *"Parallel adapter branches racing on the same half-degree grid cell need a lock or
+    a shared store, or the first corridor pays its 55.5 s several times over."* Two
+    corridors in the same county, running as two jobs in the pool, both miss on the
+    grid-rounded network query. The loser of that race has to wake up to a hit rather
+    than to a second bill.
+    """
+    calls: list[str] = []
+    guard = threading.Lock()
+
+    def slow_client(query: str) -> dict:
+        with guard:
+            calls.append(query)
+        time.sleep(0.05)
+        return {"elements": []}
+
+    store = _MemoryCache()
+    barrier = threading.Barrier(5)
+
+    def ask() -> None:
+        # A separate wrapper per thread, exactly as two jobs in the pool build theirs:
+        # the single-flight registry belongs to the process, not to the wrapper, which
+        # is the only arrangement that covers the case that actually costs anything.
+        client = cached_overpass(slow_client, store, label="network")
+        barrier.wait()
+        client("[out:json];way(1,2,3,4);out;")
+
+    threads = [threading.Thread(target=ask) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(calls) == 1, f"the same question was asked {len(calls)} times"
+
+
+def test_different_keys_never_wait_for_each_other() -> None:
+    """Otherwise single-flight would undo the fan-out it exists to protect."""
+    started = threading.Barrier(3)
+
+    def blocking_client(query: str) -> dict:
+        started.wait(timeout=2.0)
+        return {"elements": []}
+
+    store = _MemoryCache()
+
+    def ask(n: int) -> None:
+        cached_overpass(blocking_client, store, label="network")(f"query {n}")
+
+    threads = [threading.Thread(target=ask, args=(n,)) for n in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), "three different keys serialised on one lock"

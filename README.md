@@ -311,9 +311,12 @@ whole service runs in memory and forgets everything when it stops, which is a re
 try it. `GET /health` says which, and says two other things plainly:
 
 - **`runner`** — what executes jobs, by name. Jobs run in a bounded thread pool inside
-  this process, so work in flight is lost on a restart and there is no retry; step 5.2a
-  moves execution onto workers. `runner: null` means nothing is listening at all and a
-  job will sit in `queued` for ever, which is worth being able to tell apart from *busy*.
+  this process. Work in flight does not survive a restart — but it is not *lost*: a job
+  left `running` by a stopped process is reclaimed the next time the service starts and
+  run again, and one that keeps stopping the process is failed with a message saying so
+  rather than looped on. Proper durability across machines is Celery, which is not built;
+  see the note under 5.2a in [`STEPS.md`](STEPS.md). `runner: null` means nothing is
+  listening at all, which is worth being able to tell apart from *busy*.
 - **`auth: null`** — `X-Tenant-Id` is required on every route that touches a row, and
   nothing verifies it. It scopes rows; it does not prove who you are. Step 5.4a replaces
   it with real identities and row-level policies in the database. `roadrisk serve` binds
@@ -492,6 +495,7 @@ src/roadrisk/
 │   │   ├── mapillary.py     roadside fixed objects from pre-extracted detections
 │   │   ├── client.py        whatever the client measured — first link in every chain
 │   │   └── fusion.py        one value per factor, agreement, confidence per unit
+│   ├── branches.py          adapters as independently-failable units, and the fan-out
 │   ├── cache.py             remember fetches by geography, and report their age
 │   ├── cached.py            the caching wrappers round each network client
 │   └── pipeline.py          the orchestrator

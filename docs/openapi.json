@@ -549,6 +549,11 @@
         "additionalProperties": false,
         "description": "One request to assess a corridor, and where it got to.\n\n`params` is the assessment's own options \u2014 estimator, priors, spatial, which\nadapters to run. Stored as given so that a job can be re-run identically, and so\nthat the manifest's fingerprint has something to be checked against.",
         "properties": {
+          "attempts": {
+            "default": 0,
+            "title": "Attempts",
+            "type": "integer"
+          },
           "corridor_id": {
             "anyOf": [
               {

@@ -20,7 +20,10 @@ whole product now works over HTTP**: `roadrisk serve`, then `POST /jobs` with
 `{"demo": true}`, and a finished assessment comes back in seconds with no broker, no
 network and no data. Step 5.1 is complete. What is still missing is throughput and
 durability — work in flight does not survive a restart, which is 5.2a — and a website
-rather than an API explorer, which is 5.3b. The one thing no part of Stage 5 addresses is
+rather than an API explorer, which is 5.3b. **5.2a is half done**: adapters now fan out and
+a failing one costs a factor rather than the corridor, but the fan-out is across threads in
+one process — Celery is not built, and the boxed note under 5.2a says what that costs and
+what picking it up would involve. The one thing no part of Stage 5 addresses is
 the critical
 path: this is still validated on two corridors with synthetic crashes, and one real
 police extract is worth more than any of what follows.
@@ -788,7 +791,7 @@ executes it.
 | `[x]` | **5.1b** Storage | Postgres schema — tenant, project, corridor, job, run — payload as JSONB, artefacts by reference, migrations | A run written by the CLI imports and re-renders from the database with no refit ✅ |
 | `[x]` | **5.1c** FastAPI | Project and corridor CRUD, `POST /jobs` → 202, `GET /jobs/{id}`, `GET /runs/{id}`, artefact download | OpenAPI generated ✅ · factors, tiers and licences read from `factors.yaml` ✅ |
 | `[x]` | **5.1d** In-process executor | A runner interface with a synchronous implementation behind it | A demo corridor goes submit → report with no broker running ✅ |
-| `[ ]` | **5.2a** Celery chord | Fan-out adapters, join, fit | An adapter failure fails its own branch — the factor is reported missing, the job is not failed |
+| `[~]` | **5.2a** Celery chord | Fan-out adapters ✅, join ✅, fit ✅ — **across threads, not across machines. Celery is not built.** | An adapter failure fails its own branch — the factor is reported missing, the job is not failed ✅ |
 | `[ ]` | **5.2b** Cost model + cap | Per-source request accounting, a price table, a per-project cap enforced *before* the call | A job that would breach stops at the boundary, names the source, and the partial run is still a run |
 | `[ ]` | **5.2c** Secrets per tenant | Per-project keys, validated at entry, and an Overpass identity with a rate budget | A scope-less Mapillary token is refused when the key is entered, not rediscovered per run |
 | `[ ]` | **5.3a** Report as a library | `web/src/` splits into `<Report run={run} />` and two thin entry points | The single-file bundle still opens from `file://`; the app renders the same component tree |
@@ -1046,17 +1049,85 @@ other way round: a job exists before its run does. Without it, every client woul
 same loop over `/runs?project_id=`. A job with no run yet is a 404 that names the status,
 because `queued` means wait and `failed` means never.
 
-### 5.2 — two traps that are specific to this pipeline
+### 5.2a — what is built, and the part that is not *(partly done)*
+
+```bash
+pytest tests/test_branches.py
+```
+
+**Built: isolation.** The done-when — *an adapter failure fails its own branch, the factor
+is reported missing, the job is not failed* — is met and tested. Before this, three of the
+network fetches degraded on `CorridorError` only and **none of the eight compute adapters
+degraded at all**: a `KeyError` out of a malformed Overpass response or a rasterio error
+on a DEM window lost a corridor whose crashes were already snapped and whose curvature was
+already computed. Every adapter is now a `Branch`, and a branch that fails returns a
+receipt — a `SkippedFactor` per factor it would have filled, naming the adapter and the
+exception, plus a warning at the top of the run.
+
+**A branch declares registry slots, not factor names.** Every adapter module already
+publishes `SLOTS`, checked against `factors.yaml` before any work is done, so the list of
+what a failure cost is *read from the declaration* rather than restated where it could
+drift.
+
+**One failure is never swallowed.** `AdapterNotDeclared` — the code filling a slot the
+registry does not declare — is a bad *build*, not a bad day: it is wrong on every corridor
+for ever, and degrading it would dress a permanently broken adapter as a flaky source, so
+the factor would go quietly missing on every run while the report said in good faith that
+the data was not there.
+
+**Built: fan-out, across threads.** The network-bound branches run concurrently, which is
+where the measured 55.5 s cold corridor actually goes. Threads rather than processes,
+because what is overlapped is time on a socket and the GIL is released for exactly that;
+processes would have to pickle the segmentation out and `pandas.Series` back to
+parallelise work that is not CPU-bound. **Results come back in declaration order however
+they finish**, so a threaded run's payload is byte-identical to a sequential one's — a
+test asserts it, because fusion groups by factor and the panel takes its column order from
+the result, so completion order would otherwise decide how a report is laid out.
+
+**Built: the cache trap this step was warned about.** *"Parallel adapter branches racing on
+the same half-degree grid cell need a lock or a shared store, or the first corridor pays
+its 55.5 s several times over."* Three defects, all of which only appear under concurrency
+— which is to say in production and nowhere else. The temporary file `FileCache.put` writes
+was named by process id, so two threads writing one key shared a path. `CacheReport.hits
++= 1` was unguarded, and the number it loses is the one printed in the sentence telling a
+reader how much of their assessment rests on stored data. And two concurrent misses on one
+key both fetched. All three fixed; single-flight is per process, and two processes still
+duplicate a fetch.
+
+> ### ⚠️ Not built: Celery, and it is the reason this row is `[~]`
+>
+> **Jobs still run inside the web process.** Step 5.1d's pool is what executes them, and a
+> pool is not a queue: there is no retry, nothing survives a deploy, and throughput is
+> bounded by one machine. That is the whole point of this step's title and it is
+> outstanding.
+>
+> **What stands in for it today.** A process that stops mid-job used to leave the row
+> `running` for ever — `execute` refuses to start anything that is not `queued`, so nothing
+> picked it up and the API went on answering *running, please wait* to somebody who would
+> wait for the rest of their life. Startup now reclaims those jobs and hands them back to
+> the runner, guarded by `job.attempts` so a job whose own execution kills the process is
+> failed rather than looped on. That closes the *silence*; it does not make the work
+> durable, and it assumes **one process** — `$ROADRISK_RECLAIM_AFTER_SECONDS` exists for
+> anyone who runs more than one, and a heartbeat or a lease owner is the proper answer.
+>
+> **What Celery would actually need, beyond installing it.** The fan-out is over branches,
+> and a branch task needs the segmentation and returns `FactorValues`. Both are already
+> JSON-shaped — they are in `corridor.json` — so it is viable, but it is serialisation to
+> write in both directions. The alternative shape, fanning out over *fetches* and letting
+> the results flow through the cache, needs the cache to be shared across machines, which
+> is object storage at 6.2. **Neither is a small change, and the decision between them is
+> the first thing to make when this is picked up.**
+>
+> **When it becomes urgent:** the day this runs on a server that gets deployed, or the day
+> one machine is not enough. Not before.
+
+### 5.2 — the other trap
 
 **Nothing counts spend today.** There is no budget accounting anywhere in `src/`; the
 only cost figure in the repository is the 50–150 USD per corridor recorded against the
 unbuilt `mapillary_vision`. The done-when says *enforced in the runner*, so the cost model
-is built here, not wired up — and a cap refusal enters the run log like every other
+is built at 5.2b, not wired up — and a cap refusal enters the run log like every other
 refusal in this project.
-
-**The chord is where the cache stops being a cache.** 2.9's store is content-addressed on
-disk for a single user. Parallel adapter branches racing on the same half-degree grid cell
-need a lock or a shared store, or the first corridor pays its 55.5 s several times over.
 
 ### 5.3 — the map on the screen is not the map in the document
 
