@@ -6,11 +6,14 @@ from roadrisk.core.registry.loader import (
     parse_registry,
 )
 from roadrisk.core.registry.schema import (
+    LICENCE_POLICY,
+    TIER_MEANING,
     Adapter,
     CrashScope,
     FacilityType,
     Factor,
     Licence,
+    LicencePolicy,
     Region,
     Registry,
     Severity,
@@ -23,11 +26,14 @@ from roadrisk.core.registry.schema import (
 
 __all__ = [
     "DEFAULT_REGISTRY_PATH",
+    "LICENCE_POLICY",
+    "TIER_MEANING",
     "Adapter",
     "CrashScope",
     "FacilityType",
     "Factor",
     "Licence",
+    "LicencePolicy",
     "Region",
     "Registry",
     "Severity",

@@ -46,7 +46,10 @@ store_app = typer.Typer(
     name="store",
     help=(
         "Keep runs in Postgres so they outlive the process that made them. "
-        f"Needs ${DSN_ENV} and `pip install \"roadrisk-panel[store]\"`."
+        # Backslash-escaped for Rich, which reads `[store]` as a markup tag, finds no
+        # such style, and drops it — printing an install command with the extra it
+        # exists to name removed from it.
+        f"Needs ${DSN_ENV} and `pip install \"roadrisk-panel\\[store]\"`."
     ),
     no_args_is_help=True,
 )
@@ -69,7 +72,7 @@ def _open_store() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on install shape
         console.print(
             "[red]The store extra is not installed.[/red] "
-            'Run: pip install "roadrisk-panel[store]"'
+            'Run: pip install "roadrisk-panel\\[store]"'
         )
         raise typer.Exit(EXIT_UNAVAILABLE) from exc
     try:

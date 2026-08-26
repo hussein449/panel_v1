@@ -28,6 +28,7 @@ from roadrisk.store import (
     Artefact,
     ArtefactKind,
     Corridor,
+    InUse,
     Job,
     JobStatus,
     MemoryStore,
@@ -321,6 +322,126 @@ def test_artefacts_are_stored_by_reference_never_as_bytes(
     intruder = store.create_tenant(Tenant(name="intruder"))
     with pytest.raises(NotFound):
         store.list_artefacts(intruder.id, run.id)
+
+
+# -- editing and deleting ------------------------------------------------------
+#
+# Added at 5.1c, because "project and corridor CRUD" over HTTP needs a U and a D under
+# it. Both are parametrised over the two backends like everything else here: an update
+# that commits in one and not the other is exactly the class of defect this file exists
+# to catch, and it is one the Postgres helpers make easy to write by accident.
+
+
+def test_an_update_survives_being_read_back(store, tenant, project):
+    """Not "the method returned the new name" — that a *later read* sees it.
+
+    Which is the whole test. `PostgresStore._maybe` does not commit; it is the read
+    helper. An `UPDATE ... RETURNING` run through it returns the new row, stays visible
+    to the connection that wrote it, and is rolled back when that connection closes. A
+    test that only inspected the return value would pass against a store that loses
+    every edit.
+    """
+    store.update_project(
+        tenant.id, project.model_copy(update={"name": "renamed", "spend_cap": 250.0})
+    )
+    reread = store.get_project(tenant.id, project.id)
+    assert (reread.name, reread.spend_cap) == ("renamed", 250.0)
+
+
+def test_an_update_cannot_move_a_row_between_tenants(store, tenant, project):
+    """`tenant_id` identifies the row; it is not one of the fields being replaced."""
+    intruder = store.create_tenant(Tenant(name="intruder"))
+    with pytest.raises(NotFound):
+        store.update_project(
+            intruder.id, project.model_copy(update={"name": "mine now"})
+        )
+    assert store.get_project(tenant.id, project.id).name == "cyprus"
+
+
+def test_a_corridor_update_replaces_the_box_and_clears_it(store, tenant, project):
+    corridor = store.create_corridor(
+        Corridor(
+            tenant_id=tenant.id,
+            project_id=project.id,
+            name="B9",
+            ref="B9",
+            bbox=(34.6, 32.9, 35.1, 33.5),
+        )
+    )
+    widened = store.update_corridor(
+        tenant.id, corridor.model_copy(update={"bbox": (34.0, 32.0, 36.0, 34.0)})
+    )
+    assert widened.bbox == (34.0, 32.0, 36.0, 34.0)
+
+    cleared = store.update_corridor(
+        tenant.id, corridor.model_copy(update={"bbox": None, "ref": None})
+    )
+    assert store.get_corridor(tenant.id, cleared.id).bbox is None
+
+
+def test_deleting_a_project_that_holds_a_run_is_refused_and_names_what(
+    store, tenant, project, mode_a_payload
+):
+    """The guard against migration 0001's own cascade.
+
+    `project` references down through corridor, job and run with `ON DELETE CASCADE`,
+    which is right for dropping a tenant and catastrophic for one careless request: a
+    single statement destroys every stored assessment filed under it, and a stored run
+    is what a client paid for. So the delete is guarded in the store — in both
+    backends, so no caller can reach past it — and the refusal says what is still
+    there, because "cannot delete" is not something anybody can act on.
+    """
+    store.store_run(tenant.id, project.id, mode_a_payload)
+
+    with pytest.raises(InUse) as caught:
+        store.delete_project(tenant.id, project.id)
+    assert "1 run" in str(caught.value)
+
+    assert store.get_project(tenant.id, project.id).id == project.id
+    assert len(store.list_runs(tenant.id, project.id)) == 1
+
+
+def test_deleting_a_corridor_a_run_points_at_is_refused(
+    store, tenant, project, mode_a_payload
+):
+    """Even though the schema would allow it, and nothing would be destroyed.
+
+    `run.corridor_id` is `ON DELETE SET NULL`, so a cascade here loses no rows. What it
+    loses is the *link*: the run keeps its geometry inside the payload and quietly stops
+    being filed against the road it describes.
+    """
+    corridor = store.create_corridor(
+        Corridor(tenant_id=tenant.id, project_id=project.id, name="N201")
+    )
+    store.store_run(tenant.id, project.id, mode_a_payload, corridor_id=corridor.id)
+
+    with pytest.raises(InUse) as caught:
+        store.delete_corridor(tenant.id, corridor.id)
+    assert "1 run" in str(caught.value)
+    assert store.get_corridor(tenant.id, corridor.id).id == corridor.id
+
+
+def test_an_empty_project_deletes_and_then_reads_as_absent(store, tenant):
+    empty = store.create_project(Project(tenant_id=tenant.id, name="mistake"))
+    store.delete_project(tenant.id, empty.id)
+    with pytest.raises(NotFound):
+        store.get_project(tenant.id, empty.id)
+    assert empty.id not in {p.id for p in store.list_projects(tenant.id)}
+
+
+def test_deleting_another_tenants_project_is_a_not_found_not_a_delete(store, tenant):
+    """The disclosure rule holds on the write path too.
+
+    A delete that said "forbidden" for somebody else's id and "not found" for a
+    fictional one would turn guessing into a census, which is the whole reason
+    `NotFound` refuses to distinguish the two.
+    """
+    intruder = store.create_tenant(Tenant(name="intruder"))
+    theirs = store.create_project(Project(tenant_id=intruder.id, name="theirs"))
+
+    with pytest.raises(NotFound):
+        store.delete_project(tenant.id, theirs.id)
+    assert store.get_project(intruder.id, theirs.id).id == theirs.id
 
 
 # -- referential integrity -----------------------------------------------------

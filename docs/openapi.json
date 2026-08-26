@@ -1,0 +1,3148 @@
+{
+  "components": {
+    "schemas": {
+      "AdapterOut": {
+        "additionalProperties": false,
+        "description": "One way of obtaining a factor, with what it costs and what it obliges.",
+        "properties": {
+          "credit_required": {
+            "title": "Credit Required",
+            "type": "boolean"
+          },
+          "licence": {
+            "$ref": "#/components/schemas/Licence"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "obligation": {
+            "title": "Obligation",
+            "type": "string"
+          },
+          "share_alike_database": {
+            "title": "Share Alike Database",
+            "type": "boolean"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/Tier"
+          }
+        },
+        "required": [
+          "name",
+          "tier",
+          "licence",
+          "credit_required",
+          "share_alike_database",
+          "obligation"
+        ],
+        "title": "AdapterOut",
+        "type": "object"
+      },
+      "ArtefactKind": {
+        "description": "What a stored file is. The bytes never enter the database.",
+        "enum": [
+          "report.html",
+          "report.pdf",
+          "run.json",
+          "ranking.csv"
+        ],
+        "title": "ArtefactKind",
+        "type": "string"
+      },
+      "ArtefactOut": {
+        "additionalProperties": false,
+        "description": "A file belonging to a run, as a client may see it.\n\n`uri` is not here. It is a path on the server's disk and a client has no use for\none; `href` is the URL that serves the bytes, and `sha256` is what they should hash\nto when they arrive.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ArtefactKind"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "size_bytes",
+          "sha256",
+          "created_at",
+          "href"
+        ],
+        "title": "ArtefactOut",
+        "type": "object"
+      },
+      "Corridor": {
+        "additionalProperties": false,
+        "description": "A road, as the parameters needed to fetch and segment it again.\n\nDeliberately *not* the resolved geometry. Geometry belongs to a run, because the\nOSM extract behind it changes: two runs of the same corridor a month apart are two\ndifferent centrelines and must not be conflated. What is stable is the request \u2014\nthis reference, this bounding box, this unit length.",
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "unit_length_m": {
+            "default": 500.0,
+            "title": "Unit Length M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "project_id",
+          "name"
+        ],
+        "title": "Corridor",
+        "type": "object"
+      },
+      "CorridorCreate": {
+        "additionalProperties": false,
+        "description": "Created under the project in the path. `project_id` is never in the body.",
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "description": "south, west, north, east, in degrees.",
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Road reference as OSM knows it, e.g. 'B9'. Null for a client-supplied centreline.",
+            "title": "Ref"
+          },
+          "unit_length_m": {
+            "default": 500.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "Unit Length M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CorridorCreate",
+        "type": "object"
+      },
+      "CorridorPatch": {
+        "additionalProperties": false,
+        "description": "See :class:`ProjectPatch`. `project_id` is not editable \u2014 see the store.",
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "description": "south, west, north, east, in degrees.",
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "unit_length_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 100000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Length M"
+          }
+        },
+        "title": "CorridorPatch",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "description": "The response body of every refusal this API makes.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/Refusal"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorCode": {
+        "description": "What kind of refusal this is, as something a client can branch on.\n\nCodes rather than status alone, because 422 is doing two jobs \u2014 a malformed request\nbody and a panel that breaks the input contract are both 422 and are not the same\nproblem. A client retries the first after fixing its JSON and the second after\nfixing its data.",
+        "enum": [
+          "tenant_required",
+          "invalid_request",
+          "contract_violation",
+          "payload_rejected",
+          "not_found",
+          "in_use",
+          "artefact_unavailable",
+          "too_large",
+          "engine_refused",
+          "internal"
+        ],
+        "title": "ErrorCode",
+        "type": "string"
+      },
+      "Estimator": {
+        "description": "How Mode A's numbers are arrived at. **Not** which mode or rung is used.\n\nThe distinction matters, because ``assess`` deliberately exposes no way to force a\nmode or a rung and a test asserts it never grows one. That rule is about *data\nadequacy*: whether a panel can support seven terms or three is the engine's call,\nnever the caller's, because a caller who could overrule it would overrule it.\n\nThis is a different question. The ladder still decides the mode, the rung and the\nterms, identically either way; this only decides how the coefficients on those\nterms are estimated. A test pins that: the same panel returns the same mode, rung\nand factor list under both estimators.",
+        "enum": [
+          "nb2",
+          "bayes"
+        ],
+        "title": "Estimator",
+        "type": "string"
+      },
+      "FacilityType": {
+        "description": "The road type a weight was estimated on, or that a corridor is.\n\n``ANY`` on a weight means the source does not restrict by facility. ``ANY`` on a\nrun means the corridor type was not declared, in which case only unrestricted\nweights are admissible \u2014 the engine will not guess.",
+        "enum": [
+          "rural_two_lane",
+          "rural_multilane",
+          "urban_arterial",
+          "any"
+        ],
+        "title": "FacilityType",
+        "type": "string"
+      },
+      "FactorOut": {
+        "additionalProperties": false,
+        "description": "A declared model term, exactly as `factors.yaml` declares it.",
+        "properties": {
+          "adapters": {
+            "items": {
+              "$ref": "#/components/schemas/AdapterOut"
+            },
+            "title": "Adapters",
+            "type": "array"
+          },
+          "column": {
+            "title": "Column",
+            "type": "string"
+          },
+          "drop_priority": {
+            "title": "Drop Priority",
+            "type": "integer"
+          },
+          "expected_sign": {
+            "$ref": "#/components/schemas/Sign"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "missing_behaviour": {
+            "title": "Missing Behaviour",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "sourced": {
+            "title": "Sourced",
+            "type": "boolean"
+          },
+          "transform": {
+            "$ref": "#/components/schemas/Transform"
+          },
+          "weight_count": {
+            "title": "Weight Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "column",
+          "transform",
+          "expected_sign",
+          "drop_priority",
+          "sourced",
+          "weight_count",
+          "missing_behaviour",
+          "adapters"
+        ],
+        "title": "FactorOut",
+        "type": "object"
+      },
+      "FieldError": {
+        "additionalProperties": false,
+        "description": "One thing wrong with the request, and where.",
+        "properties": {
+          "location": {
+            "description": "Dotted path into the request, e.g. 'body.name'.",
+            "title": "Location",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "location",
+          "message"
+        ],
+        "title": "FieldError",
+        "type": "object"
+      },
+      "Health": {
+        "additionalProperties": false,
+        "description": "What this deployment is, said plainly rather than left to be discovered.\n\n`runner` is null until 5.1d and that is the honest answer: a job posted here today\nis accepted, stored and queued, and nothing will pick it up. Reporting `\"ok\"` and\nletting a client watch a job sit in `queued` forever would be a working service\nthat lies.",
+        "properties": {
+          "artefacts_available": {
+            "title": "Artefacts Available",
+            "type": "boolean"
+          },
+          "auth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth"
+          },
+          "engine_version": {
+            "title": "Engine Version",
+            "type": "string"
+          },
+          "registry_version": {
+            "title": "Registry Version",
+            "type": "string"
+          },
+          "runner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runner"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "const": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "engine_version",
+          "schema_version",
+          "registry_version",
+          "runner",
+          "auth",
+          "artefacts_available"
+        ],
+        "title": "Health",
+        "type": "object"
+      },
+      "Job": {
+        "additionalProperties": false,
+        "description": "One request to assess a corridor, and where it got to.\n\n`params` is the assessment's own options \u2014 estimator, priors, spatial, which\nadapters to run. Stored as given so that a job can be re-run identically, and so\nthat the manifest's fingerprint has something to be checked against.",
+        "properties": {
+          "corridor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corridor Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus",
+            "default": "queued"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "project_id"
+        ],
+        "title": "Job",
+        "type": "object"
+      },
+      "JobOptions": {
+        "additionalProperties": false,
+        "description": "The assessment's own options \u2014 exactly the CLI's, and nothing invented here.\n\nEverything absent has the same default the command line has, so a job submitted\nwith no options at all is the run `roadrisk corridor` would have done.\n\nWhat is deliberately **not** here: any way to force a mode, a rung or a term. The\nengine decides those from data adequacy, `assess` exposes no argument for them, and\na test in `tests/test_engine.py` asserts it never grows one. A caller who could\noverrule the ladder would overrule it.",
+        "properties": {
+          "adapters": {
+            "items": {
+              "enum": [
+                "osm",
+                "rasters",
+                "traffic",
+                "mapillary"
+              ],
+              "type": "string"
+            },
+            "title": "Adapters",
+            "type": "array"
+          },
+          "estimator": {
+            "$ref": "#/components/schemas/Estimator",
+            "default": "nb2"
+          },
+          "facility_type": {
+            "$ref": "#/components/schemas/FacilityType",
+            "default": "any"
+          },
+          "n_periods": {
+            "default": 24,
+            "maximum": 600.0,
+            "minimum": 1.0,
+            "title": "N Periods",
+            "type": "integer"
+          },
+          "region": {
+            "$ref": "#/components/schemas/Region",
+            "default": "global"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity",
+            "default": "all"
+          },
+          "shape_factors": {
+            "description": "Factors to put a rung 3 spline on. Validated against `factors.yaml` at submit \u2014 a name no factor has is a typo, and finding it in a run log a quarter of an hour later helps nobody.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Shape Factors",
+            "type": "array"
+          },
+          "tolerance_m": {
+            "default": 30.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000.0,
+            "title": "Tolerance M",
+            "type": "number"
+          },
+          "unit_length_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 100000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Length M"
+          },
+          "use_registry_priors": {
+            "default": false,
+            "title": "Use Registry Priors",
+            "type": "boolean"
+          },
+          "use_spatial": {
+            "default": false,
+            "title": "Use Spatial",
+            "type": "boolean"
+          }
+        },
+        "title": "JobOptions",
+        "type": "object"
+      },
+      "JobStatus": {
+        "description": "Where a job is, and nothing about what it concluded.\n\nThe distinction this vocabulary exists to protect: **a job that descended to Mode B\nsucceeded.** Refusing Mode A, dropping a term, declining to score an unsourced\nweight \u2014 those are findings the run carries, not failures of the job. `failed` is\nreserved for the machinery breaking: Overpass returning 429, a missing token, a\nworker dying. Collapsing the two would put the engine's honesty into an error log\nwhere nobody reads it.",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "rejected"
+        ],
+        "title": "JobStatus",
+        "type": "string"
+      },
+      "JobSubmission": {
+        "additionalProperties": false,
+        "description": "One request to assess something. Exactly one of `corridor_id` or `panel`.\n\nTwo ways in, because the command line has two: `roadrisk corridor` builds a panel\nfrom geography, `roadrisk assess` judges one you already have. Neither is the\ndegraded case.",
+        "properties": {
+          "corridor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corridor Id"
+          },
+          "panel": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Rows of a panel you already built, as objects. Validated against the input contract before the job exists, so a panel that could never be assessed never becomes a queued job.",
+            "title": "Panel"
+          },
+          "params": {
+            "$ref": "#/components/schemas/JobOptions"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "title": "JobSubmission",
+        "type": "object"
+      },
+      "Licence": {
+        "description": "Licence attached to a value, carried through to the report.\n\nODbL and CC-BY-SA both impose share-alike on a redistributed derived *database*.\nThe report is fine with attribution; the dataset is not. Hence this travels with\nevery value rather than being assumed per project.\n\n``CC-BY-4.0`` is attribution without share-alike \u2014 a materially lighter obligation\nthan the two above and a materially heavier one than public domain. It is separate\nbecause collapsing it into either would misstate what the client must do.",
+        "enum": [
+          "ODbL",
+          "CC-BY-SA",
+          "CC-BY-4.0",
+          "public-domain",
+          "proprietary",
+          "client"
+        ],
+        "title": "Licence",
+        "type": "string"
+      },
+      "LicenceOut": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/Licence"
+          },
+          "credit_required": {
+            "title": "Credit Required",
+            "type": "boolean"
+          },
+          "obligation": {
+            "title": "Obligation",
+            "type": "string"
+          },
+          "share_alike_database": {
+            "title": "Share Alike Database",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "credit_required",
+          "share_alike_database",
+          "obligation"
+        ],
+        "title": "LicenceOut",
+        "type": "object"
+      },
+      "Project": {
+        "additionalProperties": false,
+        "description": "A body of work \u2014 usually one road authority's network, or one study.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "spend_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spend Cap"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "name"
+        ],
+        "title": "Project",
+        "type": "object"
+      },
+      "ProjectCreate": {
+        "additionalProperties": false,
+        "description": "A body of work \u2014 usually one road authority's network, or one study.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "spend_cap": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spend Cap"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectPatch": {
+        "additionalProperties": false,
+        "description": "Only the fields actually sent are applied.\n\nWhich is why `spend_cap` being null has to mean *clear it* and an absent\n`spend_cap` has to mean *leave it*. Pydantic distinguishes those through\n``exclude_unset``; a bag of optional arguments on the store would not, which is why\n:meth:`roadrisk.store.Store.update_project` takes a whole record instead.",
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "spend_cap": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spend Cap"
+          }
+        },
+        "title": "ProjectPatch",
+        "type": "object"
+      },
+      "Refusal": {
+        "additionalProperties": false,
+        "description": "Why the request was refused, in the terms the caller can act on.",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "errors": {
+            "description": "Every fault found, when a request had more than one.",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The single thing at fault, when there is one.",
+            "title": "Field"
+          },
+          "message": {
+            "description": "Written for a person. Names the column, the id or the setting.",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "Refusal",
+        "type": "object"
+      },
+      "Region": {
+        "description": "Where a weight was estimated, or where a corridor is.\n\nRegion granularity, not country, because published weights are estimated on\nregional or national datasets and never on \"Cyprus\" specifically. A Cyprus\ncorridor declares ``europe`` and gets European evidence where it exists, global\nevidence otherwise, and North American evidence only as a last resort \u2014 with the\nreach reported.\n\nStage 2 will resolve this from the corridor's admin boundary automatically; the\nGADM and OSM-relation adapters are already declared for that.",
+        "enum": [
+          "north_america",
+          "europe",
+          "australasia",
+          "asia",
+          "africa",
+          "middle_east",
+          "latin_america",
+          "global"
+        ],
+        "title": "Region",
+        "type": "string"
+      },
+      "RegistryOut": {
+        "additionalProperties": false,
+        "description": "The whole registry as served, including what it hashed to.\n\n`sha256` is the file's, computed by the loader. A client comparing it against the\none inside a run's manifest can tell whether that run was assessed under the\nregistry this API is now serving \u2014 which is the only honest way to answer \"is this\nstill current\".",
+        "properties": {
+          "factor_count": {
+            "title": "Factor Count",
+            "type": "integer"
+          },
+          "factors": {
+            "items": {
+              "$ref": "#/components/schemas/FactorOut"
+            },
+            "title": "Factors",
+            "type": "array"
+          },
+          "licences": {
+            "items": {
+              "$ref": "#/components/schemas/LicenceOut"
+            },
+            "title": "Licences",
+            "type": "array"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "sourced_count": {
+            "title": "Sourced Count",
+            "type": "integer"
+          },
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/TierOut"
+            },
+            "title": "Tiers",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "sha256",
+          "source",
+          "factor_count",
+          "sourced_count",
+          "tiers",
+          "licences",
+          "factors"
+        ],
+        "title": "RegistryOut",
+        "type": "object"
+      },
+      "Run": {
+        "additionalProperties": false,
+        "description": "A finished assessment: the whole payload, plus the few things worth indexing.\n\nThe payload is stored entire and is the only source of truth. Every other column\nhere is a copy of something inside it, lifted out so a list of runs can be drawn\nwithout opening any of them \u2014 and each one is written from the payload on insert,\nnever supplied separately, so they cannot disagree with it.",
+        "properties": {
+          "corridor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corridor Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "engine_version": {
+            "title": "Engine Version",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "rung": {
+            "title": "Rung",
+            "type": "string"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "project_id",
+          "engine_version",
+          "fingerprint",
+          "mode",
+          "rung",
+          "payload"
+        ],
+        "title": "Run",
+        "type": "object"
+      },
+      "RunSummary": {
+        "additionalProperties": false,
+        "description": "A run without its payload. What a listing is made of.\n\nEvery field is one the store lifted out of the payload on insert, so a summary\ncannot describe a different run than the one it points at.",
+        "properties": {
+          "corridor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corridor Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "engine_version": {
+            "title": "Engine Version",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "rung": {
+            "title": "Rung",
+            "type": "string"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "project_id",
+          "job_id",
+          "corridor_id",
+          "schema_version",
+          "engine_version",
+          "fingerprint",
+          "mode",
+          "rung",
+          "created_at"
+        ],
+        "title": "RunSummary",
+        "type": "object"
+      },
+      "Severity": {
+        "description": "Which crashes a weight predicts.\n\nThis is not decoration. The Elvik Power Model exponent is 1.6 for injury crashes\nand 4.1 for fatal ones \u2014 applying the wrong one is a factor-of-two error, and\nbefore this existed the registry silently assumed injury.",
+        "enum": [
+          "all",
+          "injury",
+          "fsi",
+          "fatal"
+        ],
+        "title": "Severity",
+        "type": "string"
+      },
+      "Sign": {
+        "description": "The direction a factor is expected to push risk. The guard rail.",
+        "enum": [
+          "+",
+          "-"
+        ],
+        "title": "Sign",
+        "type": "string"
+      },
+      "Tier": {
+        "description": "Who pays to obtain the value.\n\nA \u2014 open, global, scriptable, free.\nB \u2014 open, but needs vision models or graph compute.\nC \u2014 free-tier APIs, licence-limited, opt-in per project.\nD \u2014 cannot be derived; the client must measure and supply it.",
+        "enum": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "title": "Tier",
+        "type": "string"
+      },
+      "TierOut": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/Tier"
+          },
+          "meaning": {
+            "title": "Meaning",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "meaning"
+        ],
+        "title": "TierOut",
+        "type": "object"
+      },
+      "Transform": {
+        "description": "How a raw column is mapped before it enters the model.",
+        "enum": [
+          "identity",
+          "ln",
+          "ln1p",
+          "zscore"
+        ],
+        "title": "Transform",
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "description": "\nCorridor road-risk assessment from open data, with provenance.\n\n**Two things this deployment does not yet do, stated here rather than discovered.**\n\n* **Nothing executes jobs.** `POST /jobs` stores a job and returns `202`. It stays\n  `queued` until step 5.1d attaches a runner. `GET /health` reports `runner: null`.\n* **`X-Tenant-Id` is not authentication.** It scopes every read to one tenant, which is\n  what keeps two clients' runs apart, but nothing verifies the claim. Step 5.4a\n  replaces it with real identities and row-level policies in the database.\n\n**A refusal is a result, not an error.** A panel that breaks the input contract is a\n`422` naming the column, and no job is created. An assessment that descended to Mode B,\ndropped a term or declined to score an unsourced weight is a **`200`** \u2014 those are\nfindings the run carries, not failures. Infrastructure breaking is a job whose status is\n`failed`, with a cause.\n\nPayload shape version `1.0`. Factors, tiers and licences come from\n`factors.yaml`; `GET /registry` serves it with the hash of the file it was read from.\n",
+    "summary": "Corridor risk from open data, with every number traceable.",
+    "title": "Road Risk Panel",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/corridors/{corridor_id}": {
+      "delete": {
+        "description": "Refused while a job or a run points at it, even though the schema would allow it.\n\n`job.corridor_id` and `run.corridor_id` are `ON DELETE SET NULL`, so nothing would\nbe destroyed here \u2014 but the *link* would be, silently. A run keeps its geometry\ninside the payload and would lose the road it was filed against, which is exactly\nthe kind of quiet loss this project spends its effort preventing.",
+        "operationId": "delete_corridor_corridors__corridor_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "corridor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Corridor Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "409": {
+            "description": "A job or a run still points at it."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Delete a corridor nothing references",
+        "tags": [
+          "corridors"
+        ]
+      },
+      "get": {
+        "operationId": "get_corridor_corridors__corridor_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "corridor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Corridor Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Corridor"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "One corridor",
+        "tags": [
+          "corridors"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_corridor_corridors__corridor_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "corridor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Corridor Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorridorPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Corridor"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Change the reference, the box or the unit length",
+        "tags": [
+          "corridors"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Report the versions and the two capabilities this deployment does not yet have.\n\n`runner` and `auth` are null at 5.1c and that is the point of returning them: a\nclient can tell that a job it posts will be stored and queued and never executed,\nrather than watching one sit in `queued` and drawing its own conclusions.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Whether the service is up, and what it can actually do",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/jobs": {
+      "post": {
+        "description": "Accept a job, or refuse it before it exists.\n\nNote the order. Every check that can refuse happens *before* `create_job`, so a\n422 leaves no row behind \u2014 \"no job created\" is the half of the refusal contract\nthat a client can actually verify, by listing the project's jobs and finding it\nempty.",
+        "operationId": "submit_job_jobs_post",
+        "parameters": [
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Queued. Poll `Location`, which is `GET /jobs/{id}`."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "413": {
+            "description": "The panel is larger than this deployment accepts."
+          },
+          "422": {
+            "description": "The panel broke the input contract, or the request could not describe a runnable job. No job was created."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Submit an assessment. Accepted, not performed",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "description": "Read a job's status.\n\n`succeeded` means the job ran to completion, **not** that Mode A was reached. A run\nthat descended to Mode B, dropped a term or refused an unsourced weight succeeded,\nand carries those findings. `failed` is the machinery breaking, with a cause in\n`error` and never a stack trace. `rejected` is the panel breaking the input\ncontract, where nothing malfunctioned.\n\nAt 5.1c nothing executes jobs, so every job here stays `queued`. `GET /health`\nreports `runner: null` for exactly that reason.",
+        "operationId": "get_job_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Where a job got to",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "list_projects_projects_get",
+        "parameters": [
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Project"
+                  },
+                  "title": "Response List Projects Projects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Every project this tenant has",
+        "tags": [
+          "projects"
+        ]
+      },
+      "post": {
+        "description": "File a new project under the tenant in the header.\n\nThe tenant is never in the body. A body that could name one would let a client file\nrows under somebody else's tenant, and since the model forbids extras, sending\n`tenant_id` is a 422 rather than a silent success under the wrong owner.",
+        "operationId": "create_project_projects_post",
+        "parameters": [
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Create a project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/projects/{project_id}": {
+      "delete": {
+        "description": "Refused while anything is filed under it. There is no force flag.\n\nEmptying a project means deleting what is in it, one thing at a time, on purpose.\nThe alternative is one request that quietly destroys a quarter's work because the\nschema said `CASCADE`.",
+        "operationId": "delete_project_projects__project_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "409": {
+            "description": "It still holds corridors, jobs or runs."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Delete a project that holds nothing",
+        "tags": [
+          "projects"
+        ]
+      },
+      "get": {
+        "operationId": "get_project_projects__project_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "One project",
+        "tags": [
+          "projects"
+        ]
+      },
+      "patch": {
+        "description": "Apply only the fields actually sent.\n\n`exclude_unset` is what makes `\"spend_cap\": null` mean *remove the cap* and an\nabsent `spend_cap` mean *leave it alone*. Collapsing those two would make it\nimpossible to uncap a project through this API without guessing.",
+        "operationId": "patch_project_projects__project_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Rename, or set the cap",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/projects/{project_id}/corridors": {
+      "get": {
+        "operationId": "list_corridors_projects__project_id__corridors_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Corridor"
+                  },
+                  "title": "Response List Corridors Projects  Project Id  Corridors Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Every corridor in a project",
+        "tags": [
+          "corridors"
+        ]
+      },
+      "post": {
+        "description": "Create it, or refuse if the project is not this tenant's.\n\nThe store checks the parent against `(tenant_id, project_id)` together, so a\ncorridor cannot be filed under another tenant's project even with a valid id for\nit \u2014 that is a row Postgres refuses, not a rule this route has to remember.",
+        "operationId": "create_corridor_projects__project_id__corridors_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorridorCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Corridor"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Declare a road under a project",
+        "tags": [
+          "corridors"
+        ]
+      }
+    },
+    "/projects/{project_id}/jobs": {
+      "get": {
+        "operationId": "list_jobs_projects__project_id__jobs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Job"
+                  },
+                  "title": "Response List Jobs Projects  Project Id  Jobs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Every job in a project, newest first",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/registry": {
+      "get": {
+        "description": "Serve `factors.yaml`, in the order the ladder would shed terms.\n\nDescent order \u2014 least important first \u2014 rather than file order, because that is the\norder that means something: it is what the engine drops when the panel cannot\nsupport the full specification, and a client planning which data to buy is reading\nthe list backwards from the bottom.",
+        "operationId": "read_registry_registry_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Every declared factor, with the tier and licence of each way to obtain it",
+        "tags": [
+          "registry"
+        ]
+      }
+    },
+    "/runs": {
+      "get": {
+        "description": "Summaries, not payloads.\n\nA run is around 300 kB of JSON. Fifty of them is fifteen megabytes, which is not a\nlisting \u2014 it is a download nobody asked for. Every field in a summary was lifted out\nof the payload by the store on insert, so a summary cannot describe a different run\nthan the one it points at.",
+        "operationId": "list_runs_runs_get",
+        "parameters": [
+          {
+            "description": "Narrow to one project. Omitted lists every project.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow to one project. Omitted lists every project.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunSummary"
+                  },
+                  "title": "Response List Runs Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "Finished runs, newest first, without their payloads",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}": {
+      "get": {
+        "description": "Return the run and its payload.\n\n**200 whatever the assessment concluded.** A run that descended to Mode B carries\nits descent receipt, the terms it dropped and the weights it would not score, and\nall of that is inside `payload`. Turning any of it into a status code would move\nthe honesty layer into an error handler, which is where nobody reads it.\n\nThe payload is not re-validated on the way out. `store_run` validated it on the way\nin and there is nowhere for it to have changed since \u2014 validating again would be a\nsecond answer to a question already answered, and the two could disagree.",
+        "operationId": "get_run_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "One run, whole \u2014 including everything it refused to conclude",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/artefacts": {
+      "get": {
+        "description": "List them with a URL, never with the path they sit at on this server.",
+        "operationId": "list_artefacts_runs__run_id__artefacts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtefactOut"
+                  },
+                  "title": "Response List Artefacts Runs  Run Id  Artefacts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          }
+        },
+        "summary": "The files this run produced",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/artefacts/{kind}": {
+      "get": {
+        "description": "Serve the file, having proved it is one this server is allowed to open.\n\nThe `ETag` is the sha256 the store recorded, so a client can verify what arrived\nagainst what was registered without this route re-hashing a third of a megabyte on\nevery request. The size *is* checked, because `stat` is free and a file whose length\nno longer matches the record is not the artefact the record describes.",
+        "operationId": "download_artefact_runs__run_id__artefacts__kind__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtefactKind"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bytes. `ETag` is the sha256 recorded at import."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "409": {
+            "description": "Recorded, but this server will not or cannot serve it \u2014 no artefact root configured, outside it, missing, or changed since."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          },
+          "501": {
+            "description": "Stored somewhere this build cannot fetch from."
+          }
+        },
+        "summary": "Download one artefact",
+        "tags": [
+          "runs"
+        ]
+      }
+    }
+  }
+}

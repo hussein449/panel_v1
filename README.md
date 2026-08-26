@@ -17,7 +17,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 | **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
 | **Stage 3 — model depth** | **Complete.** Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. A spline diagnostic hunts the U-shape behind a wrong sign, reporting only the shape the smoothing grid agrees on. And `--bayes` fits a random-intercept GLMM that reports **credible intervals instead of p-values** and estimates how much segments differ from one another — in pure Python, seconds per fit, policing its own approximation on every run. `--priors` then makes the registry's own cited weights the starting belief and reports, per factor, how much of the answer came from the literature rather than from your road. Every Mode A run is then cross-validated over held-out stretches of the corridor — calibration, CURE plots and the optimism of random folds, reported by default and including when they fail. And `--spatial` fits a CAR field over the corridor chain, so neighbouring segments are correlated rather than strangers — reporting how much of the variation is spatial, and saying plainly when the corridor is too short to tell. |
 | **Stage 4 — report** | **Complete.** Two coordinates in, a report a client can read out. `roadrisk corridor --demo --out run/ --pdf` writes `report.html` — one self-contained file you open by double-clicking, no server and no network — and prints it to a paged PDF with the mode banner on every page. **There is one renderer and it lives in the UI**, so the paper and the screen cannot disagree and Stage 5.3 imports the same component rather than a copy of it. Inside: the ranked segments and the blackspot runs they form, with real chainage; a risk strip and a map of the corridor drawn from the centreline itself; every factor with its source, tier, licence and confidence; what the client owes the people whose data this used; and a limitations page assembled from what the run actually did, which no flag, argument or config removes. |
-| Stage 5 — web layer | **Started, at the groundwork.** Stage 4 paid most of it forward: the API's response body is a payload that already exists, and the report page is a React component that takes it as a prop. Two things now hold that in place. The layering rule — `core` is imported *from*, never *by* — is a test rather than a convention, written before the packages that could break it exist. And the payload is a **frozen contract**: ~60 Pydantic models that forbid undeclared fields, checked against six real payloads, with `web/src/types.ts` generated from them instead of maintained by hand. Neither serves an HTTP request yet. |
+| Stage 5 — web layer | **Started. There is an API.** Stage 4 paid most of it forward: the response body is a payload that already existed, and the report page is a React component that takes it as a prop. Under that sit four things. The layering rule — `core` is imported *from*, never *by* — is a test rather than a convention, written before the packages that could break it existed. The payload is a **frozen contract** of ~60 Pydantic models that forbid undeclared fields, with `web/src/types.ts` generated from them instead of maintained by hand. Runs live in Postgres, tenant-scoped from the first migration, and re-render without a refit. And `roadrisk serve` puts all of it behind thirteen HTTP paths where **a refusal is a result, not an error**: a panel breaking the input contract is a 422 that creates no job, and a run that descended to Mode B is a 200 carrying its receipts. **Nothing executes a job yet** — `POST /jobs` returns 202 and the job stays queued until 5.1d, which `GET /health` reports rather than leaving you to discover. |
 | Stage 6 — deploy | Not started. |
 
 Full breakdown in [`STEPS.md`](STEPS.md). What has actually been built, and what each
@@ -272,6 +272,64 @@ print(assessment.refusal_receipt)   # populated only when Mode A was refused
 
 ---
 
+## Keep runs, and serve them
+
+A run has been a directory of files since Stage 2, which is right for one person on one
+machine. Two optional extras make it a service instead.
+
+```bash
+pip install "roadrisk-panel[store]"          # psycopg
+export ROADRISK_DATABASE_URL=postgresql:///roadrisk
+roadrisk store init                          # numbered SQL migrations, hashed
+roadrisk store new-tenant "acme roads"       # prints the id everything is scoped to
+roadrisk store new-project "cyprus"
+roadrisk store import run/run.json --project <id>
+roadrisk store show <run-id> --report out/   # rendered, not refitted
+```
+
+```bash
+pip install "roadrisk-panel[api]"            # fastapi + uvicorn
+roadrisk serve                               # http://127.0.0.1:8000 · docs at /docs
+```
+
+With `$ROADRISK_DATABASE_URL` set, every request opens a Postgres store; without it the
+whole service runs in memory and forgets everything when it stops, which is a real way to
+try it. `GET /health` says which, and says two other things plainly:
+
+- **`runner: null`** — nothing executes jobs yet. `POST /jobs` returns `202` and the job
+  stays `queued` until step 5.1d. A job that will never run, reported as `queued`, is a
+  working service that lies.
+- **`auth: null`** — `X-Tenant-Id` is required on every route that touches a row, and
+  nothing verifies it. It scopes rows; it does not prove who you are. Step 5.4a replaces
+  it with real identities and row-level policies in the database. `roadrisk serve` binds
+  loopback by default for that reason.
+
+**A refusal is a result, not an HTTP error**, which is the one thing worth knowing before
+writing a client:
+
+| Outcome | Response |
+|---|---|
+| Your panel breaks the input contract | `422`, the column named, and **no job is created** |
+| The engine descended to Mode B, dropped terms, refused an unsourced weight | `200` — those are findings the run carries |
+| Infrastructure broke | the job's status is `failed`, with a cause. Never a stack trace |
+
+`GET /registry` serves `factors.yaml` — every factor, every adapter, its tier, its licence
+and what that licence obliges you to do — with the hash of the file it was read from, so
+you can tell whether a run was assessed under the registry you are now looking at. The
+whole surface is in [`docs/openapi.json`](docs/openapi.json), generated from the app by
+`python tools/generate_openapi.py`.
+
+Artefact download is off until you say where artefacts live:
+
+```bash
+export ROADRISK_ARTEFACT_ROOT=/srv/roadrisk/artefacts
+```
+
+Serving an artefact means opening a path that came out of a database column, so that
+variable is an allow-list rather than a convenience, and it has no default.
+
+---
+
 ## The rules the code enforces
 
 These are product decisions, implemented as code rather than documented as intentions.
@@ -378,6 +436,10 @@ registry contents and the input data. Two identical runs fingerprint identically
 
 ```
 src/roadrisk/
+├── contract/                the JSON payload as types — the bottom layer, imports nothing
+│   ├── assessment.py        the engine's half; corridor.py the geography's
+│   ├── run.py               the envelope, and the shape version carried on every run
+│   └── jsonsafe.py          Infinity is not JSON, and this is where that is enforced
 ├── core/                    plain library — no web, no network, no database
 │   ├── registry/            declarative factors (schema, loader, factors.yaml)
 │   ├── contract.py          the six required columns; exposure derivation
@@ -422,7 +484,19 @@ src/roadrisk/
 │   ├── limitations.py       what this run cannot support, read off the run itself
 │   ├── pdf.py               print the written report; the browser is a dependency of nothing
 │   └── static/index.html    the built report — committed, so installing needs no Node
+├── store/                   where runs live once the process that made them has gone
+│   ├── base.py              the interface — every read takes a tenant, with no default
+│   ├── records.py           six tables of scalars around a jsonb payload
+│   ├── memory.py            needs no server, and is not a toy — the suite runs on it
+│   ├── postgres.py          plain SQL over psycopg3, no ORM
+│   └── migrations/          numbered SQL, each recorded with the hash that produced it
+├── api/                     the product over HTTP. Optional extra; nothing below imports it
+│   ├── errors.py            the refusal contract — one envelope, three distinct outcomes
+│   ├── deps.py              a store per request; the tenant seam 5.4a replaces
+│   ├── schemas.py           what crosses the wire, and what is reused rather than redescribed
+│   └── routes/              meta, registry, projects, corridors, jobs, runs
 ├── demo.py                  synthetic panels for tests and demonstration
+├── storecli.py              `roadrisk store` — kept apart so `assess` never needs psycopg
 └── cli.py                   mode banner, refusal receipt, descent receipt
 
 web/                         the report page. One renderer: Stage 5.3 imports this
@@ -449,6 +523,8 @@ rather than a hard requirement:
 ```bash
 pip install "roadrisk-panel[geo]"      # shapely + pyproj, for the pipeline
 pip install "roadrisk-panel[raster]"   # GDAL, for the DEM and land-cover adapters only
+pip install "roadrisk-panel[store]"    # psycopg, for keeping runs
+pip install "roadrisk-panel[api]"      # fastapi + uvicorn, for serving them
 ```
 
 The same rule applies downwards. GDAL is the heaviest thing this package can depend on

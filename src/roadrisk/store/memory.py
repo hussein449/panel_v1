@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from roadrisk.store.base import NotFound, PayloadRejected
+from roadrisk.store.base import InUse, NotFound, PayloadRejected, refuse_if_held
 from roadrisk.store.payload import read_run_columns, storable
 from roadrisk.store.records import (
     Artefact,
@@ -80,6 +80,36 @@ class MemoryStore:
             reverse=True,
         )
 
+    def update_project(self, tenant_id: UUID, project: Project) -> Project:
+        existing = self.get_project(tenant_id, project.id)
+        stored = existing.model_copy(
+            update={"name": project.name, "spend_cap": project.spend_cap}
+        )
+        self._projects[stored.id] = stored
+        return stored
+
+    def delete_project(self, tenant_id: UUID, project_id: UUID) -> None:
+        self.get_project(tenant_id, project_id)
+        held = {
+            "corridor": sum(
+                1
+                for c in self._corridors.values()
+                if c.tenant_id == tenant_id and c.project_id == project_id
+            ),
+            "job": sum(
+                1
+                for j in self._jobs.values()
+                if j.tenant_id == tenant_id and j.project_id == project_id
+            ),
+            "run": sum(
+                1
+                for r in self._runs.values()
+                if r.tenant_id == tenant_id and r.project_id == project_id
+            ),
+        }
+        refuse_if_held(f"Project {project_id}", held)
+        del self._projects[project_id]
+
     # -- corridors -------------------------------------------------------------
 
     def create_corridor(self, corridor: Corridor) -> Corridor:
@@ -106,6 +136,36 @@ class MemoryStore:
             key=_created,
             reverse=True,
         )
+
+    def update_corridor(self, tenant_id: UUID, corridor: Corridor) -> Corridor:
+        existing = self.get_corridor(tenant_id, corridor.id)
+        stored = existing.model_copy(
+            update={
+                "name": corridor.name,
+                "ref": corridor.ref,
+                "bbox": corridor.bbox,
+                "unit_length_m": corridor.unit_length_m,
+            }
+        )
+        self._corridors[stored.id] = stored
+        return stored
+
+    def delete_corridor(self, tenant_id: UUID, corridor_id: UUID) -> None:
+        self.get_corridor(tenant_id, corridor_id)
+        held = {
+            "job": sum(
+                1
+                for j in self._jobs.values()
+                if j.tenant_id == tenant_id and j.corridor_id == corridor_id
+            ),
+            "run": sum(
+                1
+                for r in self._runs.values()
+                if r.tenant_id == tenant_id and r.corridor_id == corridor_id
+            ),
+        }
+        refuse_if_held(f"Corridor {corridor_id}", held)
+        del self._corridors[corridor_id]
 
     # -- jobs ------------------------------------------------------------------
 
@@ -242,4 +302,4 @@ def _created(record: Any) -> datetime:
     return record.created_at or _EPOCH
 
 
-__all__ = ["MemoryStore", "NotFound", "PayloadRejected"]
+__all__ = ["InUse", "MemoryStore", "NotFound", "PayloadRejected"]

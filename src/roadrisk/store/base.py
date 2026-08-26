@@ -55,6 +55,47 @@ class PayloadRejected(StoreError):
     """
 
 
+class InUse(StoreError):
+    """The delete would have taken other rows with it, so it is refused.
+
+    Migration 0001 declares ``ON DELETE CASCADE`` from project down through corridor,
+    job and run. That is right for dropping a *tenant* and exactly wrong for one
+    careless request: a single ``DELETE FROM project`` destroys every stored assessment
+    filed under it, and a stored run is a client deliverable.
+
+    So deleting is guarded here rather than left to the schema, in both backends, so
+    that no caller can reach past it. There is no force flag — emptying a project means
+    deleting what is in it, deliberately. The message names what is still there,
+    because "cannot delete" is not something anybody can act on.
+    """
+
+
+def refuse_if_held(what: str, held: dict[str, int]) -> None:
+    """Raise :class:`InUse` naming exactly what is still there, or return.
+
+    Shared by both backends rather than written twice, for the same reason
+    :func:`roadrisk.store.payload.read_run_columns` is: two implementations of one rule
+    are two chances to word it differently, and the conformance suite asserts on the
+    message. A caller who has learned to read one refusal must not meet a different one
+    from the other backend.
+
+    Args:
+        what: The row being deleted, already worded — "Project <id>".
+        held: Child noun to count. Zeroes are ignored; anything else refuses.
+    """
+    remaining = [
+        f"{count} {noun}{'s' if count != 1 else ''}"
+        for noun, count in held.items()
+        if count
+    ]
+    if not remaining:
+        return
+    raise InUse(
+        f"{what} still holds {', '.join(remaining)}. Deleting it would take them with "
+        "it, and a stored run is a deliverable — delete what it holds first."
+    )
+
+
 @runtime_checkable
 class Store(Protocol):
     """What every storage backend must do.
@@ -78,6 +119,33 @@ class Store(Protocol):
 
     def list_projects(self, tenant_id: UUID) -> list[Project]: ...
 
+    def update_project(self, tenant_id: UUID, project: Project) -> Project:
+        """Replace the editable fields of a project with the record supplied.
+
+        A whole record rather than a bag of optional arguments, so that "set the spend
+        cap to null" and "leave the spend cap alone" are not the same call. Partial
+        edits are the caller's business — an HTTP `PATCH` reads the row, applies the
+        fields the client actually sent, and hands the result back here.
+
+        `id` and `tenant_id` identify the row and are never changed by it: moving a
+        project between tenants is not an edit, it is a different operation nobody has
+        asked for.
+
+        Raises:
+            NotFound: No such project for this tenant.
+        """
+        ...
+
+    def delete_project(self, tenant_id: UUID, project_id: UUID) -> None:
+        """Delete a project that holds nothing.
+
+        Raises:
+            NotFound: No such project for this tenant.
+            InUse: It still holds corridors, jobs or runs. See :class:`InUse` — the
+                schema would cascade, and a run is a deliverable.
+        """
+        ...
+
     # -- corridors -------------------------------------------------------------
 
     def create_corridor(self, corridor: Corridor) -> Corridor: ...
@@ -85,6 +153,32 @@ class Store(Protocol):
     def get_corridor(self, tenant_id: UUID, corridor_id: UUID) -> Corridor: ...
 
     def list_corridors(self, tenant_id: UUID, project_id: UUID) -> list[Corridor]: ...
+
+    def update_corridor(self, tenant_id: UUID, corridor: Corridor) -> Corridor:
+        """Replace the editable fields of a corridor. See :meth:`update_project`.
+
+        `project_id` is editable in principle and is not editable here: a corridor that
+        changed project would take its runs' filing with it and leave every listing
+        that had already been drawn wrong.
+
+        Raises:
+            NotFound: No such corridor for this tenant.
+        """
+        ...
+
+    def delete_corridor(self, tenant_id: UUID, corridor_id: UUID) -> None:
+        """Delete a corridor that nothing references.
+
+        The schema is more forgiving here than for a project — `job.corridor_id` and
+        `run.corridor_id` are `ON DELETE SET NULL`, so nothing is destroyed. What is
+        destroyed is the *link*: a run would keep its geometry inside the payload and
+        lose the road it was filed against, silently. That is refused too.
+
+        Raises:
+            NotFound: No such corridor for this tenant.
+            InUse: A job or a run still points at it.
+        """
+        ...
 
     # -- jobs ------------------------------------------------------------------
 

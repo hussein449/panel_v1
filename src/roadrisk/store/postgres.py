@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from roadrisk.store.base import NotFound
+from roadrisk.store.base import NotFound, refuse_if_held
 from roadrisk.store.migrate import migrate
 from roadrisk.store.payload import read_run_columns, storable
 from roadrisk.store.records import (
@@ -123,6 +123,35 @@ class PostgresStore:
         )
         return [_project(row) for row in rows]
 
+    def update_project(self, tenant_id: UUID, project: Project) -> Project:
+        # Read first, then write with `_one`. `_maybe` does not commit — it is the read
+        # helper — and an UPDATE ... RETURNING run through it would look like it
+        # worked, be visible to this connection, and vanish on close.
+        self.get_project(tenant_id, project.id)
+        row = self._one(
+            "UPDATE project SET name = %s, spend_cap = %s "
+            f"WHERE tenant_id = %s AND id = %s RETURNING {self._PROJECT_COLUMNS}",
+            (project.name, project.spend_cap, tenant_id, project.id),
+        )
+        return _project(row)
+
+    def delete_project(self, tenant_id: UUID, project_id: UUID) -> None:
+        self.get_project(tenant_id, project_id)
+        refuse_if_held(
+            f"Project {project_id}",
+            {
+                noun: self._count(
+                    f"SELECT count(*) FROM {noun} WHERE tenant_id = %s AND project_id = %s",
+                    (tenant_id, project_id),
+                )
+                for noun in ("corridor", "job", "run")
+            },
+        )
+        self._one(
+            "DELETE FROM project WHERE tenant_id = %s AND id = %s RETURNING id",
+            (tenant_id, project_id),
+        )
+
     # -- corridors -------------------------------------------------------------
 
     _CORRIDOR_COLUMNS = (
@@ -166,6 +195,41 @@ class PostgresStore:
             (tenant_id, project_id),
         )
         return [_corridor(row) for row in rows]
+
+    def update_corridor(self, tenant_id: UUID, corridor: Corridor) -> Corridor:
+        self.get_corridor(tenant_id, corridor.id)
+        box = corridor.bbox or (None, None, None, None)
+        row = self._one(
+            "UPDATE corridor SET name = %s, ref = %s, bbox_south = %s, bbox_west = %s, "
+            "bbox_north = %s, bbox_east = %s, unit_length_m = %s "
+            f"WHERE tenant_id = %s AND id = %s RETURNING {self._CORRIDOR_COLUMNS}",
+            (
+                corridor.name,
+                corridor.ref,
+                *box,
+                corridor.unit_length_m,
+                tenant_id,
+                corridor.id,
+            ),
+        )
+        return _corridor(row)
+
+    def delete_corridor(self, tenant_id: UUID, corridor_id: UUID) -> None:
+        self.get_corridor(tenant_id, corridor_id)
+        refuse_if_held(
+            f"Corridor {corridor_id}",
+            {
+                noun: self._count(
+                    f"SELECT count(*) FROM {noun} WHERE tenant_id = %s AND corridor_id = %s",
+                    (tenant_id, corridor_id),
+                )
+                for noun in ("job", "run")
+            },
+        )
+        self._one(
+            "DELETE FROM corridor WHERE tenant_id = %s AND id = %s RETURNING id",
+            (tenant_id, corridor_id),
+        )
 
     # -- jobs ------------------------------------------------------------------
 
@@ -388,6 +452,10 @@ class PostgresStore:
         except Exception:
             self._rollback()
             raise
+
+    def _count(self, sql: str, params: tuple[Any, ...]) -> int:
+        row = self._maybe(sql, params)
+        return int(row[0]) if row else 0
 
 
 # -- row mapping ---------------------------------------------------------------

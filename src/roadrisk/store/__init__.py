@@ -30,7 +30,14 @@ engine object and cannot fit a model.
 
 from __future__ import annotations
 
-from roadrisk.store.base import NotFound, PayloadRejected, Store, StoreError
+from roadrisk.store.base import (
+    InUse,
+    NotFound,
+    PayloadRejected,
+    Store,
+    StoreError,
+    refuse_if_held,
+)
 from roadrisk.store.memory import MemoryStore
 from roadrisk.store.migrate import (
     MIGRATIONS,
@@ -57,6 +64,7 @@ __all__ = [
     "Artefact",
     "ArtefactKind",
     "Corridor",
+    "InUse",
     "Job",
     "JobStatus",
     "MemoryStore",
@@ -73,6 +81,7 @@ __all__ = [
     "discover",
     "migrate",
     "read_run_columns",
+    "refuse_if_held",
 ]
 
 

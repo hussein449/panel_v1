@@ -91,6 +91,9 @@ app.add_typer(store_app)
 console = Console()
 
 EXIT_REJECTED = 2
+#: Nothing was wrong with what you asked for; this machine cannot do it. Same meaning
+#: and same number as in `roadrisk.storecli`, so a script driving both reads one code.
+EXIT_UNAVAILABLE = 3
 
 _STATUS_STYLE = {
     CheckStatus.PASSED: "green",
@@ -964,6 +967,69 @@ def centreline_help() -> None:
         "[dim]Routing straight from two coordinates is Step 2.2b and is not built "
         "yet. Until it is, this export is the same OSM data that step would fetch — "
         "you are just doing it in a browser.[/dim]"
+    )
+
+
+@app.command()
+def serve(
+    host: Annotated[
+        str, typer.Option("--host", help="Interface to bind.")
+    ] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 8000,
+    reload: Annotated[
+        bool,
+        typer.Option("--reload", help="Restart on source changes. Development only."),
+    ] = False,
+) -> None:
+    """Serve the HTTP API. Needs `pip install "roadrisk-panel\\[api]"`.
+
+    Storage follows $ROADRISK_DATABASE_URL: set, and every request opens a Postgres
+    store; unset, and the whole service runs in memory and forgets everything when it
+    stops. The second is a real way to try the API out, and it is not disguised as
+    anything else — `GET /health` reports what this process can and cannot do.
+
+    Binds the loopback interface by default, deliberately. `X-Tenant-Id` is a claim
+    rather than a credential until step 5.4a, and a service with no authentication
+    should not become reachable from the network because a default was convenient.
+    """
+    import os
+
+    from roadrisk.store.postgres import DSN_ENV
+
+    try:
+        import uvicorn
+    except ImportError as exc:
+        # The backslash escapes the bracket for Rich, which would otherwise read
+        # `[api]` as a markup tag, find no such style, and drop it — printing an
+        # install command that is missing the extra it exists to name.
+        console.print(
+            "[red]The api extra is not installed.[/red] "
+            'Run: pip install "roadrisk-panel\\[api]"'
+        )
+        raise typer.Exit(EXIT_UNAVAILABLE) from exc
+
+    storage = (
+        f"Postgres via ${DSN_ENV}"
+        if os.environ.get(DSN_ENV)
+        else "in memory — nothing survives this process"
+    )
+    console.print(
+        f"[bold]Road Risk Panel[/bold] {__version__} on "
+        f"http://{host}:{port}  ·  docs at /docs"
+    )
+    console.print(
+        f"[dim]Storage: {storage}  ·  Runner: none until step 5.1d  ·  "
+        "Auth: none until 5.4a[/dim]"
+    )
+    # The factory, by name, rather than an app object: with --reload uvicorn re-imports
+    # the target in a fresh process, and an app built here would be built once in a
+    # process that then stops serving it.
+    uvicorn.run(
+        "roadrisk.api.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
     )
 
 

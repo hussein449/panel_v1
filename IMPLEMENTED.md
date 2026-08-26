@@ -5,7 +5,232 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-26 (latest) — Step 5.1b: runs that outlive the process that made them
+## 2026-08-26 (latest) — Step 5.1c: the product, over HTTP
+
+**Delivered:** `roadrisk/api/` — thirteen paths over 5.1b's store, the refusal contract
+enforced by exception handler rather than by intention, `factors.yaml` served with the
+hash of the file it was read from, and `docs/openapi.json` generated from the app.
+
+```bash
+pip install "roadrisk-panel[api]"
+roadrisk serve                       # http://127.0.0.1:8000, docs at /docs
+python tools/generate_openapi.py     # rewrite docs/openapi.json
+pytest tests/test_api.py
+```
+
+### Nothing here describes the payload, the rows or the factors a second time
+
+The response body of `GET /runs/{id}` is `roadrisk.contract` (5.1a). The response bodies
+of the project, corridor and job routes are `roadrisk.store.records` (5.1b) — frozen
+Pydantic models that already forbid extras. The factor list is the `Registry` the loader
+validated at startup. **There is no list of factor names anywhere in `roadrisk/api/`**,
+and a test parses the package with `ast` looking for one, because the way that stops
+being true is never a decision — it is one endpoint that needed a special case for
+`traffic_proxy` and got one.
+
+Three things *are* written separately here, each because the wire shape and the row shape
+genuinely differ:
+
+- **Create bodies carry no `tenant_id`.** It comes from the header. A body that could
+  name one would let a client file rows under somebody else's tenant, and since every
+  request model forbids extras, sending it is a 422.
+- **`ArtefactOut` replaces `uri` with `href`.** The stored URI is a path on our disk.
+- **`RunSummary` drops the payload.** A run is about 300 kB; fifty of them is not a
+  listing.
+
+### The refusal contract, which is the whole reason this step was worth care
+
+A REST instinct collapses every non-success onto 4xx and 5xx, and doing that here would
+have swallowed this project's entire honesty layer into a generic error handler.
+
+| Outcome | What it is | Pinned by |
+|---|---|---|
+| Panel breaks the input contract | **422**, column named, **and no job exists** | `test_a_contract_violation_at_submit_is_422_and_creates_no_job` |
+| Descent to Mode B, dropped terms, refused weight | **200**, carrying its receipts | `test_a_mode_b_descent_is_a_200_carrying_its_receipt` |
+| Something breaks | 500 with a logged reference, **no traceback in the body** | `test_an_unhandled_error_is_a_500_with_a_reference_and_no_traceback` |
+
+The first test asserts the *second* half of the rule — that the project's job list is
+empty afterwards — rather than trusting that the route returned before it got there.
+"No job created" is the half a client can actually verify.
+
+**One envelope for every refusal, including FastAPI's own.** Its default validation error
+is a bare `{"detail": [...]}` list, re-shaped here into the same `{"error": {...}}` as
+everything else. A client that has to parse two error shapes will parse one and guess at
+the other. Codes rather than status alone, because 422 is doing two jobs: a malformed
+body and a panel that breaks the contract are both 422 and are not the same problem — one
+is retried after fixing JSON, the other after fixing data.
+
+### 202 before there is anything behind it, deliberately
+
+`POST /jobs` stores a job and returns 202 with a `Location`. Nothing executes it; it stays
+`queued` until 5.1d. That is the point. A cold corridor is 55.5 s (2.9) and `--bayes` on
+the demo corridor runs for tens of minutes (4.7) — no HTTP request survives either — so if
+this only began returning 202 once Celery existed, 5.2 would change the contract and break
+every client written against 5.1.
+
+**`GET /health` reports `runner: null`.** A job that will never run, reported as `queued`,
+is a working service that lies. The same response reports `auth: null` and
+`artefacts_available`, and the OpenAPI description carries both facts at the top, so a
+client reads them rather than inferring them from a job that never moves.
+
+### Everything refusable is refused before the job exists
+
+A panel through `prepare_panel`; a shape factor checked against `factors.yaml`; a corridor
+with neither an OSM reference nor a bounding box, which no fetch can resolve; a panel
+larger than this deployment accepts. The shape-factor check is worth spelling out: `assess`
+already reports names it could not put a spline on, which is right for a factor that exists
+but did not survive into the fitted specification. A name **no factor has** is a typo, it
+will never mean anything, and the refusal names only the wrong one.
+
+`job.params` is a written-down `JobSpec` rather than a loose dictionary, so 5.1d reads a
+submission back instead of re-deriving what it meant. The panel is stored *as submitted*,
+not as prepared — `exposure` and `log_exposure` are derived, and freezing the derivation
+inside a row would put a copy of the input contract next to the data it describes.
+
+### Artefact download is a file-read primitive, and is treated as one
+
+The database holds a `file://` URI. Serving it means calling `open()` on a path that came
+out of a column — written by the CLI today, by a worker at 5.2a. That does not become safe
+by being trusted; it becomes safe by being bounded.
+
+So `$ROADRISK_ARTEFACT_ROOT` is an **allow-list with no default**, and with none set every
+download is refused with a 409 naming the variable. The failure mode of the safe default is
+a 409; the failure mode of the convenient one is `/etc/passwd`. Four more ways it says no,
+each a real case: a path outside the root — resolved *before* it is compared, so a symlink
+out of the root is caught; a file that is gone, because artefacts are stored by reference
+and nothing stops one being moved; a size that no longer matches the record, because then
+it is not the artefact that record describes and serving it under that sha256 would be a
+lie; and a non-`file://` scheme, which is a **501** rather than a fetch — a server that
+will `GET` any URL out of its own database on request is a proxy for reaching whatever it
+can reach.
+
+The recorded sha256 is returned as the `ETag`, so a client can verify what arrived without
+this route re-hashing a third of a megabyte per request. The size check is free; `stat`
+already happened.
+
+### CRUD needed a D, and the D exposed the cascade
+
+"Project and corridor CRUD" has no U or D under it in 5.1b, so the store grew
+`update_project`, `delete_project`, `update_corridor` and `delete_corridor` — parametrised
+over both backends like everything else in that file.
+
+**Migration 0001 cascades from project through corridor, job and run.** That is correct
+for dropping a tenant and catastrophic for one careless request: a single
+`DELETE /projects/{id}` would destroy every stored assessment filed under it, and a stored
+run is what a client paid for. The guard lives in the store, in both backends, so no caller
+can reach past it, and the refusal names what is still there. There is no force flag —
+emptying a project means deleting what is in it, deliberately.
+
+Deleting a *corridor* is refused too, even though the schema would allow it: `corridor_id`
+is `ON DELETE SET NULL` on both job and run, so nothing would be destroyed — but the link
+would be. A run keeps its geometry inside the payload and would quietly stop being filed
+against the road it describes.
+
+### Three defects this step found in code it did not write
+
+**`PostgresStore._maybe` does not commit, and an `UPDATE ... RETURNING` through it looks
+like it works.** It returns the new row, the change is visible to the connection that made
+it, and it is rolled back when that connection closes. The first `update_project` was
+written that way, which is the obvious way. The test that catches it is the one that
+*re-reads* rather than asserting on the return value, and it is worth stating as a rule:
+for a write, assert on a later read.
+
+**5.1b's one-connection store is not safe behind an API, and it said so.** Its own "known,
+deliberately left" note called it "correct for a CLI and wrong for 5.1c". The precise
+reason is worse than latency: FastAPI runs synchronous routes in a thread pool, psycopg3
+connections are not safe to share across threads, and a shared one does not fail loudly —
+it interleaves two statements and returns the wrong rows to somebody. So the app holds a
+*provider* that opens a store per request and closes it. A pool goes behind that provider
+when connection latency is worth measuring; nothing above it changes.
+
+**Rich was silently eating the extra out of every install command we print.** Writing
+`roadrisk serve` without the api extra installed printed:
+
+```
+The api extra is not installed. Run: pip install "roadrisk-panel"
+```
+
+`[api]` is Rich markup. It looks for a style called `api`, finds none, drops the tag — and
+the message now tells you to install the package you already have, with the one thing it is
+about removed from it.
+
+**This package already knew.** `centreline-help` renders its Overpass recipe through
+`Text()` rather than a bare string precisely because Rich eats `[out:json]`, the comment
+saying so has been in `cli.py` since Stage 2, and there is a test class named for it. The
+knowledge did not travel: 5.1b wrote it twice (`roadrisk store`'s group help and its
+missing-extra message) and 5.1c wrote it twice more (the `serve` docstring and its
+missing-extra message). All four are backslash-escaped now.
+
+Found by running the command with the dependency deliberately absent — the branch is
+unreachable on a machine where the install worked — and the fourth instance was found by
+the test rather than by me, which is the argument for writing it. The new test class
+asserts every place this package prints an extra, unwrapping Rich's boxed help first,
+because the command can be split across two lines with a border character in the middle
+of it.
+
+### The licence policy moved down a layer, and that is the interesting part
+
+`GET /registry` serves each adapter's tier and licence — and what that licence obliges. A
+client reading `"licence": "ODbL"` has been told nothing it can act on; what it needs is
+that crediting the source in a report discharges it and republishing the panel as a dataset
+does not. That distinction already existed, in `roadrisk/geo/attribution.py`, as a table
+keyed by `Licence`.
+
+Reaching for it from the API would have made **shapely a dependency of answering
+`GET /registry`**, because importing `roadrisk.geo.attribution` runs `roadrisk/geo/__init__`
+first. Copying the text would have been the 5.1a defect with new names. So the table moved
+to `roadrisk/core/registry/schema.py`, beside the enum it is keyed by, where it always
+belonged — a licence's obligations are a property of the licence, not of a geospatial
+pipeline. `geo.attribution` re-exports it, and the tuple became a `LicencePolicy`
+NamedTuple on the way, so `credit_required` and `share_alike_database` have names at the
+point of use rather than being positions 0 and 1.
+
+A `TIER_MEANING` table joined it, and a test asserts both cover every member of their enum
+— a tier nobody has described would otherwise be published to clients as a bare letter.
+
+### `docs/openapi.json`, and what its check deliberately ignores
+
+`tools/generate_openapi.py` writes the document from the app, the way `generate_types.py`
+writes the TypeScript. A served `/openapi.json` answers none of the questions a committed
+one does: 5.3b's Next.js shell wants a description at build time, a reviewer wants to read
+the surface without installing the package, and "what did this endpoint look like last
+release" should be answerable from `git log`.
+
+`--check` compares the **surface** — paths, methods, status codes, parameter names, schema
+names — and not the bytes. A FastAPI upgrade legitimately rewords a description or reorders
+an `anyOf`, and a check that failed on that is a check people learn to regenerate past
+without reading. A separate test asserts the document's `Licence` and `Tier` enums are the
+registry's own, so the published contract cannot describe a licence the registry is
+incapable of holding.
+
+**50 new tests, 869 passing, 3 skipped. `ruff check` clean.** Without a database that
+reads 843 passing and 29 skipped: `tests/test_api.py` runs on `MemoryStore` and needs no
+server, and the Postgres half of `tests/test_store.py` skips loudly as it always has.
+Verified beyond the suite as well — a real uvicorn process over a real socket against
+real Postgres, where the per-request store, the 422-with-no-job and `GET /registry` all
+behave as they do in-process.
+
+### Known, and deliberately left
+
+- **No pagination cursor.** `GET /runs` takes a capped `limit` and returns newest-first.
+  Nothing has enough runs for the difference to matter, and a cursor designed against no
+  query shape is a cursor designed twice.
+- **No `POST /runs`.** Importing a `run.json` is `roadrisk store import`, which is a local
+  operation on a file. Over HTTP it is a large upload with no client asking for it yet.
+- **No re-render endpoint.** `roadrisk store show --report` renders a stored run to a
+  report; the API does not. 5.3a splits the report into a component and 5.3b serves it, so
+  building a second renderer here would be building the thing that step then replaces.
+- **`PATCH` is read-modify-write with no `If-Match`.** Two editors racing would have the
+  second win silently. There is one editor. The `ETag` machinery already exists on the
+  artefact route when that stops being true.
+- **No rate limiting and no request-body size cap.** The panel row cap is enforced after
+  parsing, which bounds what reaches `jsonb` and not what reaches the parser. That is a
+  deployment concern — a reverse proxy's job — and pretending otherwise in application
+  code would give it a home where it does not belong.
+
+---
+
+## 2026-08-26 (earlier) — Step 5.1b: runs that outlive the process that made them
 
 **Delivered:** `roadrisk/store/` — six Postgres tables around a `jsonb` payload, numbered
 SQL migrations, two backends behind one protocol, and the storage half of the command

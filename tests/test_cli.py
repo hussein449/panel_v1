@@ -44,6 +44,43 @@ class TestCentrelineGuidance:
         assert "[out:json]" in result.output
 
 
+def _unwrapped(output: str) -> str:
+    """Help text is boxed and hard-wrapped. Undo both before matching.
+
+    Rich wraps at the panel width and pads each line to it, so an install command can be
+    split across two lines with a border character between. Collapsing whitespace would
+    not be enough on its own — the break can land inside the command.
+    """
+    return "".join(line.strip().strip("│").strip() for line in output.splitlines())
+
+
+class TestInstallCommandsSurviveRendering:
+    """The same Rich hazard as the class above, one command over.
+
+    `[out:json]` was escaped in `centreline-help` back in Stage 2 and the reason was
+    written down there. Then 5.1b printed `pip install "roadrisk-panel[store]"` and
+    5.1c printed `pip install "roadrisk-panel[api]"`, and Rich did exactly what it had
+    done before: looked for a style called `store`, found none, dropped the tag — and
+    left an install command telling the reader to install the package they already have,
+    with the one thing it is about removed from it.
+
+    Nothing noticed, because help text is not usually asserted on. It is now, for every
+    place this package prints an extra, so the next one that appears is covered too.
+    """
+
+    def test_the_store_group_names_the_extra_it_needs(self) -> None:
+        result = runner.invoke(app, ["store", "--help"])
+
+        assert result.exit_code == 0
+        assert "roadrisk-panel[store]" in _unwrapped(result.output)
+
+    def test_the_serve_command_names_the_extra_it_needs(self) -> None:
+        result = runner.invoke(app, ["serve", "--help"])
+
+        assert result.exit_code == 0
+        assert "roadrisk-panel[api]" in _unwrapped(result.output)
+
+
 class TestCorridorCommand:
     def test_demo_runs_end_to_end(self) -> None:
         result = runner.invoke(app, ["corridor", "--demo", "--periods", "6"])

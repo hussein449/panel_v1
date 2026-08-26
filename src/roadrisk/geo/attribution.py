@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from roadrisk.core.registry.schema import Licence
+from roadrisk.core.registry.schema import LICENCE_POLICY, Licence, LicencePolicy
 
 # The exact text an adapter is required to reproduce, when it has one. Written by
 # the adapter as a note prefixed this way, so the credit line travels with the value
@@ -37,45 +37,14 @@ ATTRIBUTION_PREFIX = "ATTRIBUTION REQUIRED."
 
 #: Per licence: must it be credited, does redistributing a derived database trigger
 #: share-alike, and the sentence that says what the client actually has to do.
-POLICY: dict[Licence, tuple[bool, bool, str]] = {
-    Licence.ODBL: (
-        True,
-        True,
-        "Credit the source in the report. Publishing the panel itself as a dataset "
-        "is redistributing a derived database, which triggers ODbL share-alike — "
-        "the dataset would have to carry the same licence.",
-    ),
-    Licence.CC_BY_SA: (
-        True,
-        True,
-        "Credit the source in the report. Publishing the panel itself as a dataset "
-        "triggers CC-BY-SA share-alike — the dataset would have to carry the same "
-        "licence.",
-    ),
-    Licence.CC_BY: (
-        True,
-        False,
-        "Credit the source in the report. Attribution only: there is no share-alike "
-        "obligation, so the panel may be redistributed under any licence provided "
-        "the credit travels with it.",
-    ),
-    Licence.PUBLIC_DOMAIN: (
-        False,
-        False,
-        "No obligation. Credited anyway where the source asks for it.",
-    ),
-    Licence.PROPRIETARY: (
-        True,
-        False,
-        "Governed by the supplier's own terms, which this tool has not read. Check "
-        "them before the report leaves the building.",
-    ),
-    Licence.CLIENT: (
-        False,
-        False,
-        "The client's own data. No third-party obligation.",
-    ),
-}
+#:
+#: The table itself moved down to :mod:`roadrisk.core.registry.schema` at step 5.1c,
+#: beside the enum it is keyed by, because the API serves these obligations and
+#: reaching into this module for them would have made shapely a dependency of
+#: answering ``GET /registry``. It is re-exported here because this is where the
+#: reasoning about what a client owes lives, and because nothing outside should have
+#: to know which module holds the dictionary.
+POLICY: dict[Licence, LicencePolicy] = LICENCE_POLICY
 
 
 @dataclass(frozen=True)
@@ -228,7 +197,7 @@ def _obligation(licence: str, bucket: dict[str, list[str]]) -> Obligation:
     )
 
 
-def _policy_for(licence: str) -> tuple[bool, bool, str] | None:
+def _policy_for(licence: str) -> LicencePolicy | None:
     for known, policy in POLICY.items():
         if known.value == licence:
             return policy

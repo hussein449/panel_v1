@@ -11,6 +11,7 @@ Both modes read the same registry, which is what makes them comparable — Mode 
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -68,6 +69,87 @@ class Licence(StrEnum):
     PUBLIC_DOMAIN = "public-domain"
     PROPRIETARY = "proprietary"
     CLIENT = "client"
+
+
+#: What each tier actually costs the client, in one line.
+#:
+#: Stated as data next to the enum rather than only in its docstring, because step
+#: 5.1c serves it: a client reading ``"tier": "C"`` off the API needs to know that it
+#: means a rate-limited free-tier key they have to obtain, and a letter does not say
+#: that. A test asserts this covers every member — a tier nobody has described would
+#: otherwise be published as a bare letter.
+TIER_MEANING: dict[Tier, str] = {
+    Tier.A: "Open, global, scriptable, free. Costs a network request.",
+    Tier.B: "Open, but needs vision models or graph compute to derive. Costs machine time.",
+    Tier.C: "Free-tier API, licence-limited. Needs a key, and is opt-in per project.",
+    Tier.D: "Cannot be derived. The client measures it and supplies it.",
+}
+
+
+class LicencePolicy(NamedTuple):
+    """What one licence obliges the client to do.
+
+    Two booleans rather than one, deliberately, and the reason is in
+    :mod:`roadrisk.geo.attribution`: crediting a source in the report and
+    redistributing the panel as a dataset are different acts under different terms.
+    ODbL and CC-BY-SA impose share-alike on the second and not the first, CC-BY-4.0 on
+    neither, and collapsing them into "attribution required" understates what a client
+    who publishes the panel has just agreed to.
+    """
+
+    credit_required: bool
+    share_alike_database: bool
+    note: str
+
+
+#: Per licence: must it be credited, does redistributing a derived database trigger
+#: share-alike, and the sentence that says what the client actually has to do.
+#:
+#: This lives beside the enum it is keyed by rather than in the geospatial layer that
+#: first needed it, because it describes a licence and not a pipeline. Step 5.1c is
+#: what forced the move: the API serves these obligations alongside every adapter it
+#: lists, and reaching into ``roadrisk.geo`` for them would have made shapely a
+#: dependency of answering ``GET /registry``. The alternative — a second copy of the
+#: text in the API — is the drift step 5.1a exists to prevent.
+LICENCE_POLICY: dict[Licence, LicencePolicy] = {
+    Licence.ODBL: LicencePolicy(
+        True,
+        True,
+        "Credit the source in the report. Publishing the panel itself as a dataset "
+        "is redistributing a derived database, which triggers ODbL share-alike — "
+        "the dataset would have to carry the same licence.",
+    ),
+    Licence.CC_BY_SA: LicencePolicy(
+        True,
+        True,
+        "Credit the source in the report. Publishing the panel itself as a dataset "
+        "triggers CC-BY-SA share-alike — the dataset would have to carry the same "
+        "licence.",
+    ),
+    Licence.CC_BY: LicencePolicy(
+        True,
+        False,
+        "Credit the source in the report. Attribution only: there is no share-alike "
+        "obligation, so the panel may be redistributed under any licence provided "
+        "the credit travels with it.",
+    ),
+    Licence.PUBLIC_DOMAIN: LicencePolicy(
+        False,
+        False,
+        "No obligation. Credited anyway where the source asks for it.",
+    ),
+    Licence.PROPRIETARY: LicencePolicy(
+        True,
+        False,
+        "Governed by the supplier's own terms, which this tool has not read. Check "
+        "them before the report leaves the building.",
+    ),
+    Licence.CLIENT: LicencePolicy(
+        False,
+        False,
+        "The client's own data. No third-party obligation.",
+    ),
+}
 
 
 class WeightFamily(StrEnum):
@@ -381,11 +463,14 @@ class Registry(BaseModel):
 
 
 __all__ = [
+    "LICENCE_POLICY",
+    "TIER_MEANING",
     "Adapter",
     "CrashScope",
     "FacilityType",
     "Factor",
     "Licence",
+    "LicencePolicy",
     "Region",
     "Registry",
     "Severity",

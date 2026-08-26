@@ -14,9 +14,12 @@ in, a printed and sourced report out, with every number traceable and a limitati
 nothing can remove. **Stage 5 has started.** 5.0 made the layering rule a test, before the
 packages that could break it existed; 5.1a froze the payload contract and made
 `web/src/types.ts` a generated file; 5.1b put runs in Postgres, tenant-scoped from the
-first migration. None of it serves an HTTP request yet. The one thing no part of Stage 5
-addresses is the critical path: this is still validated on two corridors with synthetic
-crashes, and one real police extract is worth more than any of what follows.
+first migration; 5.1c serves all of it over HTTP, with the refusal contract enforced by
+exception handler rather than by intention. **Nothing executes a job yet** — `POST /jobs`
+returns 202 and the job stays queued until 5.1d, and `GET /health` says so rather than
+leaving it to be discovered. The one thing no part of Stage 5 addresses is the critical
+path: this is still validated on two corridors with synthetic crashes, and one real
+police extract is worth more than any of what follows.
 
 **Development moved to WSL2 / Ubuntu on 2026-08-24**, because Windows enabled Smart App
 Control and it blocks unsigned native binaries — which is every compiled Python wheel this
@@ -779,7 +782,7 @@ executes it.
 | `[x]` | **5.0** Boundary test | Import-graph assertion: `core` imports nothing from `geo`, `report`, `api`, `worker` | Adding such an import fails a test that names the offending module ✅ |
 | `[x]` | **5.1a** Contract frozen | Pydantic models mirroring `as_dict()`, a `schema_version`, and `web/src/types.ts` generated from them rather than hand-written | A stored run round-trips through the models ✅ · the hand-maintained types are gone ✅ |
 | `[x]` | **5.1b** Storage | Postgres schema — tenant, project, corridor, job, run — payload as JSONB, artefacts by reference, migrations | A run written by the CLI imports and re-renders from the database with no refit ✅ |
-| `[ ]` | **5.1c** FastAPI | Project and corridor CRUD, `POST /jobs` → 202, `GET /jobs/{id}`, `GET /runs/{id}`, artefact download | OpenAPI generated, with factors, tiers and licences read from `factors.yaml` |
+| `[x]` | **5.1c** FastAPI | Project and corridor CRUD, `POST /jobs` → 202, `GET /jobs/{id}`, `GET /runs/{id}`, artefact download | OpenAPI generated ✅ · factors, tiers and licences read from `factors.yaml` ✅ |
 | `[ ]` | **5.1d** In-process executor | A runner interface with a synchronous implementation behind it | A demo corridor goes submit → report with no broker running |
 | `[ ]` | **5.2a** Celery chord | Fan-out adapters, join, fit | An adapter failure fails its own branch — the factor is reported missing, the job is not failed |
 | `[ ]` | **5.2b** Cost model + cap | Per-source request accounting, a price table, a per-project cap enforced *before* the call | A job that would breach stops at the boundary, names the source, and the partial run is still a run |
@@ -819,7 +822,7 @@ A fifth test plants a violation and reads the failure back, because a test that 
 is decoration. All four were also verified against violations planted in the real source:
 each names the file, the line and the rule.
 
-### The refusal contract — a refusal is a result, not an HTTP error
+### The refusal contract — a refusal is a result, not an HTTP error *(built at 5.1c)*
 
 The largest design risk in this stage. Three outcomes have to stay distinct, and a REST
 instinct collapses all three onto 4xx and 5xx, which would swallow the entire honesty
@@ -827,11 +830,19 @@ layer into a generic error handler:
 
 | Outcome | HTTP | Why |
 |---|---|---|
-| `ContractViolation` at submit | **422**, column named, no job created | The panel was rejected. This is the CLI's refusal receipt, over the wire |
-| Descent to Mode B, dropped terms, a refused weight | **200, completed** | Mode B is the floor. The engine's refusals are *content*, and the run carries them |
-| Overpass 429, absent token, no GDAL | job status `failed`, with a cause | Infrastructure failed. Never a 500 with a stack trace |
+| `ContractViolation` at submit | **422**, column named, no job created ✅ | The panel was rejected. This is the CLI's refusal receipt, over the wire |
+| Descent to Mode B, dropped terms, a refused weight | **200, completed** ✅ | Mode B is the floor. The engine's refusals are *content*, and the run carries them |
+| Overpass 429, absent token, no GDAL | job status `failed`, with a cause | Infrastructure failed. Never a 500 with a stack trace ✅ |
 
-A test should assert that a Mode B descent is a 200 carrying its descent receipt.
+Enforced in `roadrisk/api/errors.py` as exception handlers rather than as a rule each
+route remembers, and pinned by `tests/test_api.py`: a Mode B descent is a 200 carrying
+its receipts, a contract violation is a 422 that leaves the project's job list *empty*,
+and an unhandled exception is a 500 with a logged reference and no traceback in the body.
+
+**One shape for every refusal, including FastAPI's own.** Its default validation error is
+a bare `{"detail": [...]}`, so it is re-shaped into the same envelope as everything else —
+a client that has to parse two error shapes will parse one and guess at the other. The
+third row's `failed` half waits for something that can fail, which is 5.1d.
 
 ### 5.1a — the contract, frozen before the API is written *(done)*
 
@@ -912,6 +923,64 @@ the input contract, where nothing malfunctioned.
 **Artefacts are stored by reference.** A report is a third of a megabyte, a PDF more,
 both are regenerable from the payload, and the record has no field for content — what is
 kept is the URI, the size and the hash. `file://` today, an object store at 6.2.
+
+### 5.1c — the product over HTTP, and the two doors it deliberately locks *(done)*
+
+```bash
+pip install "roadrisk-panel[api]"
+roadrisk serve                      # http://127.0.0.1:8000, docs at /docs
+python tools/generate_openapi.py    # rewrite docs/openapi.json
+pytest tests/test_api.py
+```
+
+Thirteen paths over `roadrisk.store`, with the payload shape, the row shapes and the
+factor list all *reused* rather than described again — there is no list of factor names
+anywhere in `roadrisk/api/`, and a test parses the package with `ast` to keep it that way.
+`GET /registry` serves `factors.yaml` with the hash of the file it was read from, each
+adapter's tier and licence, and what that licence actually obliges the client to do.
+
+**Storage follows the environment.** With `$ROADRISK_DATABASE_URL` set, every request
+opens a Postgres store and closes it; without it, the whole service runs on `MemoryStore`
+and forgets everything when it stops. The second is a real way to try the API and it is
+not disguised as anything else.
+
+**Two doors, locked, and both are stated in the OpenAPI description rather than left to
+be discovered.**
+
+*Nothing executes jobs.* `POST /jobs` stores a job and returns 202 with a `Location`. It
+stays `queued` until 5.1d. Returning 202 now — before there is anything behind it — is
+the point: if it only started doing so once Celery existed, 5.2 would change the contract
+and break every client written against 5.1. `GET /health` reports `runner: null`, because
+a job that will never run, reported as `queued`, is a working service that lies.
+
+*`X-Tenant-Id` is not authentication.* It is required on every route that touches a row,
+it has no default, and nothing verifies the claim. What it buys is that the store's rule
+survives the trip over HTTP — every read is scoped to exactly one tenant and there is
+still no way to ask for all of them — so 5.4a replaces one dependency function rather
+than every query. An unknown tenant is not an error; it is a tenant with no rows.
+
+**Everything refusable is refused at submit**, so that a job which could never succeed
+never becomes a queued job: a panel through `prepare_panel`, a shape factor against
+`factors.yaml`, a corridor with neither a reference nor a box, a panel larger than the
+deployment accepts. The contract-violation test asserts the *second* half of that rule —
+the project's job list is empty afterwards — because that is the half a client can check.
+
+**Artefact download is a file-read primitive and is treated as one.** The database holds
+a `file://` URI written by the CLI today and by a worker at 5.2a; serving one means
+opening a path that came out of a column. So `$ROADRISK_ARTEFACT_ROOT` is an allow-list,
+**there is no default**, and with none set every download is refused with a 409 naming the
+variable. Paths are resolved before they are compared, so a symlink out of the root is
+refused too; a recorded size that no longer matches is refused rather than served under a
+hash it would not match; a non-`file://` scheme is a 501 rather than a fetch, because a
+server that will `GET` any URL out of its own database is a proxy for reaching whatever it
+can reach.
+
+**CRUD needed a U and a D under it,** so the store grew `update_project`,
+`delete_project`, `update_corridor` and `delete_corridor`, conformance-tested against both
+backends like everything else in 5.1b. The delete is guarded *in the store*: migration
+0001 cascades from project through corridor, job and run, so an unguarded
+`DELETE /projects/{id}` destroys every stored assessment filed under it. There is no force
+flag — emptying a project means deleting what is in it, deliberately.
 
 ### 5.2 — two traps that are specific to this pipeline
 
