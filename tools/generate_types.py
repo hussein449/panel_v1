@@ -1,9 +1,9 @@
-"""Step 5.1a — generate `web/src/types.ts` from the payload contract.
+"""Step 5.1a — generate `web/src/report/types.ts` from the payload contract.
 
-    python tools/generate_types.py            # write web/src/types.ts
+    python tools/generate_types.py            # write web/src/report/types.ts
     python tools/generate_types.py --check    # fail if the committed file is stale
 
-`web/src/types.ts` was hand-maintained. That was reasonable while one renderer read one
+`web/src/report/types.ts` was hand-maintained. That was reasonable while one renderer read one
 file, and stops being reasonable the moment there is an API: two descriptions of one
 payload, in two languages, kept in step by whoever remembers. Step 4.7 is what that
 costs — `posterior.coefficients` is a mapping, the page had it typed as a list, and every
@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from roadrisk.contract import SCHEMA_VERSION, Run  # noqa: E402
 
-TARGET = REPO / "web" / "src" / "types.ts"
+TARGET = REPO / "web" / "src" / "report" / "types.ts"
 
 HEADER = f"""/**
  * The JSON contract, as TypeScript.

@@ -1,10 +1,23 @@
-import { Component, StrictMode, useState } from "react";
-import type { ErrorInfo, ReactNode } from "react";
+/**
+ * Entry point one: the single file you open by double-clicking.
+ *
+ * This is the `report.html` that `roadrisk corridor --report` writes — one document,
+ * everything inlined, no server and no network. That is step 4.3's done-when and it is
+ * not an arbitrary bar: a corridor can be assessed offline with no API key, and a report
+ * that then needed a web server to be read would have put the network back into the one
+ * product that does without it.
+ *
+ * **Everything specific to that is here, and nothing else is.** Where the run comes from
+ * — injected into the document, or picked off disk — is this file's whole job. The report
+ * itself is `../report`, which the app at 5.3b imports as well, so the two surfaces
+ * cannot drift into drawing different things.
+ */
+
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 
-import Report from "./Report";
-import type { Run } from "./types";
-import "./styles.css";
+import { Boundary, Report } from "../report";
+import type { Run } from "../report";
 
 /**
  * Read the run the Python side injected into the page.
@@ -95,46 +108,6 @@ function Loader({ onLoad }: { onLoad: (run: Run) => void }) {
       </p>
     </div>
   );
-}
-
-/**
- * A rendering failure must not become an empty page.
- *
- * React unmounts the whole tree on an uncaught error, so without this one bad value
- * in one figure erases the entire report — every number, every receipt, every
- * licence — and leaves white. Nothing about that tells the reader what happened or
- * that the data is intact. This holds the failure to a message, names it, and says
- * where the same numbers are.
- */
-class Boundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state: { error: Error | null } = { error: null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("The report failed to render.", error, info.componentStack);
-  }
-
-  render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <div className="fallback">
-        <h1>This report could not be drawn</h1>
-        <p>
-          The assessment itself is intact — it is stored in this file and in the JSON
-          beside it. Only the page that draws it failed.
-        </p>
-        <p className="caveat caveat--strong">{String(this.state.error.message)}</p>
-        <p className="fallback__note">
-          The same numbers are in <code>assessment.json</code>,{" "}
-          <code>corridor.json</code> and <code>ranking.csv</code> in the same folder.
-          Please report the message above with the run.
-        </p>
-      </div>
-    );
-  }
 }
 
 function App() {

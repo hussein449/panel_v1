@@ -1,1 +1,5 @@
 node_modules/
+# `npm run build:lib` output — the report as an importable module, for a host page that
+# is not React. A build artefact of `src/`, unlike the single-file bundle, which *is*
+# committed because installing this package must never need a JavaScript toolchain.
+dist/

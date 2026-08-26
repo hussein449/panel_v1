@@ -794,7 +794,7 @@ executes it.
 | `[~]` | **5.2a** Celery chord | Fan-out adapters ✅, join ✅, fit ✅ — **across threads, not across machines. Celery is not built.** | An adapter failure fails its own branch — the factor is reported missing, the job is not failed ✅ |
 | `[ ]` | **5.2b** Cost model + cap | Per-source request accounting, a price table, a per-project cap enforced *before* the call | A job that would breach stops at the boundary, names the source, and the partial run is still a run |
 | `[ ]` | **5.2c** Secrets per tenant | Per-project keys, validated at entry, and an Overpass identity with a rate budget | A scope-less Mapillary token is refused when the key is entered, not rediscovered per run |
-| `[ ]` | **5.3a** Report as a library | `web/src/` splits into `<Report run={run} />` and two thin entry points | The single-file bundle still opens from `file://`; the app renders the same component tree |
+| `[x]` | **5.3a** Report as a library | `web/src/` splits into `<Report run={run} />` and two thin entry points ✅ | The single-file bundle still opens from `file://` ✅ · the app renders the same component tree ✅ |
 | `[ ]` | **5.3b** Next.js shell | Routes, layout, and the mode banner as a *layout* element | Mode banner unmissable on every screen — no route can omit it |
 | `[ ]` | **5.3c** MapLibre map | Corridor geometry, units coloured by rank, factor provenance on click | Tiles never enter the report path; the document keeps its own SVG map |
 | `[ ]` | **5.3d** Interactive layer | The hover and detail layer 4.4 deferred as screen-only | Native `<title>` still works with JavaScript off |
@@ -1128,6 +1128,51 @@ only cost figure in the repository is the 50–150 USD per corridor recorded aga
 unbuilt `mapillary_vision`. The done-when says *enforced in the runner*, so the cost model
 is built at 5.2b, not wired up — and a cap refusal enters the run log like every other
 refusal in this project.
+
+### 5.3a — one report, imported twice *(done)*
+
+```bash
+cd web
+npm run build        # the single file the Python package ships
+npm run build:lib    # the same report, importable by a page somebody else owns
+pytest tests/test_report_library.py
+```
+
+```
+web/src/
+├── report/       the library — Report, sections, figures, format, types, styles, Boundary
+└── entries/
+    ├── standalone.tsx   the file:// bundle: read the embedded run, or offer the picker
+    └── mount.tsx        mountReport(element, run), for a host page
+```
+
+**"The app renders the same component tree" is true by construction.** There is one
+`Report`, both entries import it, and neither has any part of the report inside it — so
+there is no second tree for the first to differ from. `tests/test_report_library.py`
+asserts that rather than trusting it: exactly one component is defined, an entry renders
+nothing but `Report`, `Boundary` and its own mount plumbing, and neither reaches past
+`../report` into the library's arrangement. A Python test over TypeScript sources, because
+Node is not installed where this suite runs and a test that needed `npm` would not be run.
+
+**It was also checked rather than only argued.** The same run was rendered through both
+entries — the single-file bundle, and a host page calling `mountReport` — and
+`article.report`'s `outerHTML` came out at **49,929 characters with an identical hash in
+both**. That is what the assertions above exist to keep true.
+
+**`Boundary` moved into the library**, and the move is the argument for the split. While
+there was one entry it could sit beside the mounting code without anybody noticing the
+difference. With two, leaving it there means either writing it twice or shipping one
+surface that fails silently to a blank page — which is the exact failure it was written to
+prevent.
+
+**`types.ts` moved with the library**, so `tools/generate_types.py` writes to
+`web/src/report/types.ts` now. The generated contract belongs to the thing that renders
+it, not to the directory it happened to be in.
+
+**The single-file bundle is unchanged in behaviour and still committed.** Installing this
+package must never need a JavaScript toolchain, so `report.html` stays in the Python
+package as a build artefact; `web/dist/` — the library build — is ignored, because nothing
+in the Python side consumes it.
 
 ### 5.3 — the map on the screen is not the map in the document
 

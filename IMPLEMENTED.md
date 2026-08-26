@@ -5,7 +5,120 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-26 (latest) — Step 5.2a, part one: a failing adapter costs a factor, not the corridor
+## 2026-08-26 (latest) — Step 5.3a: one report, imported twice
+
+**Delivered:** `web/src/` split into a report library and two thin entry points. The
+single-file bundle still opens from `file://` with nothing running, and a page somebody
+else owns can mount the same component — verified to the character.
+
+```bash
+cd web
+npm run build        # the single file the Python package ships
+npm run build:lib    # the same report, importable
+pytest tests/test_report_library.py
+```
+
+### The split
+
+```
+web/src/
+├── report/       Report, sections, figures, format, types, styles, Boundary, index
+└── entries/
+    ├── standalone.tsx   the file:// bundle: read the embedded run, or offer the picker
+    └── mount.tsx        mountReport(element, run), for a host page
+```
+
+`Report.tsx` already took a run as a prop, so the *component* was a library in spirit
+before this step. What was tangled was everything around it: `main.tsx` mixed reading the
+embedded run, the file picker, the error boundary and the mounting, and there was no
+surface for anything but that one page to import.
+
+### "The app renders the same component tree" is true by construction
+
+There is one `Report`. Both entries import it, and neither has any part of the report
+inside it — so there is no second tree for the first one to differ from. That is the
+whole point of the split, and it is the same move step 4.3 made when it put the renderer
+in the UI rather than writing a separate print template: two templates kept in visual
+sync by hand is a promise, one component imported twice is a fact.
+
+The failure mode is not somebody deciding to fork the report. It is somebody needing one
+extra heading on the web page four steps from now and adding it to the entry point,
+because that is where they happen to be. So `tests/test_report_library.py` asserts it:
+exactly one `Report` is defined, an entry renders nothing but `Report`, `Boundary` and
+its own mount plumbing, neither reaches past `../report` into the library's arrangement,
+and the library never imports an entry.
+
+**A Python test over TypeScript sources**, deliberately. Node is not installed in the
+environment this suite runs in — the JavaScript toolchain is on the Windows side and
+`web/node_modules` only exists there — so a test that needed `npm` would not run, which
+means it would not be run. Parsing imports is enough for what is being claimed: this is a
+question about which module owns which code.
+
+### And it was checked, not only argued
+
+The same run was rendered through both entries — the shipped single-file bundle, and a
+host page calling `mountReport` — and `article.report`'s `outerHTML` came out at **49,929
+characters with an identical hash in both**, seven sections, the same figures, the demo
+notice from 5.1d in place. The host page's own chrome sat outside it untouched, which is
+the other half of what a mount function has to get right.
+
+The assertions in the test are what keep that true; this is what established it once.
+
+### `Boundary` moving is the argument for the whole split
+
+It caught a rendering failure and held it to a message, and it lived in `main.tsx`
+because that was the only entry. With two entries, leaving it there means either writing
+it twice or shipping one surface that fails silently to a blank white page — which is
+precisely the failure it exists to prevent.
+
+So it is in the library, and `mountReport` wraps the report in it without asking. A host
+that mounted the bare component would get React's own behaviour on an uncaught error — the
+tree unmounted, a hole in somebody else's page, no explanation — and there is no reason a
+host should have to know to add that itself.
+
+### Two builds from one source tree
+
+`npm run build` is unchanged: one `report.html`, everything inlined, into the Python
+package. That is step 4.3's done-when and it is not negotiable — a corridor can be
+assessed offline with no API key, and a report that needed a web server to be read would
+have put the network back into the one product that does without it.
+
+`npm run build:lib` emits the report as an ESM module with **React external**: a host page
+already has one, and two copies of React in a document is a broken hooks dispatcher rather
+than a large download. 5.3b's Next.js shell will import the component source directly,
+being React itself; this target exists for hosts that are not, and because a library
+nobody has ever built is a library that does not compile. `web/dist/` is ignored — nothing
+on the Python side consumes it, unlike the single-file bundle, which is committed so that
+installing this package never needs a JavaScript toolchain.
+
+### A defect in my own test, caught before it shipped
+
+The check that an entry point renders nothing of the report matches capitalised JSX tags.
+The first version reported `Run` as a component being rendered in `standalone.tsx` — it
+was matching `useState<Run | null>`, a TypeScript type parameter. A lookbehind for an
+identifier character separates the two: a generic always follows a name, a JSX tag never
+does.
+
+Worth recording because the failure was in the safe direction only by luck. A regex that
+over-matches produces a test that fails loudly on correct code; the same carelessness in
+the other direction produces one that passes on everything.
+
+### Known, and deliberately left
+
+- **No JavaScript test suite.** The parity was established by rendering both surfaces and
+  comparing, by hand, once. Making that automatic needs a test runner and a Node
+  environment the Python suite can reach — worth doing when there is CI, and it should
+  compare rendered markup rather than re-assert what the source check already covers.
+- **`web/src/report/types.ts` moved**, so `tools/generate_types.py` and
+  `tests/test_payload_contract.py` follow it. The generated contract belongs to the thing
+  that renders it.
+- **`mountReport` returns a `Root` and nothing unmounts it.** A host that mounts twice
+  into one element gets React's warning. Fine for a page that mounts once, which is what
+  5.3b will do; a `<Report>` rendered as a React child does not go through this path at all.
+
+---
+
+## 2026-08-26 (earlier) — Step 5.2a, part one: a failing adapter costs a factor, not the corridor
 
 **Delivered:** `roadrisk/geo/branches.py` — every adapter is an independently-failable
 branch, the network-bound ones run concurrently, and three cache defects that only exist

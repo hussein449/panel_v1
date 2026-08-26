@@ -17,7 +17,7 @@ coefficient silently fell back to its frequentist interval under a *credible int
 heading, and it survived three steps of review because nothing compared the two
 descriptions of the same object.
 
-**And it is the source of the TypeScript.** `web/src/types.ts` was hand-maintained,
+**And it is the source of the TypeScript.** `web/src/report/types.ts` was hand-maintained,
 which was reasonable while one renderer read one file and becomes two descriptions in
 two languages the moment there is an API. It is generated from these models now, by
 `tools/generate_types.py`, and a test asserts the committed file is what the generator

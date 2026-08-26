@@ -248,7 +248,7 @@ def test_mode_b_carries_no_count_through_the_contract(mode_b_run) -> None:
 
 REPO = Path(__file__).resolve().parents[1]
 GENERATOR = REPO / "tools" / "generate_types.py"
-TYPES_TS = REPO / "web" / "src" / "types.ts"
+TYPES_TS = REPO / "web" / "src" / "report" / "types.ts"
 
 
 def _load_generator() -> ModuleType:
@@ -264,7 +264,7 @@ def _load_generator() -> ModuleType:
 
 
 def test_the_committed_typescript_is_what_the_contract_generates() -> None:
-    """`web/src/types.ts` is generated. This is what stops it drifting back.
+    """`web/src/report/types.ts` is generated. This is what stops it drifting back.
 
     The file is committed rather than built, because installing this package must never
     require a Python toolchain to build the front end — the same reason the compiled
@@ -274,7 +274,7 @@ def test_the_committed_typescript_is_what_the_contract_generates() -> None:
     generated = _load_generator().render()
     current = TYPES_TS.read_text(encoding="utf-8")
     assert current == generated, (
-        "web/src/types.ts no longer matches src/roadrisk/contract/.\n"
+        "web/src/report/types.ts no longer matches src/roadrisk/contract/.\n"
         "Run: python tools/generate_types.py"
     )
 

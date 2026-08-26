@@ -1,4 +1,4 @@
-"""Write `docs/openapi.json` from the app, the way 5.1a writes `web/src/types.ts`.
+"""Write `docs/openapi.json` from the app, the way 5.1a writes `web/src/report/types.ts`.
 
     python tools/generate_openapi.py            # rewrite the document
     python tools/generate_openapi.py --check    # what the test runs

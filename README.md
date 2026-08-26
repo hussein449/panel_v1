@@ -17,7 +17,7 @@ assessment* — in places with no AADT, no road inventory, and no survey budget.
 | **Stage 2 — geospatial pipeline** | Corridor resolution from OSM, linear referencing, segmentation, panel skeleton, crash snapping, all twelve Tier A factors behind one adapter contract, fusion — client data outranks open data, disagreements are named, every factor carries a confidence tier per unit — and the first two Tier B factors. Vision-model inference and persistence outstanding. |
 | **Stage 3 — model depth** | **Complete.** Standard errors now account for the panel: every factor is a property of a segment repeated down every period, so the independent-rows fit was counting one segment dozens of times. Correcting it widens intervals up to 3.9× and takes two factors' significance away. A spline diagnostic hunts the U-shape behind a wrong sign, reporting only the shape the smoothing grid agrees on. And `--bayes` fits a random-intercept GLMM that reports **credible intervals instead of p-values** and estimates how much segments differ from one another — in pure Python, seconds per fit, policing its own approximation on every run. `--priors` then makes the registry's own cited weights the starting belief and reports, per factor, how much of the answer came from the literature rather than from your road. Every Mode A run is then cross-validated over held-out stretches of the corridor — calibration, CURE plots and the optimism of random folds, reported by default and including when they fail. And `--spatial` fits a CAR field over the corridor chain, so neighbouring segments are correlated rather than strangers — reporting how much of the variation is spatial, and saying plainly when the corridor is too short to tell. |
 | **Stage 4 — report** | **Complete.** Two coordinates in, a report a client can read out. `roadrisk corridor --demo --out run/ --pdf` writes `report.html` — one self-contained file you open by double-clicking, no server and no network — and prints it to a paged PDF with the mode banner on every page. **There is one renderer and it lives in the UI**, so the paper and the screen cannot disagree and Stage 5.3 imports the same component rather than a copy of it. Inside: the ranked segments and the blackspot runs they form, with real chainage; a risk strip and a map of the corridor drawn from the centreline itself; every factor with its source, tier, licence and confidence; what the client owes the people whose data this used; and a limitations page assembled from what the run actually did, which no flag, argument or config removes. |
-| Stage 5 — web layer | **Step 5.1 complete — the whole product works over HTTP.** `roadrisk serve`, then `POST /jobs` with `{"demo": true}`, and a finished assessment comes back in about three seconds with no broker, no network and no data. Under it: the layering rule — `core` is imported *from*, never *by* — is a test rather than a convention, written before the packages that could break it existed; the payload is a **frozen contract** of ~60 Pydantic models that forbid undeclared fields, with `web/src/types.ts` generated from them; runs live in Postgres, tenant-scoped from the first migration, and re-render without a refit; and fourteen HTTP paths carry the rule that **a refusal is a result, not an error** — a panel breaking the input contract is a 422 that creates no job, a run that descended to Mode B is a 200 carrying its receipts, and infrastructure breaking is a job whose status says so, with a cause and never a stack trace. Jobs run in a bounded pool **inside the web process**: work in flight does not survive a restart, which is what 5.2a is for. Still to come: a website rather than an API explorer (5.3b), and a public URL (6.2). |
+| Stage 5 — web layer | **Step 5.1 complete — the whole product works over HTTP.** `roadrisk serve`, then `POST /jobs` with `{"demo": true}`, and a finished assessment comes back in about three seconds with no broker, no network and no data. Under it: the layering rule — `core` is imported *from*, never *by* — is a test rather than a convention, written before the packages that could break it existed; the payload is a **frozen contract** of ~60 Pydantic models that forbid undeclared fields, with `web/src/report/types.ts` generated from them; runs live in Postgres, tenant-scoped from the first migration, and re-render without a refit; and fourteen HTTP paths carry the rule that **a refusal is a result, not an error** — a panel breaking the input contract is a 422 that creates no job, a run that descended to Mode B is a 200 carrying its receipts, and infrastructure breaking is a job whose status says so, with a cause and never a stack trace. Jobs run in a bounded pool **inside the web process** — a job orphaned by a restart is reclaimed and run again, but durability across machines is Celery, which is not built. Adapters now fan out across threads, and one that fails costs its own factor rather than the corridor. The report is a **library plus two thin entry points**, so the single file you email and the page an app mounts are the same component — verified identical to the character. Still to come: a website rather than an API explorer (5.3b), and a public URL (6.2). |
 | Stage 6 — deploy | Not started. |
 
 Full breakdown in [`STEPS.md`](STEPS.md). What has actually been built, and what each
@@ -519,14 +519,19 @@ src/roadrisk/
 ├── storecli.py              `roadrisk store` — kept apart so `assess` never needs psycopg
 └── cli.py                   mode banner, refusal receipt, descent receipt
 
-web/                         the report page. One renderer: Stage 5.3 imports this
-├── src/Report.tsx           the whole report — what a client reads, and what prints
-├── src/sections.tsx         banner, ranking, model, factors, checks, credits, limits
-├── src/figures.tsx          risk strip, corridor map, CURE, calibration, spline — all SVG
-├── src/format.ts            every formatter survives a null, because the payload has them
-├── src/styles.css           one stylesheet, screen and `@page` alike
-├── src/types.ts             the JSON contract, as TypeScript
-└── src/main.tsx             reads the injected run, or offers a file picker
+web/                         one report, imported twice. Entries render none of it
+├── src/report/              the library — what the Next.js shell will import
+│   ├── Report.tsx           the whole report — what a client reads, and what prints
+│   ├── sections.tsx         banner, ranking, model, factors, checks, credits, limits
+│   ├── figures.tsx          risk strip, corridor map, CURE, calibration, spline — all SVG
+│   ├── format.ts            every formatter survives a null, because the payload has them
+│   ├── Boundary.tsx         a rendering failure must not become a blank page
+│   ├── styles.css           one stylesheet, screen and `@page` alike
+│   ├── types.ts             the JSON contract, as TypeScript. Generated, not written
+│   └── index.ts             the public surface both entries import
+└── src/entries/
+    ├── standalone.tsx       the file:// bundle: the injected run, or a file picker
+    └── mount.tsx            mountReport(element, run), for a page somebody else owns
 ```
 
 The page is compiled to a single self-contained HTML file and **committed**, so
