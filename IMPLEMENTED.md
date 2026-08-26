@@ -5,7 +5,173 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-24 (latest) — Step 5.1a: one description of the payload, and TypeScript projected from it
+## 2026-08-26 (latest) — Step 5.1b: runs that outlive the process that made them
+
+**Delivered:** `roadrisk/store/` — six Postgres tables around a `jsonb` payload, numbered
+SQL migrations, two backends behind one protocol, and the storage half of the command
+line. A run written by the CLI imports and re-renders from the database with nothing
+refitted.
+
+```bash
+export ROADRISK_DATABASE_URL=postgresql:///roadrisk
+roadrisk store init
+roadrisk store import run/run.json --project <id>
+roadrisk store show <run-id> --report out/     # rendered, not refitted
+```
+
+### Tenancy is in the first migration, and that is the whole argument
+
+*"Two tenants cannot see each other's runs"* is filed under 5.4 in the original plan, next
+to authentication. It does not belong there. Auth is who you are; tenancy is **which rows
+exist at all**, and that is a property of the schema. Retro-fitting an owner column later
+means rewriting every query and every test written against them in between, at exactly the
+moment there are most of both.
+
+So `tenant_id` is on every table, including the ones where a join could derive it, and
+every method on the interface takes a tenant as a required argument with no default. Not a
+filter a caller may add — a parameter they cannot omit. 5.4a's row-level policies then
+attach to a column that is already there.
+
+### Carrying that column opens a hole, and the two-backend suite found it
+
+A plain `REFERENCES project (id)` checks that the project exists. It does not check that it
+is *yours*. So a run could be inserted with `tenant_id` of one tenant and `project_id`
+belonging to another — and every single-table query, which is all of them, would go on
+looking perfectly correct.
+
+The test caught it because it runs against both backends: it **passed** against
+`MemoryStore`, which happens to check the parent explicitly, and **failed** against
+Postgres, which did not. That divergence is precisely what a shared conformance suite
+exists to expose, and it surfaced on the first run.
+
+Every parent reference is now composite — `FOREIGN KEY (tenant_id, project_id) REFERENCES
+project (tenant_id, id)` — with the `UNIQUE (tenant_id, id)` constraints that makes
+possible. Crossing tenants is no longer a mistake the application must avoid making; it is
+a row the database will not accept. Three tests pin it, one per table that has a parent.
+
+### A defect this step found in the payload itself, which reached much further
+
+The first Postgres insert of a Mode B run failed with:
+
+```
+invalid input syntax for type json
+DETAIL:  Token "Infinity" is invalid.
+CONTEXT: ...o negative binomial.", "data": {"ratio": Infinity...
+```
+
+A crash-free panel has mean zero, so its variance-to-mean ratio is infinite, and it lands
+in the run log. Python's `json.dumps` writes that as a bare `Infinity` — which is a Python
+extension and **not JSON**. Every strict reader refuses it.
+
+Step 4.4 had already found this and guarded the *HTML embedding*, with `_finite()` plus
+`allow_nan=False`, and the comment there explains exactly why. What it did not guard was
+everything else. So:
+
+- `run.json`, `assessment.json` and `corridor.json` written beside the report were **not
+  valid JSON** for any Mode B run;
+- the report page's own file picker, which does `JSON.parse(await file.text())`, could not
+  read back the files the CLI had just written;
+- and `jsonb` refused them outright.
+
+The fix is one line in the right place: `build_run` sanitises at assembly, so the disk, the
+page, the database and the API all inherit a payload that is actually JSON rather than
+nearly JSON. The helper moved to `roadrisk.contract.jsonsafe` — where "what valid JSON for
+this payload means" belongs — and `non_finite_paths` names the offender, because *one
+non-finite float* sends somebody hunting through 300 kB and
+`$.assessment.log[17].data.ratio` does not.
+
+**`null`, not zero.** A non-finite value here is a quantity that genuinely could not be
+computed. JSON's word for that is `null`, which every renderer in this project already
+draws as absent. Zero would be a number nobody measured.
+
+### Two backends, one conformance suite
+
+`MemoryStore` needs nothing and is what the whole test suite runs against; `PostgresStore`
+sits behind the `store` extra and skips loudly when `$ROADRISK_DATABASE_URL` is unset. Every
+test is parametrised over both. An in-memory stand-in tested only by itself drifts from the
+database it stands in for, and every drift is a defect that appears in production and
+nowhere else — which is not a hypothetical, since that is how the tenancy hole above was
+found.
+
+The memory store therefore enforces what the database enforces: tenant scoping, parents
+that must resolve, payload validation on the way in, and a `NotFound` that does not
+distinguish *absent* from *someone else's*. Telling those apart tells a caller whether an id
+is real, which turns a list of guessed identifiers into a census of another tenant's runs.
+
+### The payload is validated on the way in, never on the way out
+
+A store that accepted a malformed payload would hand the problem to whoever read it back —
+months later, probably in front of a client. So `store_run` runs it through
+`roadrisk.contract` first and refuses with the failing paths named. 5.1a is what makes that
+one line instead of a schema.
+
+The indexed columns — mode, rung, fingerprint, engine and schema version — are **read out of
+the payload**, not passed in. There is no parameter for any of them anywhere. That absence
+is the guarantee: a row cannot describe a different run than its own payload, because nobody
+is in a position to tell it to.
+
+### Migrations: numbered SQL, hashed on the way in
+
+Not Alembic. Autogeneration wants ORM models to diff against and there are none — the data
+model is six tables of scalars around a blob, and an ORM over that would put a translation
+layer between the schema people review and the queries that run. What is left of Alembic
+once autogeneration is gone is a version table and an ordering.
+
+Each applied migration is recorded with the **hash of the file that produced it**. A
+database that has silently diverged from the migration claiming to describe it is worse than
+one that was never migrated, and no amount of `IF NOT EXISTS` rescues it — so the mismatch
+is refused, naming the file.
+
+### Three defects found by running it rather than reading it
+
+- **A malformed `--project` printed a traceback.** `UUID(...)` unguarded raises `ValueError`
+  and typer renders the stack, which tells a reader nothing about which of three ids was
+  wrong and looks like a crash rather than a rejected argument. Every id now goes through
+  one helper that names the option.
+- **`store list` printed ids that could not be copied.** Rich assumes an 80-column terminal
+  when stdout is not a TTY and shrinks columns to fit, putting an ellipsis through the
+  middle of every run id — and that id is the argument to every other command in the group.
+  Redirected output is given room now.
+- **A rejected insert poisoned the connection.** Postgres puts a connection into a failed
+  transaction after any error and refuses everything until it ends. Without a rollback, one
+  constraint doing its job left the store unusable for every later call, and the error a
+  caller saw named neither the operation that failed nor the one refused because of it. A
+  rejected write is a *normal* outcome here — the composite tenant keys exist precisely so
+  that some inserts get refused.
+
+### What the round trip actually preserves
+
+`roadrisk store show --report` renders a stored run back to a report with nothing refitted.
+The result is the same document and **not** byte-identical, which is worth stating exactly:
+`jsonb` is a normalised representation and sorts object keys by length, so the embedded JSON
+comes back with `corridor` before `assessment`. Measured on the demo corridor: 147,953
+characters differ, the length is identical, the payloads compare equal as data, and the
+reproducibility fingerprint is untouched.
+
+The alternative column type, `json`, keeps the text verbatim and cannot be indexed. Indexing
+is worth more here, and nothing downstream hashes the rendered HTML — the fingerprint is a
+value *inside* the payload.
+
+**37 new tests, 819 passing, 3 skipped. `ruff check` clean.**
+
+### Known, and deliberately left
+
+- **No connection pooling and no async.** One connection per store, opened and closed by the
+  caller. Correct for a CLI and wrong for 5.1c, which will want a pool — but the interface
+  does not change, only what sits behind `_open_store`.
+- **PostGIS is still not enabled.** Nothing here holds geometry: a corridor stores the
+  *request* that produces one, and the resolved centreline lives in the run payload with the
+  rest of what that particular fetch found. The extension arrives when there is a spatial
+  query to run, which is the call topic's flood-and-fire overlay, and not before.
+- **Artefact files are never garbage-collected.** Deleting a run cascades the row and leaves
+  the file. That is deliberate for now — the alternative is a delete path that removes
+  client deliverables, which wants more thought than this step is the place for.
+- **The `run` table has no index on the payload.** Nothing queries into it yet. 5.4c's
+  corridor comparison is what will want a GIN index, against real query shapes.
+
+---
+
+## 2026-08-24 — Step 5.1a: one description of the payload, and TypeScript projected from it
 
 **Delivered:** `roadrisk/contract/` — the JSON payload as ~60 Pydantic models at the
 bottom of the layer order — the conformance suite that keeps it honest, and
@@ -3370,17 +3536,21 @@ Regression tests cover exact-zero, floating-point-zero and genuinely-varying col
 ## What is not built
 
 *Stated plainly so nothing here is mistaken for more than it is. Kept current — every
-line below was true on 2026-08-24, after step 5.1a. The list this replaced was written
+line below was true on 2026-08-26, after step 5.1b. The list this replaced was written
 when Stage 1 was the whole product and had gone comprehensively out of date.*
 
 - **No web layer, no hosting.** No API, no worker, no accounts, no map UI. Nothing is
   deployed and there is no public URL. The report page is React and Stage 5.3 will
   import it. Stage 5 has begun, and what exists of it is groundwork rather than a web
-  layer: the layering rule as a test, and the payload contract that the API will return
-  and the worker will store. Neither serves an HTTP request.
-- **No persistence.** Every run is a directory of files. There is no database, no
-  project, and no way to compare two corridors or re-open yesterday's run except by
-  keeping the JSON.
+  layer: the layering rule as a test, the payload contract the API will return, and the
+  storage the worker will write to. None of it serves an HTTP request.
+- **Persistence exists but nothing is multi-user.** Runs can be kept in Postgres, listed
+  and re-rendered, and the schema is tenant-scoped from its first migration — but there
+  is no authentication behind those tenants, so a tenant id is a label rather than an
+  identity. The database enforces that rows cannot cross tenants; nothing yet enforces
+  who you are when you claim to be one. That is 5.4a.
+- **No corridor comparison.** Two runs can be stored and listed side by side, and
+  nothing reads into a payload to compare them.
 - **Still validated on two corridors.** B9 and N201. Nothing in Stages 3 or 4 changed
   that, and nothing will: a third real road is the critical path, and no amount of
   engine or report work substitutes for it.

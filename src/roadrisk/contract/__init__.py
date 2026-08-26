@@ -88,6 +88,7 @@ from roadrisk.contract.corridor import (
     SnapReport,
     Vertex,
 )
+from roadrisk.contract.jsonsafe import finite, non_finite_paths
 from roadrisk.contract.run import SCHEMA_VERSION, Limitation, Run
 
 __all__ = [
@@ -152,4 +153,6 @@ __all__ = [
     "Validation",
     "Vertex",
     "WeightAgreement",
+    "finite",
+    "non_finite_paths",
 ]

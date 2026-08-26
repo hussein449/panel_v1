@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from roadrisk import __version__
-from roadrisk.contract import SCHEMA_VERSION
+from roadrisk.contract import SCHEMA_VERSION, finite
 from roadrisk.report.limitations import Limitation, as_dicts, collect_limitations
 from roadrisk.report.pdf import (
     PDF_FILENAME,
@@ -79,8 +79,17 @@ def build_run(
         A JSON-shaped dictionary.
     """
     stamp = generated_at or datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    assessment_payload = assessment.as_dict()
-    corridor_payload = corridor.as_dict() if corridor is not None else None
+    # Sanitised here, at assembly, rather than at each serialisation boundary.
+    #
+    # Python writes NaN and Infinity as bare tokens, which are a Python extension and
+    # not JSON — every strict reader refuses them. Step 4.4 guarded the HTML embedding
+    # and stopped there, so a Mode B run (whose dispersion ratio is infinite, because a
+    # crash-free panel has mean zero) wrote an `assessment.json` that the report's own
+    # file picker could not parse and Postgres would not accept. Doing it once, here,
+    # means the disk, the page, the database and the API all inherit a payload that is
+    # actually JSON rather than nearly JSON.
+    assessment_payload = finite(assessment.as_dict())
+    corridor_payload = finite(corridor.as_dict()) if corridor is not None else None
     return {
         "assessment": assessment_payload,
         "corridor": corridor_payload,

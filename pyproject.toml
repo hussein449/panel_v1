@@ -39,11 +39,20 @@ raster = [
 bayes = [
     "emcee>=3.1",
 ]
+# Postgres persistence, and only that. A corridor fits in memory and the CLI is
+# single-user, so nothing in the assessment path needs a database — this exists for the
+# web layer, where runs have to outlive the process that made them. `MemoryStore`
+# implements the same protocol with no dependency at all, and the conformance suite runs
+# against both, so the test suite does not need a server either.
+store = [
+    "psycopg[binary]>=3.2",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "roadrisk-panel[geo]",
     "roadrisk-panel[bayes]",
+    "roadrisk-panel[store]",
 ]
 
 [project.scripts]

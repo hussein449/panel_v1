@@ -9,13 +9,14 @@ know it is done. Status is tracked here; what was actually built is logged in
 **Sequencing rule, from the brief:** make the model defensible on two corridors → make it
 modular → then sell it. Stage 1 and Stage 3 are the credibility path. Stage 5 is not.
 
-**Where the build is, 2026-08-24.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
+**Where the build is, 2026-08-26.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
 in, a printed and sourced report out, with every number traceable and a limitations page
 nothing can remove. **Stage 5 has started.** 5.0 made the layering rule a test, before the
 packages that could break it existed; 5.1a froze the payload contract and made
-`web/src/types.ts` a generated file. The one thing no part of Stage 5 addresses is the
-critical path: this is still validated on two corridors with synthetic crashes, and one
-real police extract is worth more than any of what follows.
+`web/src/types.ts` a generated file; 5.1b put runs in Postgres, tenant-scoped from the
+first migration. None of it serves an HTTP request yet. The one thing no part of Stage 5
+addresses is the critical path: this is still validated on two corridors with synthetic
+crashes, and one real police extract is worth more than any of what follows.
 
 **Development moved to WSL2 / Ubuntu on 2026-08-24**, because Windows enabled Smart App
 Control and it blocks unsigned native binaries — which is every compiled Python wheel this
@@ -777,7 +778,7 @@ executes it.
 |---|---|---|---|
 | `[x]` | **5.0** Boundary test | Import-graph assertion: `core` imports nothing from `geo`, `report`, `api`, `worker` | Adding such an import fails a test that names the offending module ✅ |
 | `[x]` | **5.1a** Contract frozen | Pydantic models mirroring `as_dict()`, a `schema_version`, and `web/src/types.ts` generated from them rather than hand-written | A stored run round-trips through the models ✅ · the hand-maintained types are gone ✅ |
-| `[ ]` | **5.1b** Storage | Postgres schema — tenant, project, corridor, job, run — payload as JSONB, artefacts by reference, migrations | A run written by the CLI imports and re-renders from the database with no refit |
+| `[x]` | **5.1b** Storage | Postgres schema — tenant, project, corridor, job, run — payload as JSONB, artefacts by reference, migrations | A run written by the CLI imports and re-renders from the database with no refit ✅ |
 | `[ ]` | **5.1c** FastAPI | Project and corridor CRUD, `POST /jobs` → 202, `GET /jobs/{id}`, `GET /runs/{id}`, artefact download | OpenAPI generated, with factors, tiers and licences read from `factors.yaml` |
 | `[ ]` | **5.1d** In-process executor | A runner interface with a synchronous implementation behind it | A demo corridor goes submit → report with no broker running |
 | `[ ]` | **5.2a** Celery chord | Fan-out adapters, join, fit | An adapter failure fails its own branch — the factor is reported missing, the job is not failed |
@@ -871,6 +872,46 @@ written beside the two halves and the picker reads it first.
 Two further mismatches the old hand-written types carried, both now impossible to state:
 `checks[].threshold` and `.observed` are prose (*"max VIF < 5"*), typed `number | null`;
 and blackspot chainage is nullable, which the page tested for with `=== undefined`.
+
+### 5.1b — storage, and the hole that carrying a tenant column opens *(done)*
+
+```bash
+export ROADRISK_DATABASE_URL=postgresql:///roadrisk
+roadrisk store init
+roadrisk store new-tenant "acme roads"      # prints the id to export
+roadrisk store new-project "cyprus"
+roadrisk store import run/run.json --project <id>
+roadrisk store show <run-id> --report out/  # rendered, not refitted
+```
+
+Six tables around a `jsonb` payload, no ORM — the model is scalars and a blob, and an
+object-relational mapper over that is indirection bought with nothing. Migrations are
+numbered SQL files with a version table, each recorded with the **hash of the file that
+produced it**, so a database that has silently diverged from the migration claiming to
+describe it is refused rather than re-applied over.
+
+**Two backends, one conformance suite.** `MemoryStore` needs nothing and the whole test
+suite runs against it; `PostgresStore` is behind the `store` extra and skips when
+`$ROADRISK_DATABASE_URL` is unset. Every test runs against both — an in-memory stand-in
+tested only by itself drifts, and every drift is a defect that appears in production and
+nowhere else.
+
+**Putting `tenant_id` on every table opens a hole, and the suite found it.** A plain
+`REFERENCES project (id)` checks that the project exists, not that it is *yours* — so a
+run could be filed under another tenant's project while every single-table query went on
+looking correct. The test passed against the memory store, which checks the parent
+explicitly, and failed against Postgres, which did not. Every parent reference is now
+composite, `(tenant_id, parent_id)`, so crossing tenants is a row the database refuses
+rather than a mistake the application must remember not to make.
+
+**A refusal is still not a failure.** `succeeded` means the job ran to completion, not
+that Mode A was reached; a run that descended to Mode B carries findings, and `failed` is
+reserved for the machinery breaking. `rejected` is its own status for a panel that broke
+the input contract, where nothing malfunctioned.
+
+**Artefacts are stored by reference.** A report is a third of a megabyte, a PDF more,
+both are regenerable from the payload, and the record has no field for content — what is
+kept is the URI, the size and the hash. `file://` today, an object store at 6.2.
 
 ### 5.2 — two traps that are specific to this pipeline
 

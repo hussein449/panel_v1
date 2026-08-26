@@ -79,6 +79,15 @@ app = typer.Typer(
     help="Modular road risk assessment panel.",
     rich_markup_mode="rich",
 )
+
+# The storage commands live in their own module and are attached here. Everything under
+# `roadrisk store` needs a database driver and nothing else in this file does, so the
+# import is deferred: a machine without the `store` extra still runs `assess`,
+# `corridor` and `demo`, and only finds out what is missing if it asks for storage.
+from roadrisk.storecli import store_app  # noqa: E402
+
+app.add_typer(store_app)
+
 console = Console()
 
 EXIT_REJECTED = 2

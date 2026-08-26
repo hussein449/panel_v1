@@ -51,23 +51,33 @@ LAYERS: tuple[str, ...] = (
     "demo",
     "geo",
     "report",
+    "store",
     "api",
     "worker",
+    # `storecli` is the storage half of the command line. It is its own layer only
+    # because it is its own module: it needs psycopg and `cli` must not, so that
+    # `roadrisk assess` still runs on a machine with no database driver installed.
+    "storecli",
     "cli",
 )
 
 RANK: dict[str, int] = {name: index for index, name in enumerate(LAYERS)}
 
-#: `report` renders from JSON and never from a live engine object — step 4.1's
-#: done-when, and what lets a run stored months ago be re-rendered without a refit.
-#: The general layering rule would let it import `core`; this one does not.
+#: Layers that deal in JSON and must never hold a live engine object.
 #:
-#: `contract` is admitted deliberately, and it is the only admission. The models there
-#: describe JSON and name no engine type, so importing them cannot put an engine object
-#: in the report's scope — which is the property this rule exists to protect. Anything
-#: else added to this set should be argued for the same way.
-DICT_ONLY: frozenset[str] = frozenset({"report"})
+#: `report` renders from a payload — step 4.1's done-when, and what lets a run stored
+#: months ago be re-rendered without a refit. `store` keeps payloads and must be able to
+#: read back a run written by an engine version it has never imported; the moment it can
+#: name an engine type, the cheapest way to add a column is to reach for one, and a run
+#: stored last month stops loading because the class it needs has moved.
+#:
+#: The general layering rule would let both import `core`. This does not.
+DICT_ONLY: frozenset[str] = frozenset({"report", "store"})
 
+#: The one admission, and it is argued rather than assumed: `roadrisk.contract` describes
+#: JSON and names no engine type, so importing it cannot put an engine object in scope —
+#: which is the property the rule above exists to protect. Anything else added here
+#: should carry the same argument.
 DICT_ONLY_MAY_IMPORT: frozenset[str] = frozenset({"contract"})
 
 
