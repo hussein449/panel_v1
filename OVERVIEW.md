@@ -276,7 +276,7 @@ They run *across* the whole flow, not at one point in it.
 | **2 — Geospatial pipeline** | 🟡 **Nearly done** | Corridor from OSM, linear referencing, segmentation, panel skeleton, crash snapping, 12 Tier A + 2 Tier B factors behind one adapter contract, fusion with per-unit confidence, geographic cache. **Outstanding:** vision-model inference, DEM viewshed, PostGIS geometry persistence |
 | **3 — Model depth** | ✅ **Done** | Panel-clustered SEs, GAM spline diagnostic, Bayesian random-intercept GLMM with credible intervals, registry weights as priors with a reported prior share, a Leroux spatial field, and out-of-sample validation reported by default |
 | **4 — Report and PDF** | ✅ **Done** | One React component rendered from `run.json` alone: mode banner, ranking, factors with source/tier/licence/confidence, receipts, SVG figures with no external request, and a limitations page assembled from the run that no flag removes. The PDF is that page printed |
-| **5 — Web layer** | 🟡 **Mostly done** | Layering rule as a test (5.0), payload contract frozen and TypeScript generated from it (5.1a), Postgres storage tenant-scoped from the first migration (5.1b), FastAPI with the refusal contract enforced by exception handler (5.1c), an in-process runner (5.1d), adapters fanning out as independently-failable branches (5.2a, part one), the report as an importable library (5.3a), a Next.js shell whose banner no route can omit (5.3b), and a map where clicking a segment gives the provenance of every number on it — with no basemap and no external request unless one is configured (5.3c). **Outstanding:** Celery (5.2a), cost model and cap (5.2b), per-tenant secrets (5.2c), the interactive layer (5.3d), auth and row-level policies (5.4) |
+| **5 — Web layer** | 🟡 **Mostly done** | Layering rule as a test (5.0), payload contract frozen and TypeScript generated from it (5.1a), Postgres storage tenant-scoped from the first migration (5.1b), FastAPI with the refusal contract enforced by exception handler (5.1c), an in-process runner (5.1d), adapters fanning out as independently-failable branches (5.2a, part one), the report as an importable library (5.3a), a Next.js shell whose banner no route can omit (5.3b), and a map of the corridor over OpenStreetMap where clicking a segment gives the provenance of every number on it (5.3c) — the one screen that fetches from a third party, and it can be switched off. **Outstanding:** Celery (5.2a), cost model and cap (5.2b), per-tenant secrets (5.2c), the interactive layer (5.3d), auth and row-level policies (5.4) |
 | **6 — Deploy** | ⬜ **Not started** | Containers, hosting |
 
 **905 tests pass, 36 skipped. `ruff check` clean.**
@@ -547,9 +547,10 @@ like part of the analysis. A thin separating rule and a smaller type size say it
   **`a refusal is a result — 422 names the column, a Mode B descent is a 200`**
 - `The website` — sub-label: *projects · corridors · jobs · runs · the report itself.*
   Tag: **`the same component the emailed file is built from`**
-- `The map` — sub-label: *the corridor in Web Mercator, each segment in its risk colour,
-  a click giving every number's source.* Tag: **`no basemap, no request — a tile source is
-  opt-in and brings an attribution obligation with it`**
+- `The map` — sub-label: *the corridor in Web Mercator over OpenStreetMap, each segment in
+  its risk colour, ticks where segments divide, a click giving every number's source.*
+  Tag: **`the one thing in the product that fetches from somebody else — screen only, and
+  it can be switched off`**
 - Draw a small banner strip pinned across the top of the website box, labelled
   **`the mode banner is a layout element — no route can omit it`**
 
@@ -675,7 +676,7 @@ flowchart LR
     F1["Store the run<br/><i>jsonb, tenant-scoped</i>"]
     F2["HTTP API<br/><b>a refusal is a result</b>"]
     F3["The website<br/><i>the same Report component</i>"]
-    F4["The map<br/><i>no basemap, no request</i>"]
+    F4["The map<br/><i>corridor over OSM, segment boundaries,<br/>provenance on click</i>"]
     F1 --> F2 --> F3 --> F4
   end
 

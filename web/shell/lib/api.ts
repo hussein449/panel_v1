@@ -64,18 +64,63 @@ export function tenantId(): string | null {
 }
 
 /**
- * A MapLibre style URL to draw a basemap under the corridor, if the operator wants one.
+ * The MapLibre style drawn under the corridor.
  *
- * **Unset is the default, and the map is complete without it.** A tile source is a
- * network dependency and an attribution obligation, and this product's posture is that a
- * corridor can be assessed with no key and no connection — so a basemap is something you
- * switch on, not something you switch off. The map page states which of the two it is
- * showing, and the style's own credit appears in the corner when there is one.
+ * **A basemap is on by default, and it is the one thing on this screen that talks to
+ * somebody else.** A road with nothing behind it tells you the shape of a corridor and
+ * not where it is, and *where it is* is most of what a person opens a map for. So the
+ * cost is paid deliberately and stated on the page rather than avoided: tiles are a
+ * network dependency and an attribution obligation, and both belong to the **screen**.
+ * Nothing here touches the report, whose corridor is inline SVG precisely so that a
+ * document can be emailed and opened with no network — a test asserts the shipped
+ * `report.html` contains neither MapLibre nor a tile URL.
+ *
+ * **Why this one.** OpenFreeMap serves OpenStreetMap-derived vector tiles with no API
+ * key, no account and no rate limit, and its TileJSON carries the credit it requires — so
+ * MapLibre shows the attribution without this app having to remember to. A deployment
+ * that would rather use its own tiles points `$ROADRISK_MAP_STYLE` at any MapLibre style
+ * URL; a deployment that must make no external request at all sets it to `none`, and the
+ * map draws the corridor on an empty background exactly as it did before.
  */
 export const MAP_STYLE_ENV = "ROADRISK_MAP_STYLE";
 
-export function mapStyleUrl(): string | null {
-  return process.env[MAP_STYLE_ENV]?.trim() || null;
+export const DEFAULT_MAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
+
+/**
+ * What the default basemap's licence requires said, said by us.
+ *
+ * **Not left to the attribution control to discover.** MapLibre does collect credit from
+ * a source's TileJSON, and this one carries it — but only once the source has loaded and
+ * the control has been repainted, and it was observed showing nothing at all in a tab
+ * that had not rendered. An attribution that appears when the rendering lifecycle happens
+ * to cooperate is not an attribution; the obligation is ours either way, so it is stated
+ * outright and MapLibre's own discovery becomes a duplicate it de-duplicates.
+ *
+ * A style somebody else configured gets no lines from us, because we do not know what it
+ * owes — the page says plainly that its credit is theirs to arrange.
+ */
+export const DEFAULT_MAP_CREDIT = [
+  '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>',
+  '<a href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">© OpenMapTiles</a>',
+  '<a href="https://openfreemap.org" target="_blank" rel="noreferrer">OpenFreeMap</a>',
+];
+
+export interface Basemap {
+  url: string;
+  /** Null for a style this deployment configured: its credit is the operator's to state. */
+  credit: string[] | null;
+  /** Whether this is the basemap the app ships with, which is the one whose terms we know. */
+  ours: boolean;
+}
+
+export function basemap(): Basemap | null {
+  const configured = process.env[MAP_STYLE_ENV]?.trim();
+
+  if (configured === undefined || configured === "") {
+    return { url: DEFAULT_MAP_STYLE, credit: DEFAULT_MAP_CREDIT, ours: true };
+  }
+  if (["none", "off", "false"].includes(configured.toLowerCase())) return null;
+  return { url: configured, credit: null, ours: false };
 }
 
 /** A refusal the API sent, in the one envelope it sends every refusal in. */

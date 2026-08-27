@@ -1266,13 +1266,21 @@ payload already holds: `confidence` is per unit and per factor, `provenance` is 
 for the corridor. So a click gives the value, the adapter that produced it, its tier, its
 licence, and whether it was measured on that segment or carried from next door.
 
-**There is no basemap unless somebody asks for one, and that is the default.** A tile
-source is a network dependency and an attribution obligation, and this product's whole
-posture is that a corridor can be assessed with no key and no connection. The style has
-one background layer and no sources: **zero external requests**, verified in a browser —
-the only non-origin fetches on the page are MapLibre's own inline `data:` icons. No text
-is drawn on the map either, because a symbol layer would fetch glyph ranges and put the
-network back. `$ROADRISK_MAP_STYLE` turns a basemap on, and the page then says so.
+**There is a basemap, and it is the one thing in this product that fetches from somebody
+else.** Built the other way round first — no tiles, opt in — and that was wrong: a road
+drawn on nothing gives the shape of a corridor and not where it is. OpenStreetMap vector
+tiles through OpenFreeMap, in the pale `positron` style so the risk colours stay the
+loudest thing on screen; no key, no account, no rate limit. `$ROADRISK_MAP_STYLE` points
+at another style, and `=none` restores an empty background for a deployment that must make
+no external request. **The credit is stated rather than discovered** — MapLibre collects
+attribution from a source's TileJSON, and it was seen showing nothing at all in a tab that
+had not painted, so the lines are passed in and MapLibre de-duplicates what it later finds.
+
+**The segmentation is drawn across the road.** Units are the unit of the answer — the
+ranking is per segment, a blackspot is a run of them — and two neighbours of the same rank
+are the same shade, so a coloured line alone cannot show where one ends. Each boundary gets
+a tick perpendicular to the direction of travel, computed from the centreline vertices
+either side of it so it sits square on a bend.
 
 **The scale is imported, not copied.** `web/src/report/risk.ts` is its own module and its
 own export path, because six hex codes in two places is two answers to which segment is

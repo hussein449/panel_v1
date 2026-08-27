@@ -45,18 +45,47 @@ tabbed through, so without it the whole feature would be unreachable to anybody 
 a mouse — and it is also the only part of the screen that says anything before MapLibre
 has finished loading. The same list is what the map click selects.
 
-### No basemap is the default, not a limitation
+### There is a basemap, and it is the one thing here that fetches from somebody else
 
-The style has one background layer and no sources. **Zero external requests** — verified
-in a browser: the only non-origin fetches on the page are MapLibre's own `data:` URI
-icons for its zoom buttons. No text is drawn on the map either, because a symbol layer
-makes MapLibre fetch glyph ranges from the style's font server, which would quietly put
-the network back into a map that advertises having none.
+Built the other way round first — no basemap, no request, opt in with
+`$ROADRISK_MAP_STYLE` — and that was wrong. A road drawn on nothing tells you the *shape*
+of a corridor and not *where it is*, and where it is is most of what a person opens a map
+for. So the cost is paid deliberately and stated on the page rather than avoided.
 
-A tile source is a network dependency and an attribution obligation, and this product's
-posture is that a corridor can be assessed with no key and no connection — so a basemap is
-something an operator switches on with `$ROADRISK_MAP_STYLE`, and the page then says which
-of the two it is showing.
+**OpenStreetMap vector tiles through OpenFreeMap**, in the light `positron` style: no API
+key, no account, no rate limit, and a basemap pale enough that the risk colours are the
+loudest thing on the screen. `$ROADRISK_MAP_STYLE` points at any other MapLibre style;
+`$ROADRISK_MAP_STYLE=none` restores the empty background for a deployment that must make
+no external request at all.
+
+**The credit is stated, not discovered.** MapLibre does collect attribution from a
+source's TileJSON, and OpenFreeMap's carries it — but it was observed showing nothing at
+all in a tab that had not painted, because the control only picks it up once the source
+has loaded and it has repainted. An attribution that depends on a rendering lifecycle is
+not an attribution, so the lines are passed in as `customAttribution` and MapLibre
+de-duplicates what it later finds for itself. Measured on the running app:
+
+```
+Corridor geometry: this run | OpenFreeMap | © OpenMapTiles | © OpenStreetMap contributors
+```
+
+**None of this reaches the report.** Tiles belong to the screen and stop there — the four
+assertions below are unchanged, and the shipped `report.html` still contains neither
+MapLibre nor a tile URL. That separation is the whole of 5.3c's done-when, and it is why
+adding a basemap was a change to one screen rather than a change of posture.
+
+### The segmentation, drawn across the road
+
+Units are the unit of the answer — the ranking is per segment and a blackspot is a run of
+them — and a reader looking at a coloured line has no way to see where one 500 m segment
+ends, because two neighbours of the same rank are the same shade. So each boundary gets a
+tick across the road, perpendicular to the direction of travel, computed from the two
+centreline vertices either side of it so it sits square on a bend as well as a straight.
+They fade out below zoom 10, where twenty ticks would read as a smudge.
+
+Line widths interpolate with zoom — casing, road, selection halo and ticks from the same
+three stops — because a fixed width is either a hairline over a region or a bandage over
+one junction.
 
 ### "Tiles never enter the report path", checked four ways
 
@@ -112,12 +141,14 @@ The lesson was bigger than the fix, and three things came out of it:
 ### Known, and deliberately left
 
 - **The map has not been seen rendered.** The browser pane available here reports
-  `document.visibilityState === "hidden"`, so it never paints a frame and MapLibre never
-  initialises; the local Chrome extension was not connected. Everything else is measured —
-  the worker is served (`200`, `application/javascript`), no external request is made, the
-  server-rendered HTML carries both banners, selection and the provenance panel work
-  through the ranked list. **What a person still has to confirm is the line on the canvas
-  and a click landing on it.**
+  `document.visibilityState === "hidden"`, so it never paints a frame; the local Chrome
+  extension was not connected. What *is* measured, in that browser: the corridor's layers
+  are added and the loading state clears, the worker is served (`200`,
+  `application/javascript`), the basemap's tiles are fetched from
+  `tiles.openfreemap.org` and nothing else external is, the attribution reads as above,
+  and selection and the provenance panel work through the ranked list. **What a person
+  still has to confirm is the drawing itself and a click landing on a segment** — both go
+  through `queryRenderedFeatures`, which needs features that have actually been painted.
 - **Layers are added on `styledata` or `load`, whichever arrives first**, guarded so it
   happens once. `load` waits for a painted frame; `styledata` is the earlier and more
   precise signal for *the style will take a source now*.

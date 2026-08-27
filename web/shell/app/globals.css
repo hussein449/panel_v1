@@ -468,6 +468,15 @@ body {
   flex: none;
 }
 
+/* The boundary tick, as it is drawn on the map: across the road, not along it. */
+.shell-legend__tick {
+  display: inline-block;
+  width: 0;
+  height: 0.8rem;
+  border-left: 2px solid var(--ink);
+  flex: none;
+}
+
 /* The keyboard's way into the map. A canvas cannot be tabbed through, so the same
    selection is reachable as a list of buttons — which is also what the screen shows
    before MapLibre has finished loading. */

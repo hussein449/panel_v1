@@ -88,6 +88,104 @@ export function unitFeatures(run: Run): UnitCollection {
   return { type: "FeatureCollection", features };
 }
 
+/** One segment boundary, drawn across the road rather than along it. */
+export interface BoundaryFeature {
+  type: "Feature";
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+  properties: { chainage_m: number; unit_id: string; label: string };
+}
+
+export interface BoundaryCollection {
+  type: "FeatureCollection";
+  features: BoundaryFeature[];
+}
+
+/** Close enough over a tick a few tens of metres long, and it needs no projection. */
+const METRES_PER_DEGREE = 111_320;
+
+/** Half the length of a boundary tick, in metres. */
+const TICK_HALF_LENGTH = 26;
+
+/**
+ * A short line across the road at a point, perpendicular to the direction of travel.
+ *
+ * The bearing comes from the two centreline vertices either side of the boundary, so a
+ * tick sits square to the road on a bend as well as on a straight. Degrees are converted
+ * to metres with the usual cosine correction about the local latitude — over a mark of
+ * fifty metres the error is far below the width of the line.
+ */
+function tickAcross(
+  at: [number, number],
+  towards: [number, number],
+): [number, number][] {
+  const [lon, lat] = at;
+  const kx = Math.cos((lat * Math.PI) / 180) || 1e-6;
+
+  const alongX = (towards[0] - lon) * kx * METRES_PER_DEGREE;
+  const alongY = (towards[1] - lat) * METRES_PER_DEGREE;
+  const length = Math.hypot(alongX, alongY) || 1;
+
+  const acrossX = (-alongY / length) * TICK_HALF_LENGTH;
+  const acrossY = (alongX / length) * TICK_HALF_LENGTH;
+
+  const dLon = acrossX / (METRES_PER_DEGREE * kx);
+  const dLat = acrossY / METRES_PER_DEGREE;
+
+  return [
+    [lon - dLon, lat - dLat],
+    [lon + dLon, lat + dLat],
+  ];
+}
+
+/**
+ * Where one segment ends and the next begins.
+ *
+ * **Worth drawing because the units are the unit of the answer.** The ranking is per
+ * segment, a blackspot is a run of them, and a reader looking at a coloured line has no
+ * way to tell where one 500 m unit stops and the next starts — the colours only change
+ * where consecutive segments happen to differ in rank. A tick across the road at each
+ * boundary makes the segmentation visible, which is what makes *this segment is ranked
+ * third* a statement about something the reader can see.
+ *
+ * Chainage is continuous and exhaustive by construction, so a boundary is simply the
+ * start of every unit, plus the far end of the last one.
+ */
+export function boundaryFeatures(run: Run): BoundaryCollection {
+  const units = (run.corridor?.segmentation.units ?? []).filter(
+    (unit) => unit.geometry.length > 1,
+  );
+
+  const features: BoundaryFeature[] = units.map((unit) => ({
+    type: "Feature",
+    geometry: {
+      type: "LineString",
+      coordinates: tickAcross(unit.geometry[0], unit.geometry[1]),
+    },
+    properties: {
+      chainage_m: unit.start_m,
+      unit_id: unit.unit_id,
+      label: `start of ${unit.unit_id}`,
+    },
+  }));
+
+  const last = units[units.length - 1];
+  if (last) {
+    const end = last.geometry[last.geometry.length - 1];
+    const before = last.geometry[last.geometry.length - 2];
+    features.push({
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: tickAcross(end, before) },
+      properties: {
+        chainage_m: last.end_m,
+        unit_id: last.unit_id,
+        label: `end of the corridor`,
+      },
+    });
+  }
+
+  return { type: "FeatureCollection", features };
+}
+
 export function bounds(collection: UnitCollection): Bounds | null {
   const points = collection.features.flatMap((feature) => feature.geometry.coordinates);
   if (points.length === 0) return null;

@@ -9,27 +9,30 @@ import {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import type { Bounds, UnitCollection } from "@/lib/corridor";
+import type { Basemap } from "@/lib/api";
+import type { BoundaryCollection, Bounds, UnitCollection } from "@/lib/corridor";
 
 /**
  * The corridor on a MapLibre map. This file is the only one that knows MapLibre exists.
  *
- * **It has no basemap unless somebody asks for one**, and that is the default rather
- * than a limitation. A tile source is a network dependency and an attribution
- * obligation, and this product's whole posture is that a corridor can be assessed with
- * no key and no connection. So the default style has one background layer and no
- * sources: the map makes **zero** external requests, works offline like everything else
- * here, and still gives what the report's SVG cannot — Web Mercator, pan and zoom, and a
- * segment you can click. Set `$ROADRISK_MAP_STYLE` to a MapLibre style URL and a basemap
- * appears underneath, carrying its own attribution, which the page then states.
+ * **There is a basemap, and it is the one place in this product that fetches from
+ * somebody else.** A road drawn on nothing tells a reader the shape of a corridor and not
+ * where it is, and *where it is* is most of what a map is opened for — so the network
+ * dependency and the attribution obligation are paid deliberately and stated on the page.
+ * They belong to the screen and stop there: the report's corridor is inline SVG, and a
+ * test asserts the shipped `report.html` contains neither MapLibre nor a tile URL.
+ * `$ROADRISK_MAP_STYLE=none` restores a map that asks the network for nothing — one
+ * background layer, no sources — for a deployment that has to work that way.
  *
- * **No text is drawn on the map.** A symbol layer would make MapLibre fetch glyph
- * ranges from the style's font server, which would quietly put a network request back
- * into a map that advertises having none. Labels belong to the panel beside it.
+ * **This file draws no text of its own.** The basemap has its labels; adding a symbol
+ * layer here would make MapLibre fetch glyph ranges for it, and with the basemap off that
+ * would put a request back into a map that says it makes none. Labels belong to the panel
+ * beside it.
  *
  * The corridor's colours are computed before they reach here — `unitFeatures` puts a
  * `colour` on every feature from the report library's own ramp, so the map cannot drift
- * from the document about which segment is the dangerous one.
+ * from the document about which segment is the dangerous one. The boundary ticks come
+ * the same way, from `boundaryFeatures`.
  */
 
 /**
@@ -58,18 +61,59 @@ const LINE = "corridor";
 const SELECTED = "corridor-selected";
 const HIT = "corridor-hit";
 const SOURCE = "corridor-units";
+const BOUNDARIES = "corridor-boundaries";
+const BOUNDARY_LINE = "corridor-boundary-ticks";
+
+/**
+ * Widths by zoom, so the corridor reads at both ends of the scale.
+ *
+ * A fixed width is either a hairline over a whole region or a bandage over one junction.
+ * Every line below is an interpolation of the same three stops, which is what keeps the
+ * casing, the road and the selection halo in proportion to each other as the reader
+ * zooms.
+ *
+ * The return type is written out rather than inferred: TypeScript widens
+ * `["interpolate", …]` to `(string | number | string[])[]`, which is no longer a style
+ * expression as far as MapLibre's types are concerned. Spelling the tuple keeps the
+ * literals literal.
+ */
+type ByZoom = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
+
+const width = (at8: number, at12: number, at16: number): ByZoom => [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  8,
+  at8,
+  12,
+  at12,
+  16,
+  at16,
+];
 
 export default function RunMapCanvas({
   units,
+  boundaries,
   extent,
-  styleUrl,
+  basemap,
   selected,
   onSelect,
   onFailure,
 }: {
   units: UnitCollection;
+  boundaries: BoundaryCollection;
   extent: Bounds;
-  styleUrl: string | null;
+  basemap: Basemap | null;
   selected: string | null;
   onSelect: (unitId: string | null) => void;
   onFailure: (reason: string) => void;
@@ -102,12 +146,20 @@ export default function RunMapCanvas({
 
     const instance = new MapLibreMap({
       container: container.current,
-      style: styleUrl ?? NO_BASEMAP,
+      style: basemap?.url ?? NO_BASEMAP,
       bounds: [extent[0], extent[1], extent[2], extent[3]],
       fitBoundsOptions: { padding: 48 },
       attributionControl: {
         compact: true,
-        customAttribution: "Corridor geometry: this run",
+        // Stated, not discovered. MapLibre does read credit out of a source's TileJSON,
+        // and the default basemap's carries it — but only once that source has loaded and
+        // the control has repainted, and it was seen showing nothing at all in a tab that
+        // had not rendered. An attribution that depends on the rendering lifecycle is not
+        // an attribution. MapLibre de-duplicates what it then finds for itself.
+        customAttribution: [
+          "Corridor geometry: this run",
+          ...(basemap?.credit ?? []),
+        ],
       },
     });
     map.current = instance;
@@ -159,16 +211,24 @@ export default function RunMapCanvas({
 
     function addCorridor(instance: MapLibreMap) {
       instance.addSource(SOURCE, { type: "geojson", data: units });
+      instance.addSource(BOUNDARIES, { type: "geojson", data: boundaries });
 
-      // Beneath the road: a white casing so a dark segment reads against a dark basemap,
-      // and a black halo that appears only under the selected segment.
+      // Under the road: a dark casing, because the basemap is pale and a pale segment at
+      // the light end of the risk ramp would otherwise dissolve into it.
       instance.addLayer({
         id: CASING,
         type: "line",
         source: SOURCE,
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#ffffff", "line-width": 9, "line-opacity": 0.9 },
+        paint: {
+          "line-color": "#1f2328",
+          "line-width": width(7, 10, 15),
+          "line-opacity": 0.55,
+        },
       });
+
+      // A halo under the selected segment only. Feature state rather than a filter, so
+      // choosing one repaints a line instead of rebuilding a source.
       instance.addLayer({
         id: SELECTED,
         type: "line",
@@ -176,7 +236,7 @@ export default function RunMapCanvas({
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": "#16191d",
-          "line-width": 13,
+          "line-width": width(11, 15, 21),
           "line-opacity": [
             "case",
             ["boolean", ["feature-state", "selected"], false],
@@ -185,12 +245,39 @@ export default function RunMapCanvas({
           ],
         },
       });
+
       instance.addLayer({
         id: LINE,
         type: "line",
         source: SOURCE,
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": ["get", "colour"], "line-width": 5 },
+        paint: { "line-color": ["get", "colour"], "line-width": width(3, 6, 11) },
+      });
+
+      // The segmentation, drawn across the road. The ranking is per segment and a
+      // blackspot is a run of them, so where one unit ends and the next begins is part of
+      // the answer rather than an implementation detail — and colour alone cannot show it,
+      // since two neighbours of the same rank are the same shade.
+      instance.addLayer({
+        id: BOUNDARY_LINE,
+        type: "line",
+        source: BOUNDARIES,
+        layout: { "line-cap": "butt" },
+        paint: {
+          "line-color": "#16191d",
+          "line-width": width(1, 1.6, 2.6),
+          // Invisible where the whole corridor is a few pixels long; there is nothing to
+          // divide at that scale and twenty ticks would read as a smudge on the road.
+          "line-opacity": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            9,
+            0,
+            11,
+            0.85,
+          ],
+        },
       });
 
       // Invisible and twenty pixels wide, purely so that a segment can be hit on a phone.
@@ -231,7 +318,7 @@ export default function RunMapCanvas({
       instance.remove();
       map.current = null;
     };
-  }, [units, extent, styleUrl]);
+  }, [units, boundaries, extent, basemap]);
 
   // Selection is feature state rather than a filter, so choosing a segment repaints one
   // line instead of rebuilding the source.

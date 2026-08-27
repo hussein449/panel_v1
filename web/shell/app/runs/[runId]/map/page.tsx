@@ -1,6 +1,6 @@
 import Problem from "@/components/Problem";
 import RunMap from "@/components/RunMap";
-import { attempt, getRun, mapStyleUrl } from "@/lib/api";
+import { attempt, basemap, getRun } from "@/lib/api";
 
 export const metadata = { title: "Map" };
 
@@ -26,7 +26,7 @@ export default async function RunMapPage({
 
   return (
     <div className="shell-page">
-      <RunMap run={run.value.payload} styleUrl={mapStyleUrl()} />
+      <RunMap run={run.value.payload} basemap={basemap()} />
     </div>
   );
 }

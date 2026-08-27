@@ -5,7 +5,15 @@ import { useMemo, useState } from "react";
 import { RISK_RAMP } from "roadrisk-report/risk";
 import type { Run } from "roadrisk-report/report";
 
-import { bounds, unitFactors, unitFeatures, UNRANKED } from "@/lib/corridor";
+import type { Basemap } from "@/lib/api";
+
+import {
+  boundaryFeatures,
+  bounds,
+  unitFactors,
+  unitFeatures,
+  UNRANKED,
+} from "@/lib/corridor";
 
 /**
  * MapLibre is loaded only when somebody opens this tab, and only in the browser.
@@ -54,12 +62,13 @@ function shownValue(value: number | null): string {
  */
 export default function RunMap({
   run,
-  styleUrl,
+  basemap,
 }: {
   run: Run;
-  styleUrl: string | null;
+  basemap: Basemap | null;
 }) {
   const units = useMemo(() => unitFeatures(run), [run]);
+  const boundaries = useMemo(() => boundaryFeatures(run), [run]);
   const extent = useMemo(() => bounds(units), [units]);
   const [selected, setSelected] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -111,14 +120,18 @@ export default function RunMap({
           </span>
           <span>higher risk</span>
           {units.features.some((feature) => feature.properties.rank === null) ? (
-            <span className="shell-legend__aside">
+            <>
               <span
                 className="shell-legend__chip"
                 style={{ background: UNRANKED }}
               />
               not ranked
-            </span>
+            </>
           ) : null}
+          <span className="shell-legend__aside">
+            <span className="shell-legend__tick" aria-hidden="true" />
+            segment boundary
+          </span>
         </div>
 
         {failure ? (
@@ -130,29 +143,38 @@ export default function RunMap({
 
         <RunMapCanvas
           units={units}
+          boundaries={boundaries}
           extent={extent}
-          styleUrl={styleUrl}
+          basemap={basemap}
           selected={selected}
           onSelect={setSelected}
           onFailure={setFailure}
         />
 
         <p className="shell-note">
-          {styleUrl ? (
+          Ticks across the road are the segment boundaries — the ranking is per segment
+          and a blackspot is a run of them, so where one ends is part of the answer.{" "}
+          {basemap ? (
             <>
-              A basemap is configured, and its terms apply to what you do with a picture of
-              this screen — the credit it requires is in the corner of the map.
+              <strong>The basemap is fetched from a tile server</strong>, which is the one
+              thing on this screen that talks to somebody else. The credit its licence
+              requires is in the corner of the map and applies to what you do with a
+              picture of this screen
+              {basemap.ours
+                ? " — OpenStreetMap's data under ODbL, served by OpenFreeMap"
+                : ", and the terms of the style this deployment configured are yours to check"}
+              . Set <code>$ROADRISK_MAP_STYLE=none</code> for a deployment that must make
+              no external request at all.
             </>
           ) : (
             <>
               <strong>There is no basemap, and no request left this page to draw it.</strong>{" "}
-              The line is the corridor as the run measured it. Set{" "}
-              <code>$ROADRISK_MAP_STYLE</code> to a MapLibre style URL if you want one
-              underneath; it brings an attribution obligation with it.
+              The line is the corridor as the run measured it, with nothing behind it.
             </>
           )}{" "}
-          The report tab draws the same corridor as SVG, in a different projection and with
-          no JavaScript needed — that one is the document, and this one is the screen.
+          The report tab draws the same corridor as SVG, in a different projection, with no
+          tiles and no JavaScript needed — that one is the document, and this one is the
+          screen.
         </p>
       </div>
 
