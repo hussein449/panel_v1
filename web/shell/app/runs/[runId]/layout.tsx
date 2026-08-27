@@ -44,6 +44,7 @@ export default async function RunLayout({
       <RunModeBanner run={run.value} />
       <nav className="shell-tabs shell-chrome" aria-label="This run">
         <Link href={`/runs/${params.runId}`}>Report</Link>
+        <Link href={`/runs/${params.runId}/map`}>Map</Link>
         <Link href={`/runs/${params.runId}/files`}>Files</Link>
       </nav>
       {children}

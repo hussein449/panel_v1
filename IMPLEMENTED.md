@@ -5,7 +5,130 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-27 (latest) — Step 5.3b: a website, and one thing on it nobody can remove
+## 2026-08-27 (latest) — Step 5.3c: the corridor on a map, and no tiles anywhere near the report
+
+**Delivered:** a MapLibre map at `/runs/{id}/map` — the corridor in Web Mercator, each
+segment in its risk colour, and a click that says where every number on that segment came
+from. It draws **no basemap and makes no external request** unless an operator configures
+one, and the report's own SVG map is untouched.
+
+```bash
+cd web/shell && npm run build && npm run start
+pytest tests/test_shell.py
+```
+
+### It cost 5.3b nothing to add, which was the point of 5.3b
+
+The map is a page under `app/runs/[runId]/`, so the mode banner above it is the run
+segment's layout and this route states which mode produced its colours **without
+containing a line about it**. `tools/check_shell.py` discovers routes from the filesystem,
+so it went from *All 11 screens carry the banner* to *All 12* without being told anything.
+
+That was the argument for putting the banner in a layout rather than on each page, made a
+day earlier. This is the first route to collect on it.
+
+### Clicking a segment answers "why is this one dark"
+
+The deliverable is *factor provenance on click*, and the payload already holds both
+halves: `corridor.confidence` is per unit and per factor, `corridor.provenance` is per
+factor for the whole corridor. `lib/corridor.ts` joins them, so a click gives the value,
+the adapter that produced it, its tier, its licence, its confidence and the reason —
+`measured` here, or `carried` from next door, or `contradicted` by a second source.
+
+Measured on a demonstration run: selecting the worst segment gives its chainage
+(10,000–10,500 m), score, observed 46, expected 37.4 with a 95% interval of 32.1–43.6, and
+`curve_density = 2` / `curve_radius_min = 291.9` from `osm_geometry`, Tier A, ODbL,
+confidence high.
+
+**A ranked list sits beside the map**, and it is not a duplicate. A WebGL canvas cannot be
+tabbed through, so without it the whole feature would be unreachable to anybody not using
+a mouse — and it is also the only part of the screen that says anything before MapLibre
+has finished loading. The same list is what the map click selects.
+
+### No basemap is the default, not a limitation
+
+The style has one background layer and no sources. **Zero external requests** — verified
+in a browser: the only non-origin fetches on the page are MapLibre's own `data:` URI
+icons for its zoom buttons. No text is drawn on the map either, because a symbol layer
+makes MapLibre fetch glyph ranges from the style's font server, which would quietly put
+the network back into a map that advertises having none.
+
+A tile source is a network dependency and an attribution obligation, and this product's
+posture is that a corridor can be assessed with no key and no connection — so a basemap is
+something an operator switches on with `$ROADRISK_MAP_STYLE`, and the page then says which
+of the two it is showing.
+
+### "Tiles never enter the report path", checked four ways
+
+| Asserted | What it stops |
+|---|---|
+| The report library imports no MapLibre | The obvious way in |
+| MapLibre is a dependency of the shell alone | `npm ci` pulling a map engine into the build of a file whose point is needing nothing |
+| The shipped `report.html` contains neither `maplibre` nor a tile URL | Everything else being satisfied and the artefact still being wrong |
+| The shell writes down none of the risk ramp's colours | The map and the document disagreeing about which segment is dangerous |
+
+**All four were verified against a planted violation, and the first one passed.** The
+import pattern was `from\s+["']…["']`, and the violation was `import "maplibre-gl";` — a
+side-effect import, no bindings, which is *precisely* how a map engine or a stylesheet
+arrives somewhere it does not belong. The pattern now has a second alternative, and every
+other rule built on it — the shell not reaching into the library's internals, the library
+not reaching into the shell — got stricter for free.
+
+The risk ramp moved to `web/src/report/risk.ts` with its own export path
+(`roadrisk-report/risk`), carrying no React and no payload types, so importing six colours
+does not pull a whole report in behind them. `report.html` is unchanged in size.
+
+**And a second defect in my own tests, found the same way.** Every rule in
+`tests/test_shell.py` reads the shell's sources through one glob, and that glob was
+`*.ts*` — which also matches `tsconfig.tsbuildinfo`, the file `tsc --noEmit` leaves
+behind listing every source it compiled. The moment the type-checker was run, *the banner
+is referenced outside the root layout* failed, naming a build artefact. The suffixes are
+named explicitly now. Worth recording because the test suite had been green only for as
+long as nobody had run `npm run lint` in that directory.
+
+### Two days lost to one silent failure, and what it changed
+
+MapLibre works out its worker's URL at runtime from `import.meta.url`. Inside a webpack
+bundle that is a chunk URL, so it asks for a worker beside the chunk, there is no such
+file, Next answers with its 404 **page**, and the browser refuses it for having the wrong
+MIME type. The map then draws a canvas, mounts its controls, fits itself to the corridor —
+and never loads. **It looks exactly like a map of an empty place.**
+
+`scripts/copy-map-worker.mjs` puts the worker and its sibling in `public/`, wired to
+`predev` and `prebuild` so it cannot be forgotten, and `setWorkerUrl` points at it. A test
+asserts the destination and the URL agree, because when they do not the failure is
+invisible.
+
+The lesson was bigger than the fix, and three things came out of it:
+
+- **The map reports its own failures.** `map.on("error")` reaches the screen, not the
+  console.
+- **Adding the corridor is wrapped**, so an exception inside a MapLibre event handler
+  becomes a message instead of a line nobody reads.
+- **There is a deadline.** MapLibre has no event for *not happening*, so if the corridor
+  is not on the map after ten seconds the page says so and names the worker URL. That is
+  what finally identified the cause, and it is the reason it is permanent.
+
+### Known, and deliberately left
+
+- **The map has not been seen rendered.** The browser pane available here reports
+  `document.visibilityState === "hidden"`, so it never paints a frame and MapLibre never
+  initialises; the local Chrome extension was not connected. Everything else is measured —
+  the worker is served (`200`, `application/javascript`), no external request is made, the
+  server-rendered HTML carries both banners, selection and the provenance panel work
+  through the ranked list. **What a person still has to confirm is the line on the canvas
+  and a click landing on it.**
+- **Layers are added on `styledata` or `load`, whichever arrives first**, guarded so it
+  happens once. `load` waits for a painted frame; `styledata` is the earlier and more
+  precise signal for *the style will take a source now*.
+- **The map route serves 186 kB of HTML**, because the corridor's GeoJSON is serialised
+  into the page for the client component. The report route is 230 kB for the same reason.
+- **Printing the map screen hides the map.** A WebGL canvas prints as a grey rectangle at
+  best, and the corridor is in the report as SVG anyway.
+
+---
+
+## 2026-08-27 (earlier) — Step 5.3b: a website, and one thing on it nobody can remove
 
 **Delivered:** `web/shell/` — a Next.js app over the API, with the deployment banner as a
 *layout* element rather than a component each page remembers. Eleven screens, every one of

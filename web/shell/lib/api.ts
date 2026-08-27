@@ -63,6 +63,21 @@ export function tenantId(): string | null {
   return process.env[TENANT_ENV]?.trim() || null;
 }
 
+/**
+ * A MapLibre style URL to draw a basemap under the corridor, if the operator wants one.
+ *
+ * **Unset is the default, and the map is complete without it.** A tile source is a
+ * network dependency and an attribution obligation, and this product's posture is that a
+ * corridor can be assessed with no key and no connection — so a basemap is something you
+ * switch on, not something you switch off. The map page states which of the two it is
+ * showing, and the style's own credit appears in the corner when there is one.
+ */
+export const MAP_STYLE_ENV = "ROADRISK_MAP_STYLE";
+
+export function mapStyleUrl(): string | null {
+  return process.env[MAP_STYLE_ENV]?.trim() || null;
+}
+
 /** A refusal the API sent, in the one envelope it sends every refusal in. */
 export class ApiRefusal extends Error {
   constructor(

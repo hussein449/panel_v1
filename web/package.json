@@ -10,6 +10,7 @@
   "exports": {
     ".": "./src/entries/mount.tsx",
     "./report": "./src/report/index.ts",
+    "./risk": "./src/report/risk.ts",
     "./styles.css": "./src/report/styles.css"
   },
   "scripts": {

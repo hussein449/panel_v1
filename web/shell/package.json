@@ -4,12 +4,15 @@
   "version": "0.1.0",
   "description": "The website around the report: routes, one layout, and a banner no route can omit.",
   "scripts": {
+    "predev": "node scripts/copy-map-worker.mjs",
     "dev": "NEXT_TELEMETRY_DISABLED=1 next dev",
+    "prebuild": "node scripts/copy-map-worker.mjs",
     "build": "NEXT_TELEMETRY_DISABLED=1 next build",
     "start": "NEXT_TELEMETRY_DISABLED=1 next start",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "maplibre-gl": "^6.6.0",
     "next": "14.2.35",
     "react": "18.3.1",
     "react-dom": "18.3.1",

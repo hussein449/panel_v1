@@ -276,7 +276,7 @@ They run *across* the whole flow, not at one point in it.
 | **2 — Geospatial pipeline** | 🟡 **Nearly done** | Corridor from OSM, linear referencing, segmentation, panel skeleton, crash snapping, 12 Tier A + 2 Tier B factors behind one adapter contract, fusion with per-unit confidence, geographic cache. **Outstanding:** vision-model inference, DEM viewshed, PostGIS geometry persistence |
 | **3 — Model depth** | ✅ **Done** | Panel-clustered SEs, GAM spline diagnostic, Bayesian random-intercept GLMM with credible intervals, registry weights as priors with a reported prior share, a Leroux spatial field, and out-of-sample validation reported by default |
 | **4 — Report and PDF** | ✅ **Done** | One React component rendered from `run.json` alone: mode banner, ranking, factors with source/tier/licence/confidence, receipts, SVG figures with no external request, and a limitations page assembled from the run that no flag removes. The PDF is that page printed |
-| **5 — Web layer** | 🟡 **Mostly done** | Layering rule as a test (5.0), payload contract frozen and TypeScript generated from it (5.1a), Postgres storage tenant-scoped from the first migration (5.1b), FastAPI with the refusal contract enforced by exception handler (5.1c), an in-process runner (5.1d), adapters fanning out as independently-failable branches (5.2a, part one), the report as an importable library (5.3a), and a Next.js shell whose banner no route can omit (5.3b). **Outstanding:** Celery (5.2a), cost model and cap (5.2b), per-tenant secrets (5.2c), MapLibre (5.3c), the interactive layer (5.3d), auth and row-level policies (5.4) |
+| **5 — Web layer** | 🟡 **Mostly done** | Layering rule as a test (5.0), payload contract frozen and TypeScript generated from it (5.1a), Postgres storage tenant-scoped from the first migration (5.1b), FastAPI with the refusal contract enforced by exception handler (5.1c), an in-process runner (5.1d), adapters fanning out as independently-failable branches (5.2a, part one), the report as an importable library (5.3a), a Next.js shell whose banner no route can omit (5.3b), and a map where clicking a segment gives the provenance of every number on it — with no basemap and no external request unless one is configured (5.3c). **Outstanding:** Celery (5.2a), cost model and cap (5.2b), per-tenant secrets (5.2c), the interactive layer (5.3d), auth and row-level policies (5.4) |
 | **6 — Deploy** | ⬜ **Not started** | Containers, hosting |
 
 **905 tests pass, 36 skipped. `ruff check` clean.**
@@ -378,7 +378,7 @@ Recorded because they are the argument for validating on real roads at all:
 | 2 | **Hazard layers — flood, fire, storm, snow** (unstaged) | The cheapest quarter of the call topic available anywhere: the adapter contract and raster windowing already fit them exactly, and JRC river flood maps, EFFIS and ERA5 are free. **The highest-value unbuilt work in this repository after real crash data** |
 | 3 | **Celery** (5.2a, part two) | Adapters fan out today, but across threads in one process. Nothing survives a deploy and there is no retry. The decision to make first is whether to fan out over *branches* (both already JSON-shaped) or over *fetches* through a shared cache — which needs object storage at 6.2 |
 | 4 | **Cost model and spend cap** (5.2b) | Nothing counts spend anywhere. The only cost figure in the repository is the 50–150 USD per corridor recorded against the unbuilt `mapillary_vision`. A cap has to refuse *before* the call, and its refusal is a receipt like any other |
-| 5 | **MapLibre and the interactive layer** (5.3c–d) | The screen's map is not the document's: the report draws inline SVG so that no external image request exists anywhere in it, and MapLibre needs tiles, which is a network dependency and an attribution obligation. They are deliberately not consolidated |
+| 5 | **The interactive layer** (5.3d) | The hover and detail layer step 4.4 deferred as screen-only. The map at 5.3c is built and answers *why is this segment dark*; what is left is the same for a reader who never opens it |
 | 6 | **Auth and row-level policies** (5.4a) | `X-Tenant-Id` scopes every read and proves nothing. The storage seam was built for this from the first migration; what is missing is identity and a database that refuses a cross-tenant read on its own |
 | 7 | **`mapillary_vision`** | Our own inference on sampled frames. The main cost trap in the pipeline at 50–150 USD of VLM calls per corridor, **and** it needs the poles-to-RHR mapping study before its output means anything |
 | 8 | **`dem_viewshed`** | `sight_distance_proxy` by marching the line of sight against terrain. Cheap to attempt; crude by nature — a DEM sees terrain but not vegetation, walls or parked vehicles |
@@ -547,8 +547,16 @@ like part of the analysis. A thin separating rule and a smaller type size say it
   **`a refusal is a result — 422 names the column, a Mode B descent is a 200`**
 - `The website` — sub-label: *projects · corridors · jobs · runs · the report itself.*
   Tag: **`the same component the emailed file is built from`**
+- `The map` — sub-label: *the corridor in Web Mercator, each segment in its risk colour,
+  a click giving every number's source.* Tag: **`no basemap, no request — a tile source is
+  opt-in and brings an attribution obligation with it`**
 - Draw a small banner strip pinned across the top of the website box, labelled
   **`the mode banner is a layout element — no route can omit it`**
+
+> **Call-out between `The map` and the report in band 5, drawn as a barrier rather than
+> an arrow:** *"The screen's map is not the document's. The report draws its corridor as
+> inline SVG so that no external image request exists anywhere in it — that is what lets
+> a report be emailed. The two are deliberately not consolidated."*
 
 **Bottom band — THE HONESTY LAYER** *(full width, spanning every band above, with small
 upward ticks into each)*
@@ -667,9 +675,8 @@ flowchart LR
     F1["Store the run<br/><i>jsonb, tenant-scoped</i>"]
     F2["HTTP API<br/><b>a refusal is a result</b>"]
     F3["The website<br/><i>the same Report component</i>"]
-    F4["MapLibre map<br/><b>NOT BUILT</b>"]
-    F1 --> F2 --> F3
-    F3 -.-> F4
+    F4["The map<br/><i>no basemap, no request</i>"]
+    F1 --> F2 --> F3 --> F4
   end
 
   A1 --> B1

@@ -368,6 +368,19 @@ same `<Report>` component the single-file bundle is built from, so what you read
 what arrives in somebody's inbox cannot drift apart. Printing the run page produces the
 report and only the report; the app's chrome is hidden in `@media print`.
 
+**A run also has a map.** The corridor in Web Mercator, each segment in its risk colour,
+and a click that says where every number on that segment came from — the value, the
+adapter that produced it, its tier, its licence, and whether it was measured there or
+carried from the segment next door. It draws **no basemap and makes no external request**:
+a tile source is a network dependency and an attribution obligation, and a corridor can be
+assessed here with no key and no connection. Set `$ROADRISK_MAP_STYLE` to a MapLibre style
+URL if you want one underneath, and the page will say so.
+
+That map is the screen's, and the report keeps its own. The report's corridor is inline
+SVG in equirectangular projection so that no external image request exists anywhere in a
+document that gets emailed. They are deliberately not consolidated, and a test asserts
+that the shipped `report.html` contains neither MapLibre nor a tile URL.
+
 **Two banners, and neither can be taken off a screen.** The root layout carries what this
 deployment is — that `X-Tenant-Id` is not authentication, that jobs run inside the API
 process and do not survive a restart, that artefact download is off — every line of it read
@@ -573,9 +586,9 @@ web/                         one report, imported three times. Nothing else rend
 │   └── mount.tsx            mountReport(element, run), for a page somebody else owns
 └── shell/                   the website. One React with the report, so report.html cannot move
     ├── app/layout.tsx       the deployment banner — the one thing no route can omit
-    ├── app/runs/[runId]/    layout.tsx states the mode; page.tsx mounts <Report>
+    ├── app/runs/[runId]/    layout.tsx states the mode; page.tsx mounts <Report>; map/
     ├── app/…                projects, corridors, jobs, registry, the download proxy
-    ├── components/          the two banners, the report's mount point, the problem panel
+    ├── components/          the banners, the report's mount point, the map, the problem panel
     └── lib/                 api.ts sets the tenant header, once · wire.ts is generated
 ```
 

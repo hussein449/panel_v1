@@ -26,4 +26,13 @@ export { default as Report } from "./Report";
 export { Boundary } from "./Boundary";
 export type { Assessment, Corridor, Limitation, Run } from "./types";
 
+/**
+ * The risk scale, for anything else that draws risk.
+ *
+ * Also its own entry point — `roadrisk-report/risk` — which is what the map at 5.3c
+ * imports. That path carries no React, no payload types and no stylesheet, so something
+ * that wants six colours does not pull a whole report in behind them.
+ */
+export { RISK_RAMP, riskColour } from "./risk";
+
 import "./styles.css";

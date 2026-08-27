@@ -29,6 +29,7 @@ other.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import shutil
 import subprocess
@@ -52,15 +53,27 @@ IGNORED = {"node_modules", ".next"}
 #: the missing version of it reported a type parameter as a component.
 COMPONENT_TAG = re.compile(r"(?<![A-Za-z0-9_])<([A-Z][A-Za-z0-9_]*)")
 
-IMPORT_FROM = re.compile(r"""from\s+["']([^"']+)["']""")
+#: Every import of another module, in both of the forms one is written in.
+#:
+#: The second alternative is not decoration. `import "maplibre-gl"` — no bindings, just
+#: the side effect — is precisely how a map engine, or a stylesheet, arrives somewhere it
+#: does not belong, and a pattern that only knew `from "…"` waved it straight through.
+#: Found by planting the violation and watching the test pass.
+IMPORT_FROM = re.compile(r"""(?:from|import)\s+["']([^"']+)["']""")
 
 
 def sources(root: Path) -> dict[Path, str]:
-    """Every TypeScript source under `root`, excluding build output."""
+    """Every TypeScript source under `root`, excluding build output.
+
+    The suffixes are named rather than globbed as `*.ts*`, which also matches
+    `tsconfig.tsbuildinfo` — a file `tsc --noEmit` leaves behind that lists every source
+    it compiled. Reading that as source made *every* rule here fail the moment somebody
+    ran the type-checker, because it contains the name of every component in the app.
+    """
     return {
         path: path.read_text(encoding="utf-8")
-        for path in sorted(root.rglob("*.ts*"))
-        if not IGNORED.intersection(path.parts)
+        for path in sorted(root.rglob("*"))
+        if path.suffix in {".ts", ".tsx"} and not IGNORED.intersection(path.parts)
     }
 
 
@@ -294,6 +307,118 @@ def test_one_module_sends_the_tenant_header() -> None:
 SOURCE_SUFFIXES = {".ts", ".tsx", ".css", ".mjs", ".json"}
 
 
+# -- step 5.3c: the map is the screen's, and the document keeps its own ---------
+
+LIBRARY = REPO / "web" / "src"
+BUNDLE = REPO / "src" / "roadrisk" / "report" / "static" / "index.html"
+
+#: A tile URL template, in any of the forms one is written in. What must never appear in
+#: a report: the report's own map is inline SVG so that no external image request exists
+#: anywhere in it, which is what lets a report be emailed and opened from a disk.
+TILE_URL = re.compile(r"\{z\}/\{x\}/\{y\}|\{x\}/\{y\}/\{z\}|tile\.openstreetmap|\.pbf")
+
+
+def test_the_report_library_does_not_know_maplibre_exists() -> None:
+    """5.3c's done-when, at the only place it can be enforced: the imports.
+
+    MapLibre needs a tile source, which is a network dependency and an attribution
+    obligation. The report is the artefact that gets emailed, opened from a disk and read
+    a year later — step 4.4 drew its corridor as inline SVG precisely so that no external
+    image request exists anywhere in it. The two maps are not consolidated, and the way
+    that stays true is that the library cannot reach the thing that would break it.
+    """
+    reaching = [
+        f"{path.relative_to(LIBRARY)} imports {target}"
+        for path, text in sources(LIBRARY).items()
+        for target in IMPORT_FROM.findall(text)
+        if "maplibre" in target
+    ]
+    assert not reaching, "The report library imports MapLibre:\n  " + "\n  ".join(
+        reaching
+    )
+
+
+def test_maplibre_belongs_to_the_shell_alone() -> None:
+    """A dependency of the app, never of the package the Python side ships.
+
+    `web/package.json` is the report. If MapLibre appeared in it, `npm ci` would pull a
+    megabyte of map engine into the build of a file whose whole point is that it needs
+    nothing, and the next person would have no reason to think that wrong.
+    """
+    report = json.loads((REPO / "web" / "package.json").read_text(encoding="utf-8"))
+    shell = json.loads((SHELL / "package.json").read_text(encoding="utf-8"))
+
+    assert not [
+        name
+        for name in {**report.get("dependencies", {}), **report.get("devDependencies", {})}
+        if "maplibre" in name
+    ], "MapLibre is a dependency of the report package"
+    assert "maplibre-gl" in shell.get("dependencies", {}), (
+        "the shell no longer depends on MapLibre; is the map still there?"
+    )
+
+
+def test_the_shipped_report_contains_no_map_engine_and_no_tiles() -> None:
+    """The done-when, checked against the artefact rather than against the intention.
+
+    `report.html` is what `pip install` ships and what a client is sent. This is the one
+    assertion that would still fail if somebody imported a map into the report and every
+    other rule here were satisfied — and it costs one file read.
+    """
+    text = BUNDLE.read_text(encoding="utf-8")
+    assert "maplibre" not in text.lower(), "the shipped report bundle contains MapLibre"
+    assert not TILE_URL.search(text), "the shipped report bundle references map tiles"
+
+
+def test_the_map_and_the_document_share_one_risk_scale() -> None:
+    """Six hex codes in two places is two answers to which segment is the dangerous one.
+
+    The ramp is `web/src/report/risk.ts`, exported as `roadrisk-report/risk`, and the map
+    imports it. A copy in the shell would drift the day somebody adjusted the scale, and
+    the screen and the report would disagree about the colour of the same road.
+    """
+    ramp = (LIBRARY / "report" / "risk.ts").read_text(encoding="utf-8")
+    colours = set(re.findall(r'"#[0-9a-fA-F]{6}"', ramp))
+    assert len(colours) >= 5, "the risk ramp is not where this test thinks it is"
+
+    for path, text in sources(SHELL).items():
+        repeated = colours.intersection(re.findall(r'"#[0-9a-fA-F]{6}"', text))
+        assert not repeated, (
+            f"{path.relative_to(SHELL)} hard-codes risk colours {sorted(repeated)}. "
+            "Import them from roadrisk-report/risk."
+        )
+
+
+def test_the_worker_copy_and_the_worker_url_agree() -> None:
+    """The two halves of MapLibre's worker, which fail apart in the worst way.
+
+    MapLibre works its worker's URL out from `import.meta.url`, which inside a bundle is
+    a chunk URL, so it asks for a worker that is not there. `scripts/copy-map-worker.mjs`
+    puts one somewhere real and `RunMapCanvas` points at it — and when those two disagree
+    the map draws a canvas, mounts its controls and never loads, which looks like an empty
+    map rather than a fault. It cost an afternoon once.
+    """
+    script = (SHELL / "scripts" / "copy-map-worker.mjs").read_text(encoding="utf-8")
+    canvas = (SHELL / "components" / "RunMapCanvas.tsx").read_text(encoding="utf-8")
+
+    destination = re.search(r'const DESTINATION = "([^"]+)"', script)
+    url = re.search(r'const WORKER_URL = "([^"]+)"', canvas)
+    assert destination and url, "the destination or the worker URL has been renamed"
+
+    served_from = destination.group(1).removeprefix("public")
+    assert url.group(1).startswith(served_from), (
+        f"the worker is copied into {destination.group(1)} and fetched from "
+        f"{url.group(1)}; those cannot both be right"
+    )
+
+    scripts = json.loads((SHELL / "package.json").read_text(encoding="utf-8"))["scripts"]
+    for hook in ("predev", "prebuild"):
+        assert "copy-map-worker" in scripts.get(hook, ""), (
+            f"`{hook}` does not copy the MapLibre worker, so a fresh checkout's first "
+            "run would serve a 404 for it"
+        )
+
+
 def test_no_shell_source_is_hidden_from_git() -> None:
     """Written because it happened: `runs/` in `.gitignore` swallowed the run segment.
 
@@ -309,12 +434,19 @@ def test_no_shell_source_is_hidden_from_git() -> None:
     if git is None:
         pytest.skip("git is not on PATH, so what it ignores cannot be asked")
 
+    # `public/maplibre/` is a copy of two files out of `node_modules`, put there by a
+    # build step so the browser can fetch MapLibre's worker. Being ignored is correct for
+    # those. Named here rather than matched by a pattern, because the value of this test
+    # is that it does not politely overlook things.
+    vendored = SHELL / "public" / "maplibre"
+
     paths = [
         path
         for path in sorted(SHELL.rglob("*"))
         if path.is_file()
         and path.suffix in SOURCE_SUFFIXES
         and not IGNORED.intersection(path.parts)
+        and vendored not in path.parents
     ]
     assert paths, "no shell sources found at all"
 

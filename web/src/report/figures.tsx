@@ -5,12 +5,10 @@
  * requests, nothing fetched: a figure that needed a CDN would be a blank rectangle in
  * an emailed report, and the whole point of the page is that it survives being sent.
  *
- * **The colour scale is one hue, light to dark, and it was validated rather than
- * chosen.** Risk is a magnitude, so it gets a sequential ramp — never a rainbow, never
- * a categorical palette pressed into service as a value scale. The six steps below
- * pass the ordinal checks against a white surface: monotone lightness, visible gaps
- * between steps, a hue spread of 18°, and a pale end that still reads as a mark at
- * 2.11:1. Because the ramp varies by lightness it survives being printed in grey.
+ * **The colour scale lives in `risk.ts`**, not here. Step 5.3c draws the same corridor
+ * on a MapLibre map — a different projection, a different technology, a different file —
+ * and a second copy of those six hex codes would eventually mean the screen and the
+ * document disagreeing about which segment is the dangerous one.
  *
  * **Every figure has a table beside it.** Colour is never the only way to read a
  * value here — the ranked table carries the same numbers, which is what makes the
@@ -19,25 +17,14 @@
 
 import type { Blackspot, Calibration, Corridor, Cure, Ranking, Shape, UnitRisk } from "./types";
 import { count, decimal, percent, significant } from "./format";
+import { RISK_RAMP, riskColour } from "./risk";
 
-/** Sequential, one hue, light→dark. Validated; do not reorder or interpolate. */
-export const RISK_RAMP = [
-  "#e9a468",
-  "#dd8342",
-  "#c96323",
-  "#a84a13",
-  "#84360c",
-  "#5e2408",
-] as const;
+export { RISK_RAMP, riskColour };
 
 const INK = "#16191d";
 const INK_SOFT = "#4a5158";
 const RULE = "#dfe3e8";
 const SURFACE = "#ffffff";
-
-/** Percentile → ramp step. Worst segments get the darkest end. */
-export const riskColour = (percentile: number): string =>
-  RISK_RAMP[Math.min(RISK_RAMP.length - 1, Math.max(0, Math.floor(percentile * RISK_RAMP.length)))];
 
 function Figure({
   caption,

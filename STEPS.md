@@ -18,11 +18,13 @@ first migration; 5.1c serves all of it over HTTP, with the refusal contract enfo
 exception handler rather than by intention; and 5.1d put a runner behind it, so **the
 whole product now works over HTTP**: `roadrisk serve`, then `POST /jobs` with
 `{"demo": true}`, and a finished assessment comes back in seconds with no broker, no
-network and no data. Step 5.1 is complete. **5.3a and 5.3b made it a website**: one
-`<Report>` imported by the file that gets emailed and by the app, and a Next.js shell
-whose every screen carries the two things about this deployment a client would otherwise
+network and no data. Step 5.1 is complete. **5.3a, 5.3b and 5.3c made it a website**: one
+`<Report>` imported by the file that gets emailed and by the app, a Next.js shell whose
+every screen carries the two things about this deployment a client would otherwise
 discover by watching a job never finish — because the banner is a layout element and a
-route cannot opt out of its layout. What is still missing is throughput and durability:
+route cannot opt out of its layout — and a map where clicking a segment says where each
+of its numbers came from, with no basemap and no request unless somebody configures one.
+What is still missing is throughput and durability:
 work in flight does not survive a restart, which is 5.2a. **5.2a is half done**: adapters
 now fan out and a failing one costs a factor rather than the corridor, but the fan-out is
 across threads in one process — Celery is not built, and the boxed note under 5.2a says
@@ -799,7 +801,7 @@ executes it.
 | `[ ]` | **5.2c** Secrets per tenant | Per-project keys, validated at entry, and an Overpass identity with a rate budget | A scope-less Mapillary token is refused when the key is entered, not rediscovered per run |
 | `[x]` | **5.3a** Report as a library | `web/src/` splits into `<Report run={run} />` and two thin entry points ✅ | The single-file bundle still opens from `file://` ✅ · the app renders the same component tree ✅ |
 | `[x]` | **5.3b** Next.js shell | Routes, layout, and the mode banner as a *layout* element ✅ | Mode banner unmissable on every screen — no route can omit it ✅ |
-| `[ ]` | **5.3c** MapLibre map | Corridor geometry, units coloured by rank, factor provenance on click | Tiles never enter the report path; the document keeps its own SVG map |
+| `[x]` | **5.3c** MapLibre map | Corridor geometry ✅, units coloured by rank ✅, factor provenance on click ✅ | Tiles never enter the report path ✅; the document keeps its own SVG map ✅ |
 | `[ ]` | **5.3d** Interactive layer | The hover and detail layer 4.4 deferred as screen-only | Native `<title>` still works with JavaScript off |
 | `[ ]` | **5.4a** Auth + RLS | Supabase auth, row-level policies | The *database* refuses a cross-tenant read, proven by querying as tenant B |
 | `[ ]` | **5.4b** Projects + history | Saved runs, re-open, re-render | Yesterday's run opens without a refit |
@@ -1247,13 +1249,50 @@ way to try the API, and it was not one: every route that touches a row needs a t
 `roadrisk store new-tenant` needs a database, so an in-memory deployment could only answer
 *No tenant …*. `roadrisk serve --tenant` creates one and prints it.
 
+### 5.3c — the corridor on a map, and what any segment on it is made of *(done)*
+
+```bash
+cd web/shell && npm run build && npm run start
+pytest tests/test_shell.py
+```
+
+A third screen under the run layout, so it states which mode produced the colours it is
+drawing **without containing a line about it** — that inheritance was 5.3b's argument for
+putting the banner in a layout, and this is the first route to collect on it. The
+runtime check found 12 screens instead of 11 without being told about the new one.
+
+**Clicking a segment answers *why is this one dark*.** The panel joins two tables the
+payload already holds: `confidence` is per unit and per factor, `provenance` is per factor
+for the corridor. So a click gives the value, the adapter that produced it, its tier, its
+licence, and whether it was measured on that segment or carried from next door.
+
+**There is no basemap unless somebody asks for one, and that is the default.** A tile
+source is a network dependency and an attribution obligation, and this product's whole
+posture is that a corridor can be assessed with no key and no connection. The style has
+one background layer and no sources: **zero external requests**, verified in a browser —
+the only non-origin fetches on the page are MapLibre's own inline `data:` icons. No text
+is drawn on the map either, because a symbol layer would fetch glyph ranges and put the
+network back. `$ROADRISK_MAP_STYLE` turns a basemap on, and the page then says so.
+
+**The scale is imported, not copied.** `web/src/report/risk.ts` is its own module and its
+own export path, because six hex codes in two places is two answers to which segment is
+the dangerous one. A test fails if the shell writes any of them down.
+
+**Tiles never entering the report path is checked four ways**: the library imports no
+MapLibre, MapLibre is a dependency of the shell alone, the shipped `report.html` contains
+neither the string nor a tile URL, and the ramp is shared rather than duplicated. Each was
+verified against a planted violation — and the first one **passed** with the violation in
+place, because the import pattern only knew `from "…"` and a side-effect `import "…"` is
+exactly how a map engine arrives. That is now the pattern's second alternative.
+
 ### 5.3 — the map on the screen is not the map in the document
 
 4.4 drew the corridor as inline SVG in equirectangular projection so that **no external
 image request exists anywhere in the report** — that is its done-when, and it is what lets
 a report be emailed. MapLibre needs a tile source, which is both a network dependency and
 a new attribution obligation. So MapLibre is the screen and the SVG stays the document;
-they are not consolidated.
+they are not consolidated. The screen's map is Web Mercator and pans; the document's is
+equirectangular and prints.
 
 ---
 

@@ -8,3 +8,7 @@ dist/
 # something `pip install` ships.
 shell/.next/
 shell/tsconfig.tsbuildinfo
+# MapLibre's worker, copied out of node_modules by `scripts/copy-map-worker.mjs` so the
+# browser can fetch it. A copy of a dependency, not source — `predev` and `prebuild` put
+# it back, and the script says why it has to exist at all.
+shell/public/maplibre/
