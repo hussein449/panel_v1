@@ -749,6 +749,43 @@ figcaption {
   border-color: var(--ink-faint);
 }
 
+/* ---- step 5.3d: the segment the reader is pointing at ---------------------
+ *
+ * An enhancement laid over the document, never a replacement for it. Every mark keeps
+ * its SVG `<title>`, which is what a browser shows with no JavaScript running and what a
+ * screen reader announces — so what is below is what a pointer buys, and none of it is
+ * the only way to learn anything.
+ */
+
+.readout {
+  max-width: var(--measure);
+  margin: -0.25rem auto 1.25rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--shell);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink);
+  /* Reserved, so pointing at a segment never moves the page under the pointer. It does
+     not change between empty and full. */
+  min-height: 2.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.readout__prompt {
+  color: var(--ink-faint);
+}
+
+/* A tint on the row, not a border — a border would shift every row beneath it. */
+.table--ranking tbody tr.is-focused,
+.table--blackspots tbody tr.is-focused {
+  background: var(--rule-soft);
+}
+
 /* ---- the limitations page ------------------------------------------------ */
 
 .limitations {

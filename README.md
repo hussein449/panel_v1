@@ -368,6 +368,12 @@ same `<Report>` component the single-file bundle is built from, so what you read
 what arrives in somebody's inbox cannot drift apart. Printing the run page produces the
 report and only the report; the app's chrome is hidden in `@media print`.
 
+**Point at a segment** on the risk strip, on the corridor map or in the ranked table and
+it lights up in all three, with its rank, score and interval in a readout underneath. That
+is an enhancement laid over the document, never a replacement for it: every mark keeps the
+native SVG `<title>` that a browser shows with no JavaScript running and a screen reader
+announces, and a test counts them in the HTML the server sent.
+
 **A run also has a map.** The corridor in Web Mercator over an OpenStreetMap basemap, each
 segment in its risk colour with a tick across the road where one segment ends and the next
 begins, and a click that says where every number on that segment came from — the value,
@@ -581,6 +587,8 @@ web/                         one report, imported three times. Nothing else rend
 │   ├── sections.tsx         banner, ranking, model, factors, checks, credits, limits
 │   ├── figures.tsx          risk strip, corridor map, CURE, calibration, spline — all SVG
 │   ├── format.ts            every formatter survives a null, because the payload has them
+│   ├── focus.tsx            which segment the reader is pointing at, shared by all three
+│   ├── risk.ts              the colour scale, so the map and the document cannot disagree
 │   ├── Boundary.tsx         a rendering failure must not become a blank page
 │   ├── styles.css           one stylesheet, screen and `@page` alike
 │   ├── types.ts             the JSON contract, as TypeScript. Generated, not written

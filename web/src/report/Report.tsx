@@ -13,6 +13,7 @@ import {
   ValidationSection,
 } from "./sections";
 import type { Run } from "./types";
+import { SegmentFocusProvider } from "./focus";
 
 /**
  * The report.
@@ -62,6 +63,11 @@ export default function Report({ run }: { run: Run }) {
   const ranking = assessment.ranking;
 
   return (
+    // Step 5.3d. One piece of state, so that the strip, the map in plan and the ranked
+    // table stop being three unrelated pictures of the same twenty segments. It changes
+    // nothing about what is drawn — every mark keeps the `<title>` a reader with no
+    // JavaScript relies on, and the readout it drives is `no-print`.
+    <SegmentFocusProvider>
     <article className="report">
       <PageBanner banner={assessment.banner} />
       <div className="toolbar no-print">
@@ -114,5 +120,6 @@ export default function Report({ run }: { run: Run }) {
         </p>
       </footer>
     </article>
+    </SegmentFocusProvider>
   );
 }

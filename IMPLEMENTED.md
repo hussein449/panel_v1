@@ -5,7 +5,93 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-27 (latest) — Step 5.3c: the corridor on a map, and no tiles anywhere near the report
+## 2026-08-27 (latest) — Step 5.3d: three pictures of the same segments, finally connected
+
+**Delivered:** point at a segment on the risk strip, on the corridor map or in the ranked
+table, and it lights up in all three with its numbers in a readout underneath. **Step 5.3
+is complete.**
+
+```bash
+pytest tests/test_report_library.py
+python tools/check_shell.py --tenant …   # counts the native titles the server sent
+```
+
+### The problem was that the report showed the same thing three times and never said so
+
+A report draws the same twenty segments as a strip along chainage, as a road in plan, and
+as a ranked table. None of the three knew the others existed, so *this dark band — where
+is it on the road, and which row is it?* was three separate acts of eye-matching against
+a `unit_id`.
+
+One piece of state fixes it. `web/src/report/focus.tsx` holds which segment the reader is
+pointing at; the strip strokes it, the map in plan draws it dark, the table row tints, and
+a readout under the figures names it:
+
+```
+demo-0016 · rank 3 of 22 · score 0.0042 · 31 observed · 36.8 expected (95% 32.6 – 41.5)
+```
+
+Measured on the running app: pointing at the third table row gives **exactly one** stroked
+rect on the strip, **exactly one** dark polyline on the map, `is-focused` on that row, and
+that readout. Leaving clears all four.
+
+### It lives in the report library, and that follows from 5.3a
+
+There is one `<Report>`. A hover layer anywhere else would be the shell drawing part of
+the report, which `tests/test_shell.py` fails on. So it is in `web/src/report/`, and the
+emailed single-file bundle gets it too — which is right, since that is a screen as well.
+The print button has been in the library on exactly these terms since 4.3.
+
+### The done-when is a negative requirement, and that is the whole point
+
+*Native `<title>` still works with JavaScript off.*
+
+Failing 5.3d does not look like forgetting it. It looks like **replacing** a `<title>`
+with a hover handler: the screen gets better, and the same figure served to a reader with
+scripts off — or read aloud by a screen reader — silently loses the only thing that made
+it legible. 4.4 put those titles there for exactly that reader.
+
+So it is held two ways:
+
+| Check | What it sees |
+|---|---|
+| `tests/test_report_library.py` | The marks that answer a pointer stay outnumbered by the `<title>`s in the same file. Verified by stripping every title and watching it fail |
+| `tools/check_shell.py` | Counts the titles in the HTML **the server sent** — 50 on the demo corridor. That is literally what a scripts-off reader receives |
+
+Two more rules came with it, both planted against and both caught: the readout is
+`no-print`, because *point at a segment* is not a sentence that belongs in a PDF; and
+`createContext` appears in exactly one file, with no other component in the library
+keeping state — two sources of truth here would be the strip and the map disagreeing about
+which stretch of road is the dangerous one.
+
+### Two decisions worth the words
+
+**Nothing moves.** The readout has a reserved height and holds a prompt when empty. A
+document that reflows under the pointer is a document whose printed page is not the one
+being read — and the highlight is a *stroke* filling the 2 px gap the strip already leaves
+between segments, not a size change.
+
+**No `tabIndex` on the marks, deliberately.** A 120-unit corridor would put 120 tab stops
+into a document to duplicate numbers already in the table beside it. 4.4's own rule is
+that colour is never the only way to read a value; the table is what discharges it, and
+the `<title>`s are what a screen reader gets. Neither is a consolation prize.
+
+### Known, and deliberately left
+
+- **The MapLibre map at 5.3c does not join the linking.** It is a shell component and the
+  focus state is the library's; crossing that boundary would mean the shell reaching into
+  the report or the report knowing about the app. The map has its own selection, its own
+  provenance panel, and its own tab.
+- **React's enter/leave synthesis was not exercised by a synthetic event.** The handlers
+  were confirmed attached (`onMouseEnter` in the row's React props) and driven directly to
+  prove the state wiring end to end. The DOM plumbing between a real pointer and those
+  handlers is React's, not this code's.
+- **The report bundle grew 185.1 → 187.3 kB.** Two kilobytes for a context, a readout and
+  four handlers.
+
+---
+
+## 2026-08-27 (earlier) — Step 5.3c: the corridor on a map, and no tiles anywhere near the report
 
 **Delivered:** a MapLibre map at `/runs/{id}/map` — the corridor in Web Mercator, each
 segment in its risk colour, and a click that says where every number on that segment came

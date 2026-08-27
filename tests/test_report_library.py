@@ -31,7 +31,12 @@ LIBRARY = WEB / "report"
 ENTRIES = WEB / "entries"
 
 #: An import of something inside the report library, from anywhere.
-IMPORT_FROM = re.compile(r"""from\s+["']([^"']+)["']""")
+#:
+#: Both forms. `import "x"` — the side-effect import, with no bindings — is how a
+#: stylesheet or a map engine arrives somewhere it does not belong, and a pattern that
+#: knew only `from "x"` let exactly that through when it was planted against 5.3c's twin
+#: of this rule in `tests/test_shell.py`.
+IMPORT_FROM = re.compile(r"""(?:from|import)\s+["']([^"']+)["']""")
 
 #: A JSX element with a capitalised name — a component being *rendered*.
 #:
@@ -184,3 +189,77 @@ def test_the_shipped_bundle_is_not_left_behind_by_the_split() -> None:
     assert len(text) > 100_000, "the shipped bundle looks empty"
     assert 'id="roadrisk-run"' in text, "the bundle has nowhere to put a run"
     assert "createRoot" in text, "the bundle does not mount anything"
+
+
+# -- step 5.3d: the hover layer goes over the document, never instead of it -----
+
+FIGURES = LIBRARY / "figures.tsx"
+
+#: A mark that answers a pointer. `segmentHandlers` is the only way one is wired, which
+#: is what makes them countable at all.
+POINTER_MARK = re.compile(r"\{\.\.\.segmentHandlers\(")
+
+#: The browser's own tooltip, and what a screen reader announces.
+NATIVE_TITLE = re.compile(r"<title>")
+
+
+def test_every_figure_that_answers_a_pointer_still_has_its_native_titles() -> None:
+    """Step 5.3d's done-when: **native `<title>` still works with JavaScript off.**
+
+    The way to fail this step is not to forget it. It is to replace a `<title>` with a
+    hover handler — the screen looks better, and the same figure served to a reader with
+    scripts off, or read aloud by a screen reader, silently loses the only thing that made
+    it legible. So the marks that gained a pointer stay outnumbered by the titles that
+    were there before them.
+
+    `tools/check_shell.py` holds the other half against a running app: it counts the
+    titles in the HTML the *server* sent, which is exactly what such a reader receives.
+    """
+    text = FIGURES.read_text(encoding="utf-8")
+
+    marks = len(POINTER_MARK.findall(text))
+    titles = len(NATIVE_TITLE.findall(text))
+
+    assert marks >= 2, "no figure answers a pointer; did 5.3d get removed?"
+    assert titles >= marks, (
+        f"{marks} marks answer a pointer but only {titles} carry a <title>. The hover "
+        "layer is an enhancement over the document, not a replacement for it."
+    )
+
+
+def test_the_readout_never_reaches_the_printed_page() -> None:
+    """*Point at a segment* is not a sentence that belongs in a PDF.
+
+    The same rule the print button has followed since 4.5, for the same reason: the
+    document is what leaves the building, and an affordance nobody holding it can use is
+    an instruction to do something impossible.
+    """
+    text = FIGURES.read_text(encoding="utf-8")
+    readout = text.split("export function SegmentReadout", 1)[1].split("\n}", 1)[0]
+    assert "no-print" in readout, "the segment readout would print"
+
+
+def test_the_focus_state_lives_in_one_place() -> None:
+    """One provider, and no component keeping its own idea of what is focused.
+
+    Two sources of truth here would be two figures highlighting different segments, which
+    is worse than neither highlighting anything: it would have the strip and the map in
+    plan disagreeing about which stretch of road is the dangerous one.
+    """
+    providers = [
+        path.relative_to(WEB)
+        for path, text in sources(LIBRARY).items()
+        if "createContext" in text
+    ]
+    assert providers == [Path("report/focus.tsx")], (
+        f"focus state is created in more than one place: {providers}"
+    )
+
+    for path, text in sources(LIBRARY).items():
+        if path.name == "focus.tsx":
+            continue
+        assert "useState" not in text, (
+            f"{path.relative_to(WEB)} keeps state of its own. The report renders a "
+            "payload; the one thing it remembers is which segment the reader is "
+            "pointing at, and that lives in focus.tsx."
+        )

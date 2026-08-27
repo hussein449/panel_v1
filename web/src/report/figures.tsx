@@ -18,6 +18,7 @@
 import type { Blackspot, Calibration, Corridor, Cure, Ranking, Shape, UnitRisk } from "./types";
 import { count, decimal, percent, significant } from "./format";
 import { RISK_RAMP, riskColour } from "./risk";
+import { segmentHandlers, useSegmentFocus } from "./focus";
 
 export { RISK_RAMP, riskColour };
 
@@ -38,6 +39,60 @@ function Figure({
       {children}
       <figcaption>{caption}</figcaption>
     </figure>
+  );
+}
+
+/**
+ * What the reader is pointing at, in words and numbers, under the figures.
+ *
+ * **Its height does not depend on what is in it.** Empty, it holds a prompt; full, it
+ * holds a segment — and a document that reflows when you point at it is a document whose
+ * printed page is not the one you were reading. It is `no-print` for the same reason the
+ * print button is: a caption saying *point at a segment* has no business in a PDF.
+ *
+ * Everything in here is also in the table below the figures. That is deliberate — this is
+ * an enhancement for whoever has a pointer, not the only route to a number.
+ */
+export function SegmentReadout({ ranking }: { ranking: Ranking }) {
+  const { focused } = useSegmentFocus();
+  const unit = focused ? ranking.units.find((u) => u.unit_id === focused) : undefined;
+
+  return (
+    <p className="readout no-print" role="status" aria-live="polite">
+      {focused === null ? (
+        <span className="readout__prompt">
+          Point at a segment — on the strip, on the map or in the table — to read it here.
+        </span>
+      ) : unit === undefined ? (
+        <>
+          <span className="mono">{focused}</span>
+          <span className="readout__prompt">
+            {" "}
+            is not in the ranking. Nothing was scored for it.
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="mono">{unit.unit_id}</span> · rank {unit.rank} of{" "}
+          {count(ranking.n_units)} · score {significant(unit.score)}
+          {unit.observed != null ? <> · {count(unit.observed)} observed</> : null}
+          {unit.expected != null ? (
+            <>
+              {" "}
+              · {decimal(unit.expected)} expected
+              {unit.expected_low != null && unit.expected_high != null ? (
+                <>
+                  {" "}
+                  <span className="muted">
+                    (95% {decimal(unit.expected_low)} – {decimal(unit.expected_high)})
+                  </span>
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </>
+      )}
+    </p>
   );
 }
 
@@ -79,6 +134,10 @@ export function RiskStrip({
   ranking: Ranking;
   corridor: Corridor;
 }) {
+  // Before the early return below: a hook called conditionally is a hook called in a
+  // different order on the next render, which React counts rather than names.
+  const { focused, focus } = useSegmentFocus();
+
   const units = corridor.segmentation.units;
   const byId = new Map(ranking.units.map((unit) => [unit.unit_id, unit]));
   const total = corridor.corridor.length_m;
@@ -125,6 +184,11 @@ export function RiskStrip({
               height={stripH}
               fill={risk ? riskColour(risk.percentile) : RULE}
               rx={1}
+              // Stroked rather than moved or resized. The 2px gap between fills is
+              // exactly what the highlight fills, so nothing on the figure shifts.
+              stroke={focused === unit.unit_id ? INK : "none"}
+              strokeWidth={focused === unit.unit_id ? 2 : 0}
+              {...segmentHandlers(unit.unit_id, focus)}
             >
               <title>
                 {unit.unit_id} · {count(Math.round(unit.start_m))}–
@@ -210,6 +274,8 @@ export function CorridorMap({
   ranking: Ranking;
   corridor: Corridor;
 }) {
+  const { focused, focus } = useSegmentFocus();
+
   const units = corridor.segmentation.units.filter((unit) => unit.geometry.length > 1);
   if (units.length === 0) return null;
 
@@ -273,10 +339,19 @@ export function CorridorMap({
               key={unit.unit_id}
               points={unit.geometry.map(project).join(" ")}
               fill="none"
-              stroke={risk ? riskColour(risk.percentile) : RULE}
+              // The focused segment goes dark rather than wider: a road that thickens
+              // under the pointer redraws its own geometry, and this one is in plan.
+              stroke={
+                focused === unit.unit_id
+                  ? INK
+                  : risk
+                    ? riskColour(risk.percentile)
+                    : RULE
+              }
               strokeWidth={6}
               strokeLinecap="round"
               strokeLinejoin="round"
+              {...segmentHandlers(unit.unit_id, focus)}
             >
               <title>
                 {unit.unit_id}

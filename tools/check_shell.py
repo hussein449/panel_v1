@@ -44,6 +44,20 @@ DEPLOYMENT_BANNER = 'aria-label="What this deployment is"'
 #: What every screen about a run must carry, on top of the above.
 RUN_BANNER = 'aria-label="What produced this run"'
 
+#: Step 5.3d's done-when: **native `<title>` still works with JavaScript off.**
+#:
+#: The figures are inline SVG and every mark carries a `<title>` — the browser's own
+#: tooltip, which needs no script, and what a screen reader announces. 5.3d lays a hover
+#: layer over that, and the way to fail it is to replace the titles with handlers: the
+#: screen looks better and the same figure, served to a reader with scripts off, silently
+#: loses the only thing that made it readable.
+#:
+#: This counts them in the HTML the *server* sent, which is exactly what such a reader
+#: gets. One `<title>` belongs to the document's head; the rest are the figures'. The
+#: floor is deliberately low — it is a check that they exist at all, not a count of marks
+#: on any particular corridor.
+NATIVE_TITLES_AT_LEAST = 10
+
 
 def get(url: str, tenant: str | None = None, timeout: float = 30.0) -> tuple[int, str]:
     request = urllib.request.Request(url, headers={"Accept": "*/*"})
@@ -157,11 +171,17 @@ def main() -> int:
         if route.startswith("/runs/[runId]") and RUN_BANNER not in html:
             problems.append("no mode banner")
 
+        titles = html.count("<title>")
+        if route == "/runs/[runId]" and titles < NATIVE_TITLES_AT_LEAST:
+            problems.append(f"only {titles} native <title>s in the figures")
+
         if problems:
             failures += 1
             print(f"  FAIL  {url}  — {', '.join(problems)}")
         else:
             marker = "banner + mode" if route.startswith("/runs/[runId]") else "banner"
+            if route == "/runs/[runId]":
+                marker += f" + {titles} titles"
             print(f"  ok    {url}  ({status}, {marker}, {len(html):,} bytes)")
 
     print()

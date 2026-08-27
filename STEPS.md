@@ -802,7 +802,7 @@ executes it.
 | `[x]` | **5.3a** Report as a library | `web/src/` splits into `<Report run={run} />` and two thin entry points ✅ | The single-file bundle still opens from `file://` ✅ · the app renders the same component tree ✅ |
 | `[x]` | **5.3b** Next.js shell | Routes, layout, and the mode banner as a *layout* element ✅ | Mode banner unmissable on every screen — no route can omit it ✅ |
 | `[x]` | **5.3c** MapLibre map | Corridor geometry ✅, units coloured by rank ✅, factor provenance on click ✅ | Tiles never enter the report path ✅; the document keeps its own SVG map ✅ |
-| `[ ]` | **5.3d** Interactive layer | The hover and detail layer 4.4 deferred as screen-only | Native `<title>` still works with JavaScript off |
+| `[x]` | **5.3d** Interactive layer | The hover and detail layer 4.4 deferred as screen-only ✅ | Native `<title>` still works with JavaScript off ✅ |
 | `[ ]` | **5.4a** Auth + RLS | Supabase auth, row-level policies | The *database* refuses a cross-tenant read, proven by querying as tenant B |
 | `[ ]` | **5.4b** Projects + history | Saved runs, re-open, re-render | Yesterday's run opens without a refit |
 | `[ ]` | **5.4c** Corridor comparison | Two corridors side by side with mode, factor coverage and validation outcome | Every number shows the context it was valid in |
@@ -1292,6 +1292,42 @@ neither the string nor a tile URL, and the ramp is shared rather than duplicated
 verified against a planted violation — and the first one **passed** with the violation in
 place, because the import pattern only knew `from "…"` and a side-effect `import "…"` is
 exactly how a map engine arrives. That is now the pattern's second alternative.
+
+### 5.3d — three pictures of the same twenty segments, finally connected *(done)*
+
+```bash
+pytest tests/test_report_library.py
+python tools/check_shell.py --tenant …   # counts the native titles the server sent
+```
+
+A report shows the same segments three times — a strip along chainage, the road in plan,
+and a ranked table — and until now none of the three knew the others existed. *This dark
+band, where is it on the road, and which row is it* was three acts of eye-matching. One
+piece of state in `web/src/report/focus.tsx` fixes it: point at a segment anywhere and it
+lights up everywhere, with a readout under the figures naming it and its numbers.
+
+**It is in the report library, not the shell**, which follows from 5.3a: there is one
+`<Report>`, so a hover layer added anywhere else would be the shell drawing part of the
+report. The emailed file gets it too, which is right — it is a screen there as well. The
+print button has lived in the library on the same terms since 4.3.
+
+**The done-when is a *negative* requirement, and it is the whole point.** Every mark keeps
+the native SVG `<title>` 4.4 gave it — the browser's own tooltip, which needs no script,
+and what a screen reader announces. Failing 5.3d does not look like forgetting it; it
+looks like replacing a `<title>` with a handler, which improves the screen and quietly
+takes the figure away from everyone reading it without JavaScript. So it is checked twice:
+the library test requires the pointer-answering marks to stay outnumbered by titles, and
+`check_shell.py` counts the titles in the HTML **the server sent** — **50** on the demo
+corridor, which is exactly what a reader with scripts off receives.
+
+**Nothing moves.** The readout has a reserved height and holds a prompt when empty,
+because a document that reflows under the pointer is a document whose printed page is not
+the one being read. It is `no-print`, like the print button.
+
+**No `tabIndex` on the marks, deliberately.** A 120-unit corridor would put 120 tab stops
+into a document to duplicate numbers that are already in the table beside it — 4.4's own
+rule is that colour is never the only way to read a value, and the table is what
+discharges it.
 
 ### 5.3 — the map on the screen is not the map in the document
 

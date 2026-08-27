@@ -4,9 +4,11 @@ import {
   CorridorMap,
   CurePlot,
   RiskStrip,
+  SegmentReadout,
   SplineCurve,
 } from "./figures";
 import { count, decimal, extent, percent, shorten, signed, significant } from "./format";
+import { segmentHandlers, useSegmentFocus } from "./focus";
 
 /** A titled block. Every section is one, so the print rules have one thing to target. */
 export function Section({
@@ -135,6 +137,7 @@ export function RankingSection({
 }) {
   const withCounts = ranking.has_intervals;
   const top = ranking.units.slice(0, 20);
+  const { focused, focus } = useSegmentFocus();
 
   return (
     <Section
@@ -146,6 +149,7 @@ export function RankingSection({
         <>
           <RiskStrip ranking={ranking} corridor={corridor} />
           <CorridorMap ranking={ranking} corridor={corridor} />
+          <SegmentReadout ranking={ranking} />
         </>
       ) : null}
 
@@ -169,7 +173,13 @@ export function RankingSection({
             </thead>
             <tbody>
               {ranking.blackspots.map((spot) => (
-                <tr key={spot.rank}>
+                <tr
+                  key={spot.rank}
+                  // A blackspot is a run of segments; pointing at the row lights the
+                  // worst of them, which is the one the row is named after.
+                  className={focused === spot.worst_unit ? "is-focused" : undefined}
+                  {...segmentHandlers(spot.worst_unit, focus)}
+                >
                   <td>{spot.rank}</td>
                   <td>{spot.n_units}</td>
                   <td>{extent(spot.start_m, spot.end_m) ?? "chainage unknown"}</td>
@@ -210,7 +220,11 @@ export function RankingSection({
         </thead>
         <tbody>
           {top.map((unit) => (
-            <tr key={unit.unit_id}>
+            <tr
+              key={unit.unit_id}
+              className={focused === unit.unit_id ? "is-focused" : undefined}
+              {...segmentHandlers(unit.unit_id, focus)}
+            >
               <td className="num">{unit.rank}</td>
               <td className="mono">{unit.unit_id}</td>
               <td className="num">{significant(unit.score)}</td>
