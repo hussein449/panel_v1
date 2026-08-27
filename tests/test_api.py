@@ -799,6 +799,60 @@ def test_a_demo_report_says_on_its_own_face_that_there_is_no_road(
     assert limitations[0]["detail"] in render_report(payload)
 
 
+def test_runs_can_be_listed_by_where_the_road_is(
+    running_client: TestClient, auth: dict[str, str], project: dict[str, Any]
+) -> None:
+    """Step 2.9's other half, over HTTP.
+
+    The extent comes back on a summary, so a client can draw a listing on a map without
+    opening 300 kB of payload per row — and `bbox` filters by it. The box in the query is
+    the run's own extent grown a little, which is the question a map view actually asks.
+    """
+    submitted = running_client.post(
+        "/jobs", json={"project_id": project["id"], "demo": True}, headers=auth
+    )
+    run_id = running_client.get(
+        f"/jobs/{submitted.json()['id']}/run", headers=auth
+    ).json()["id"]
+
+    listed = running_client.get("/runs", headers=auth).json()
+    summary = next(row for row in listed if row["id"] == run_id)
+    assert summary["extent_west"] is not None, "a corridor run knows where it is"
+
+    grown = (
+        f"{summary['extent_south'] - 0.05},{summary['extent_west'] - 0.05},"
+        f"{summary['extent_north'] + 0.05},{summary['extent_east'] + 0.05}"
+    )
+    covering = running_client.get(f"/runs?bbox={grown}", headers=auth)
+    assert covering.status_code == 200
+    assert [row["id"] for row in covering.json()] == [run_id]
+
+    away = (
+        f"{summary['extent_south'] + 20},{summary['extent_west'] + 20},"
+        f"{summary['extent_north'] + 21},{summary['extent_east'] + 21}"
+    )
+    assert running_client.get(f"/runs?bbox={away}", headers=auth).json() == []
+
+
+@pytest.mark.parametrize(
+    "bbox",
+    ["1,2,3", "north,south,east,west", "10,0,5,1", "0,10,1,5", "0,0,100,1"],
+    ids=["three numbers", "not numbers", "upside down", "inside out", "off the planet"],
+)
+def test_an_unusable_bbox_is_refused_rather_than_matching_nothing(
+    client: TestClient, auth: dict[str, str], bbox: str
+) -> None:
+    """A box the wrong way up matches nothing and reports no error.
+
+    Which is the worst way a filter can fail: an empty listing looks like an answer. The
+    same refusal `CorridorBody` makes at submit, in the same envelope, naming the field.
+    """
+    answered = client.get(f"/runs?bbox={bbox}", headers=auth)
+
+    assert answered.status_code == 422
+    assert answered.json()["error"]["field"] == "bbox"
+
+
 def test_a_real_corridor_run_is_not_marked_synthetic(
     store: MemoryStore, tenant: Tenant, mode_a_payload: dict[str, Any]
 ) -> None:

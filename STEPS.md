@@ -89,7 +89,7 @@ being worked around — it is the shape of the product.
 | `[x]` | **2.6** Tier A adapters | 12 factors behind one adapter contract, from three sources: centreline geometry, one OSM call, two COG rasters | Each returns value + source + tier + licence |
 | `[x]` | **2.7** Fusion + agreement | Registry chain decides the winner; agreement scored where two sources overlap; client data enters as the first link | Confidence tier emitted per factor per unit |
 | `[x]` | **2.8** Tier B adapters | Both named deliverables done and validated live: graph-centrality traffic proxy with a window-artefact gate, Mapillary detections. `mapillary_vision` and `dem_viewshed` are further Tier B factors, listed below rather than in this step | Never labelled `aadt` — asserted by test |
-| `[~]` | **2.9** PostGIS + geographic cache | Cache **done** and validated live — a second corridor in the same region costs 1.2 s against 55.5 s. PostGIS persistence deliberately deferred, see below | Second corridor in the same country hits cache ✅ |
+| `[x]` | **2.9** Persistence + geographic cache | Cache **done** and validated live — a second corridor in the same region costs 1.2 s against 55.5 s ✅. Geometry persisted at 5.1b and **findable** since 0003: a run's extent is lifted from its centreline and `GET /runs?bbox=` filters on it ✅. **PostGIS itself stays unbuilt, now for a measured reason** — see below | Second corridor in the same country hits cache ✅ · a run can be found by where it is ✅ |
 
 **Try it:**
 
@@ -147,13 +147,55 @@ run's warnings. Past a fortnight the note stops being a date and starts being an
 instruction to clear the cache. Expiry is per source, because OpenStreetMap changes daily
 and Mapillary changes when somebody drives past with a camera.
 
-**PostGIS is deliberately not built.** The other half of this step is persistence, and
-the step's own note already says why it moved here from 2.1: *persistence is a Stage 5
-concern*. Nothing in the pipeline needs a database today — a corridor fits in memory, the
-CLI is single-user, and there is no multi-tenant story until 5.4. Building a schema and a
-migration now would be guessing at what the web layer wants, and it would add a service
+### 2.9 — the other half: a run knows where it is *(done, 2026-08-27)*
+
+```bash
+roadrisk store init                     # migration 0003 adds the extent and backfills
+curl "localhost:8000/runs?bbox=34.89,33.20,34.91,33.31" -H "X-Tenant-Id: $TENANT"
+```
+
+**What was actually missing.** Geometry has been persisted since 5.1b — it is inside
+`payload`, which is what lets a stored run re-render months later with no refit. What had
+no query behind it was *finding* a run by where it is: every listing was by tenant and
+project. So migration 0003 lifts the run's extent out of the centreline into four indexed
+columns, exactly as `mode`, `rung` and `fingerprint` were lifted before it, and
+`GET /runs?bbox=south,west,north,east` filters on them.
+
+The rules that came with it, each asserted against **both** backends:
+
+- **All four or none.** A run with no geometry — a panel supplied directly has rows and no
+  road — is null, not a zero-sized box at (0, 0), which is a real place in the Atlantic.
+- **Null never matches a spatial filter.** Treating a missing extent as matching
+  everything would put every panel run into the results for every place on earth, which
+  is the kind of wrong that looks like a working feature.
+- **The box is refused if it is inside out**, in the same envelope as every other refusal,
+  because a box the wrong way up matches nothing and reports no error.
+- **The migration backfills.** A column added to a live table must not make everything
+  already in it invisible; the backfill reads the centreline out of `jsonb`, and the test
+  that proves it replays 0001 → 0002 → insert → 0003 in a schema of its own.
+
+**PostGIS is still not built, and the reason has changed.** It used to be *we would be
+guessing at what the web layer wants*. The web layer exists now, and the answer is
+measured: every spatial question it asks is **which runs overlap this view**, which is
+four comparisons. A geometry column and a GiST index answer predicates nothing here asks —
+distance to a point, intersection with a polygon — and they put a database extension
+between an operator and a working install. **What would change it** is the hazard layers:
+*which runs intersect this flood outline* is a real geometry predicate, and that is when
+the extension earns its place.
+
+**Measured, not assumed.** Postgres 18.6 was running on the development machine for the
+first time, so the store suite's Postgres half — skipped in every run until now — was
+executed: **74 tests, both backends, green**, including the migration replay above.
+
+### 2.9 — why PostGIS was deferred in the first place
+
+The step's own note says why it moved here from 2.1: *persistence is a Stage 5 concern*.
+Nothing in the pipeline needed a database — a corridor fits in memory, the CLI is
+single-user, and there was no multi-tenant story until 5.4. Building a schema then would
+have been guessing at what the web layer wanted, and it would have added a service
 dependency to a package whose whole shape is "runs with no network and no API key".
-It lands with 5.1, against real API requirements.
+It landed with 5.1b, against real API requirements, which is what made the paragraph above
+possible to write with numbers in it.
 
 ### 2.8 — the traffic proxy, and the gate that stops it lying
 

@@ -1097,6 +1097,50 @@
             "title": "Engine Version",
             "type": "string"
           },
+          "extent_east": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent East"
+          },
+          "extent_north": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent North"
+          },
+          "extent_south": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent South"
+          },
+          "extent_west": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent West"
+          },
           "fingerprint": {
             "title": "Fingerprint",
             "type": "string"
@@ -1197,6 +1241,50 @@
             "title": "Engine Version",
             "type": "string"
           },
+          "extent_east": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent East"
+          },
+          "extent_north": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent North"
+          },
+          "extent_south": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent South"
+          },
+          "extent_west": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent West"
+          },
           "fingerprint": {
             "title": "Fingerprint",
             "type": "string"
@@ -1259,7 +1347,11 @@
           "fingerprint",
           "mode",
           "rung",
-          "created_at"
+          "created_at",
+          "extent_west",
+          "extent_south",
+          "extent_east",
+          "extent_north"
         ],
         "title": "RunSummary",
         "type": "object"
@@ -2803,7 +2895,7 @@
     },
     "/runs": {
       "get": {
-        "description": "Summaries, not payloads.\n\nA run is around 300 kB of JSON. Fifty of them is fifteen megabytes, which is not a\nlisting \u2014 it is a download nobody asked for. Every field in a summary was lifted out\nof the payload by the store on insert, so a summary cannot describe a different run\nthan the one it points at.",
+        "description": "Summaries, not payloads.\n\nA run is around 300 kB of JSON. Fifty of them is fifteen megabytes, which is not a\nlisting \u2014 it is a download nobody asked for. Every field in a summary was lifted out\nof the payload by the store on insert, so a summary cannot describe a different run\nthan the one it points at.\n\n**`bbox` is step 2.9's other half.** The geometry has been stored since 5.1b; what\nhad no query behind it was finding a run by *where it is*. The extent is four numbers\nlifted from the centreline, so this is four comparisons rather than a geometry type \u2014\n`migrations/0003_run_extent.sql` says why that is a decision and not a shortcut.",
         "operationId": "list_runs_runs_get",
         "parameters": [
           {
@@ -2840,6 +2932,27 @@
                 }
               ],
               "title": "Limit"
+            }
+          },
+          {
+            "description": "Keep only runs whose road overlaps this box: `south,west,north,east` in degrees. **A run with no geometry never matches** \u2014 a panel you supplied directly has rows and no road, and that is a reason to miss it rather than to match everything.",
+            "in": "query",
+            "name": "bbox",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keep only runs whose road overlaps this box: `south,west,north,east` in degrees. **A run with no geometry never matches** \u2014 a panel you supplied directly has rows and no road, and that is a reason to miss it rather than to match everything.",
+              "examples": [
+                "34.89,33.20,34.91,33.31"
+              ],
+              "title": "Bbox"
             }
           },
           {

@@ -699,6 +699,197 @@ def test_migrations_are_ordered_and_hashed():
     assert all(m.version.isdigit() for m in found), "versions must be zero-padded digits"
 
 
+# -- step 2.9: where a run is, and finding it by that ---------------------------
+
+
+@pytest.fixture(scope="session")
+def corridor_payload() -> dict[str, Any]:
+    """A run with a road in it. The panel fixtures above have rows and no geography.
+
+    Built the way the demo job builds one, because a hand-written centreline would test
+    the fixture rather than the extent the engine actually produces.
+    """
+    pytest.importorskip("shapely", reason="a corridor payload needs the geo extra")
+    from roadrisk.geo.demo import (
+        monthly_periods,
+        synthetic_centreline,
+        synthetic_crashes,
+    )
+    from roadrisk.geo.pipeline import build_corridor_panel
+
+    points = synthetic_centreline(length_km=6.0)
+    periods = monthly_periods(6)
+    corridor = build_corridor_panel(
+        points,
+        periods=periods,
+        name="extent fixture",
+        crashes=synthetic_crashes(points, periods, n_crashes=180),
+        target_length_m=500.0,
+    )
+    return build_run(assess(corridor.panel), corridor=corridor)
+
+
+def test_a_stored_run_knows_where_its_road_is(store, tenant, project, corridor_payload):
+    """Step 2.9's other half: the geometry was persisted, and is now findable.
+
+    The extent is lifted from the centreline on insert, as `mode` and `fingerprint` are
+    and never supplied by a caller, so a row cannot claim to be somewhere its payload is
+    not. This checks the four numbers against the payload they came out of.
+    """
+    stored = store.store_run(tenant.id, project.id, corridor_payload)
+
+    points = corridor_payload["corridor"]["corridor"]["geometry"]
+    longitudes = [point[0] for point in points]
+    latitudes = [point[1] for point in points]
+
+    assert stored.extent_west == pytest.approx(min(longitudes))
+    assert stored.extent_east == pytest.approx(max(longitudes))
+    assert stored.extent_south == pytest.approx(min(latitudes))
+    assert stored.extent_north == pytest.approx(max(latitudes))
+
+    # And it survives the round trip — the half that would break in Postgres alone if a
+    # column were left out of the SELECT.
+    read_back = store.get_run(tenant.id, stored.id)
+    assert read_back.extent_west == pytest.approx(stored.extent_west)
+    assert read_back.extent_north == pytest.approx(stored.extent_north)
+
+
+def test_a_run_with_no_road_has_no_extent(store, tenant, project, mode_a_payload):
+    """A panel supplied directly has rows and no geography.
+
+    Null rather than a zero-sized box at (0, 0) — which is a real place in the Atlantic,
+    and would put every panel run on the map off the coast of Ghana.
+    """
+    stored = store.store_run(tenant.id, project.id, mode_a_payload)
+
+    assert stored.extent_west is None
+    assert stored.extent_south is None
+    assert stored.extent_east is None
+    assert stored.extent_north is None
+
+
+def test_runs_can_be_found_by_where_they_are(store, tenant, project, corridor_payload):
+    """The query those four columns exist for, asserted against both backends.
+
+    An in-memory stand-in that filters differently from the database it stands in for is
+    a defect that appears in production and nowhere else, so the overlap predicate is
+    written twice and checked once.
+    """
+    stored = store.store_run(tenant.id, project.id, corridor_payload)
+    south, west = stored.extent_south, stored.extent_west
+    north, east = stored.extent_north, stored.extent_east
+    assert south is not None and west is not None
+    assert north is not None and east is not None
+
+    covering = (south - 0.1, west - 0.1, north + 0.1, east + 0.1)
+    assert [run.id for run in store.list_runs(tenant.id, within=covering)] == [stored.id]
+
+    # Touching a corner is still an overlap: a box that begins where the road ends
+    # contains a part of it.
+    touching = (north, east, north + 0.1, east + 0.1)
+    assert [run.id for run in store.list_runs(tenant.id, within=touching)] == [stored.id]
+
+    # And somewhere else entirely is not.
+    elsewhere = (south + 10.0, west + 10.0, north + 10.1, east + 10.1)
+    assert store.list_runs(tenant.id, within=elsewhere) == []
+
+
+def test_a_run_with_no_road_is_missed_by_a_spatial_filter(
+    store, tenant, project, mode_a_payload
+):
+    """Null is not an empty box; it means *this run is not anywhere*.
+
+    The alternative — a missing extent matching everything — would put every panel run
+    into the results for every place on earth, which is the kind of wrong that looks like
+    a working feature.
+    """
+    store.store_run(tenant.id, project.id, mode_a_payload)
+
+    assert store.list_runs(tenant.id) != []
+    assert store.list_runs(tenant.id, within=(-90.0, -180.0, 90.0, 180.0)) == []
+
+
+def test_the_extent_migration_backfills_runs_stored_before_it(
+    postgres_session, tmp_path, corridor_payload
+):
+    """A column added to a live table must not make everything already in it invisible.
+
+    Every run stored before 0003 would have a null extent and be missed by every spatial
+    filter — a feature that works perfectly on new data and silently hides the archive.
+    So the migration backfills from the payload, and this is the only test that can see
+    that: the suite's own database is migrated before any row exists in it.
+
+    Replayed in a schema of its own, so the migrations, the tables and the bookkeeping are
+    all separate from the session's — the same database, a private copy of the schema.
+    """
+    import json as _json
+    from uuid import uuid4 as _uuid4
+
+    from roadrisk.store import discover, migrate
+
+    connection = postgres_session._connection
+    steps = discover()
+    assert [step.version for step in steps][:3] == ["0001", "0002", "0003"], (
+        "this test replays the first three migrations and they have been renumbered"
+    )
+
+    with connection.cursor() as cursor:
+        cursor.execute("CREATE SCHEMA before_0003")
+        cursor.execute("SET search_path = before_0003")
+    try:
+        # The schema as it stood before the extent existed.
+        for step in steps[:2]:
+            (tmp_path / f"{step.version}_x.sql").write_text(step.sql, encoding="utf-8")
+        migrate(connection, tmp_path)
+
+        tenant_id, project_id, run_id = _uuid4(), _uuid4(), _uuid4()
+        with connection.cursor() as cursor:
+            cursor.execute("INSERT INTO tenant (id, name) VALUES (%s, %s)", (tenant_id, "old"))
+            cursor.execute(
+                "INSERT INTO project (id, tenant_id, name) VALUES (%s, %s, %s)",
+                (project_id, tenant_id, "old"),
+            )
+            cursor.execute(
+                "INSERT INTO run (id, tenant_id, project_id, engine_version, "
+                "fingerprint, mode, rung, payload) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    run_id,
+                    tenant_id,
+                    project_id,
+                    "0.0.0",
+                    "old",
+                    corridor_payload["assessment"]["mode"],
+                    corridor_payload["assessment"]["rung"],
+                    _json.dumps(corridor_payload),
+                ),
+            )
+        connection.commit()
+
+        # Now the migration that adds the extent, against a table that already has a row.
+        (tmp_path / f"{steps[2].version}_x.sql").write_text(steps[2].sql, encoding="utf-8")
+        assert migrate(connection, tmp_path) == [steps[2].version]
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT extent_west, extent_south, extent_east, extent_north "
+                "FROM run WHERE id = %s",
+                (run_id,),
+            )
+            west, south, east, north = cursor.fetchone()
+
+        points = corridor_payload["corridor"]["corridor"]["geometry"]
+        assert west == pytest.approx(min(point[0] for point in points))
+        assert south == pytest.approx(min(point[1] for point in points))
+        assert east == pytest.approx(max(point[0] for point in points))
+        assert north == pytest.approx(max(point[1] for point in points))
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP SCHEMA before_0003 CASCADE")
+            cursor.execute("SET search_path = public")
+        connection.commit()
+
+
 def test_migrating_twice_applies_nothing_the_second_time(postgres_session):
     """Idempotent, or a deploy that retries becomes a deploy that breaks."""
     assert postgres_session.migrate() == []

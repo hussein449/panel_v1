@@ -17,6 +17,7 @@ from typing import Any
 from uuid import UUID
 
 from roadrisk.store.base import (
+    BBox,
     InUse,
     NotFound,
     PayloadRejected,
@@ -292,13 +293,19 @@ class MemoryStore:
         return found
 
     def list_runs(
-        self, tenant_id: UUID, project_id: UUID | None = None, *, limit: int = 50
+        self,
+        tenant_id: UUID,
+        project_id: UUID | None = None,
+        *,
+        limit: int = 50,
+        within: BBox | None = None,
     ) -> list[Run]:
         matching = [
             r
             for r in self._runs.values()
             if r.tenant_id == tenant_id
             and (project_id is None or r.project_id == project_id)
+            and (within is None or _overlaps(r, within))
         ]
         return sorted(matching, key=_created, reverse=True)[:limit]
 
@@ -350,6 +357,28 @@ _EPOCH = datetime.min.replace(tzinfo=UTC)
 
 def _created(record: Any) -> datetime:
     return record.created_at or _EPOCH
+
+
+def _overlaps(run: Run, box: BBox) -> bool:
+    """Does this run's extent overlap the box `(south, west, north, east)`?
+
+    The same predicate the Postgres store writes in SQL, and it has to stay the same
+    predicate: an in-memory stand-in that filters differently from the database it stands
+    in for is a defect that only appears in production. `tests/test_store.py` runs every
+    spatial case against both.
+
+    Two boxes overlap when neither is wholly to one side of the other. A run with no
+    geometry has no side to be on, and never matches.
+    """
+    if run.extent_west is None:
+        return False
+    south, west, north, east = box
+    return (
+        run.extent_west <= east
+        and run.extent_east >= west
+        and run.extent_south <= north
+        and run.extent_north >= south
+    )
 
 
 __all__ = ["InUse", "MemoryStore", "NotFound", "PayloadRejected"]

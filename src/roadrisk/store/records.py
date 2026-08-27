@@ -158,6 +158,16 @@ class Run(Record):
     mode: str
     rung: str
 
+    #: The box the assessed road occupies, in degrees, lifted from the centreline on
+    #: insert like every other column here. **All four or none**: a run with no geometry
+    #: is not a run at an empty box, so a spatial filter has to miss it rather than match
+    #: it. `roadrisk.store.payload._extent` says why this is read from the centreline
+    #: rather than from the corridor *request*.
+    extent_west: float | None = None
+    extent_south: float | None = None
+    extent_east: float | None = None
+    extent_north: float | None = None
+
     payload: dict[str, Any]
     created_at: datetime | None = None
 

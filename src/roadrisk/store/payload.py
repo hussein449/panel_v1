@@ -67,10 +67,57 @@ def read_run_columns(payload: Any) -> dict[str, Any]:
             f"rather than kept in a shape nothing can read back: {where}{more}"
         ) from exc
 
+    west, south, east, north = _extent(parsed)
+
     return {
         "schema_version": parsed.schema_version,
         "engine_version": parsed.engine_version,
         "fingerprint": parsed.assessment.manifest.fingerprint,
         "mode": parsed.assessment.mode,
         "rung": parsed.assessment.rung,
+        "extent_west": west,
+        "extent_south": south,
+        "extent_east": east,
+        "extent_north": north,
     }
+
+
+def _extent(
+    parsed: RunPayload,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """The box the assessed road actually occupies, in degrees.
+
+    **Step 2.9's other half, reached from the opposite direction.** The geometry has been
+    persisted since 5.1b — it is inside `payload`, which is how a stored run re-renders
+    months later with no refit. What could not be done was *finding* it: every listing
+    was by tenant and project, so "which runs cover this place" had no query behind it.
+    Four numbers lifted on insert give it one, and they follow the rule every other lifted
+    column follows — written from the payload, never supplied by a caller, so a row cannot
+    describe a different road than the one it holds.
+
+    Read from the stitched centreline rather than from the corridor *request*: a bounding
+    box somebody typed is what was asked for, and this is what was assessed. They are not
+    the same box, and the second is the one worth indexing.
+
+    All four are null together, for a run with no geometry — a panel supplied directly has
+    rows and no road. Null is not an empty box: it means *this run is not anywhere*, and a
+    spatial filter has to miss it rather than match it.
+    """
+    corridor = parsed.corridor
+    if corridor is None:
+        return (None, None, None, None)
+
+    points: list[Any] = list(corridor.corridor.geometry)
+    if not points:
+        # A corridor whose centreline did not survive but whose units did. Rare, and the
+        # extent is the same either way, so it is worth four lines rather than discarding
+        # the geography of a run that has some.
+        points = [
+            point for unit in corridor.segmentation.units for point in unit.geometry
+        ]
+    if not points:
+        return (None, None, None, None)
+
+    longitudes = [point[0] for point in points]
+    latitudes = [point[1] for point in points]
+    return (min(longitudes), min(latitudes), max(longitudes), max(latitudes))

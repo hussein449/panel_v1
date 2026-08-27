@@ -5,7 +5,93 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-27 (latest) — Step 5.3d: three pictures of the same segments, finally connected
+## 2026-08-27 (latest) — Step 2.9 finished: a run knows where it is
+
+**Delivered:** the extent of the assessed road, lifted from its centreline into four
+indexed columns, and `GET /runs?bbox=south,west,north,east` to find runs by it. **Stage 2
+is complete.** PostGIS stays unbuilt — for a reason that is now measured rather than
+assumed.
+
+```bash
+roadrisk store init                      # migration 0003 adds the extent and backfills
+curl "localhost:8000/runs?bbox=34.89,33.20,34.91,33.31" -H "X-Tenant-Id: $TENANT"
+```
+
+### What was actually missing was not persistence
+
+The step read *PostGIS + geographic cache*, and it had sat at `[~]` since Stage 2 with the
+cache done. The obvious reading — build PostGIS — turned out to be the wrong one.
+
+Geometry has been **persisted since 5.1b**: it is inside `payload`, which is exactly what
+lets a stored run re-render months later with no refit, and it is what the map at 5.3c
+draws. What had no query behind it was *finding* a run by where it is — every listing was
+by tenant and project. So the gap was not storage. It was that the geography was
+invisible to a query.
+
+Migration `0003_run_extent.sql` lifts the run's bounding box out of the centreline into
+four columns, exactly as `mode`, `rung` and `fingerprint` were lifted before it, and
+`list_runs(..., within=…)` filters on them in both backends.
+
+**Read from the centreline, not from the corridor request.** A bounding box somebody typed
+is what was *asked for*; this is what was *assessed*. They are not the same box, and only
+one of them is worth indexing.
+
+### Four rules, each asserted against both backends
+
+| Rule | Why it is a rule |
+|---|---|
+| All four or none | A run with no geometry is not a run at a zero-sized box at (0, 0) — which is a real place in the Atlantic, and would put every panel run off the coast of Ghana |
+| Null never matches a spatial filter | A missing extent matching *everything* would put every panel run into the results for every place on earth: the kind of wrong that looks like a working feature |
+| An unusable box is refused, not silently empty | A box the wrong way up matches nothing and reports no error. Five cases — too few numbers, not numbers, upside down, inside out, off the planet — all 422 naming `bbox` |
+| The migration backfills | A column added to a live table must not make everything already in it invisible |
+
+The backfill has a test of its own, and it is the only one that could exist: the suite's
+database is migrated before any row is in it, so proving the backfill needs the migrations
+**replayed** — `0001 → 0002 → insert a run → 0003` in a schema of its own, then check the
+four numbers against the payload they came from. Planted against by pointing the backfill
+at a key that does not exist; it fails.
+
+### Postgres actually ran, for the first time here
+
+`tests/test_store.py` is parametrised over `MemoryStore` and `PostgresStore`, and its
+Postgres half has skipped in **every run of this suite** — it needs
+`$ROADRISK_DATABASE_URL`, and the development machine had no database. It has one now:
+Postgres 18.6, already running, reachable by peer authentication.
+
+**74 store tests, both backends, green** — including the eight new ones and the migration
+replay. That is the first time the shipped Postgres backend has been executed rather than
+argued for, and it is worth as much as the feature.
+
+### PostGIS: settled, not deferred again
+
+The old reason was *building a schema now would be guessing at what the web layer wants*.
+The web layer exists, so the guess can be replaced with an answer:
+
+- Every spatial question the product asks is **which runs overlap this view**. That is four
+  comparisons on four indexed columns.
+- A geometry column and a GiST index answer predicates nothing here asks — distance to a
+  point, intersection with a polygon.
+- They cost an extension between an operator and a working install. The package's shape is
+  *runs with no network and no API key*; the store's is *optional extra*.
+
+**What would change it**, written down so the next person does not have to re-derive it:
+the hazard layers. *Which runs intersect this flood outline* is a real geometric predicate,
+and that is when PostGIS earns its extension.
+
+### Known, and deliberately left
+
+- **The shell does not use `bbox` yet.** The API and both stores support it; a map-bounded
+  runs list is a screen, and screens are 5.4b.
+- **The index is a plain B-tree on four columns.** Fine at this scale and honest about it:
+  bounding-box overlap is a range query on both axes, and the leading columns narrow first.
+  A corridor count where that stops being enough is a corridor count where PostGIS is
+  already the answer.
+- **`extent_*` are degrees, and the antimeridian is not handled.** A box crossing it must be
+  asked for as two, which the refusal says.
+
+---
+
+## 2026-08-27 (earlier) — Step 5.3d: three pictures of the same segments, finally connected
 
 **Delivered:** point at a segment on the risk strip, on the corridor map or in the ranked
 table, and it lights up in all three with its numbers in a readout underneath. **Step 5.3

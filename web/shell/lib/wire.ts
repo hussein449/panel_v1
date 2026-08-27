@@ -380,6 +380,10 @@ export interface RunSummary {
   mode: string;
   rung: string;
   created_at: string | null;
+  extent_west: number | null;
+  extent_south: number | null;
+  extent_east: number | null;
+  extent_north: number | null;
 }
 
 /**
@@ -413,6 +417,10 @@ export interface StoredRun {
   fingerprint: string;
   mode: string;
   rung: string;
+  extent_west: number | null;
+  extent_south: number | null;
+  extent_east: number | null;
+  extent_north: number | null;
   payload: ReportRun;
   created_at: string | null;
 }

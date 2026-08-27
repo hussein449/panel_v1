@@ -20,7 +20,7 @@ faithful stand-in rather than a convenient fiction.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeAlias, runtime_checkable
 from uuid import UUID
 
 from roadrisk.store.records import (
@@ -32,6 +32,13 @@ from roadrisk.store.records import (
     Run,
     Tenant,
 )
+
+#: A box, as `(south, west, north, east)` in degrees.
+#:
+#: The same order the corridor record writes one in, and the same order the API takes one
+#: in. There is no good reason for two orders and one very bad consequence: a box the
+#: wrong way round fetches nothing and reports no error.
+BBox: TypeAlias = tuple[float, float, float, float]
 
 
 class StoreError(RuntimeError):
@@ -286,9 +293,24 @@ class Store(Protocol):
     def get_run(self, tenant_id: UUID, run_id: UUID) -> Run: ...
 
     def list_runs(
-        self, tenant_id: UUID, project_id: UUID | None = None, *, limit: int = 50
+        self,
+        tenant_id: UUID,
+        project_id: UUID | None = None,
+        *,
+        limit: int = 50,
+        within: BBox | None = None,
     ) -> list[Run]:
-        """Newest first. Returns rows with their payloads; see the note in the module."""
+        """Newest first. Returns rows with their payloads; see the note in the module.
+
+        Args:
+            within: Keep only runs whose extent overlaps this box, given as
+                ``(south, west, north, east)`` in degrees — the order a box is written in
+                everywhere else here, so that nobody has to remember two.
+
+                **A run with no geometry never matches.** A panel supplied directly has
+                rows and no road, and null is not an empty box: it means *this run is not
+                anywhere*, which is a reason to miss it rather than to match everything.
+        """
         ...
 
     def find_run_for_job(self, tenant_id: UUID, job_id: UUID) -> Run | None:

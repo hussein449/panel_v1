@@ -298,6 +298,14 @@ class RunSummary(BaseModel):
     rung: str
     created_at: datetime | None
 
+    #: Where the assessed road is, in degrees, lifted from the centreline on insert like
+    #: everything else here. Null — all four together — on a run with no geometry: a
+    #: panel supplied directly has rows and no road.
+    extent_west: float | None
+    extent_south: float | None
+    extent_east: float | None
+    extent_north: float | None
+
     @classmethod
     def of(cls, run: Run) -> RunSummary:
         return cls(**run.model_dump(exclude={"payload"}))

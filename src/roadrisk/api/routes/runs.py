@@ -25,7 +25,7 @@ from fastapi import APIRouter, Query, status
 from fastapi.responses import FileResponse
 
 from roadrisk.api.deps import SettingsDep, StoreDep, TenantId
-from roadrisk.api.errors import REFUSAL_RESPONSES, ApiRefusal, ErrorCode
+from roadrisk.api.errors import HTTP_422, REFUSAL_RESPONSES, ApiRefusal, ErrorCode
 from roadrisk.api.schemas import ArtefactOut, RunSummary
 from roadrisk.api.settings import ARTEFACT_ROOT_ENV, ApiSettings
 from roadrisk.store import Artefact, ArtefactKind, Run
@@ -64,6 +64,18 @@ def list_runs(
         Query(description="Narrow to one project. Omitted lists every project."),
     ] = None,
     limit: Annotated[int | None, Query(ge=1)] = None,
+    bbox: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Keep only runs whose road overlaps this box: `south,west,north,east` "
+                "in degrees. **A run with no geometry never matches** — a panel you "
+                "supplied directly has rows and no road, and that is a reason to miss "
+                "it rather than to match everything."
+            ),
+            examples=["34.89,33.20,34.91,33.31"],
+        ),
+    ] = None,
 ) -> list[RunSummary]:
     """Summaries, not payloads.
 
@@ -71,10 +83,72 @@ def list_runs(
     listing — it is a download nobody asked for. Every field in a summary was lifted out
     of the payload by the store on insert, so a summary cannot describe a different run
     than the one it points at.
+
+    **`bbox` is step 2.9's other half.** The geometry has been stored since 5.1b; what
+    had no query behind it was finding a run by *where it is*. The extent is four numbers
+    lifted from the centreline, so this is four comparisons rather than a geometry type —
+    `migrations/0003_run_extent.sql` says why that is a decision and not a shortcut.
     """
     capped = min(limit or settings.default_page_size, settings.max_page_size)
-    runs = store.list_runs(tenant_id, project_id, limit=capped)
+    runs = store.list_runs(tenant_id, project_id, limit=capped, within=_box(bbox))
     return [RunSummary.of(run) for run in runs]
+
+
+def _box(raw: str | None) -> tuple[float, float, float, float] | None:
+    """`"south,west,north,east"` as four floats, or a refusal naming what was wrong.
+
+    Refused here rather than passed on, for the reason `CorridorBody` refuses an inverted
+    box at submit: a box the wrong way up matches nothing and reports no error, which is
+    the worst way available for a filter to fail.
+    """
+    if raw is None:
+        return None
+
+    parts = [part.strip() for part in raw.split(",")]
+    if len(parts) != 4:
+        raise ApiRefusal(
+            HTTP_422,
+            ErrorCode.INVALID_REQUEST,
+            "bbox must be four numbers, 'south,west,north,east' in degrees. Got "
+            f"{len(parts)}: {raw!r}.",
+            field="bbox",
+        )
+
+    try:
+        south, west, north, east = (float(part) for part in parts)
+    except ValueError:
+        raise ApiRefusal(
+            HTTP_422,
+            ErrorCode.INVALID_REQUEST,
+            f"bbox must be four numbers in degrees, got {raw!r}.",
+            field="bbox",
+        ) from None
+
+    if not (-90.0 <= south <= 90.0 and -90.0 <= north <= 90.0):
+        raise ApiRefusal(
+            HTTP_422,
+            ErrorCode.INVALID_REQUEST,
+            "bbox latitudes must be between -90 and 90 (south, north).",
+            field="bbox",
+        )
+    if not (-180.0 <= west <= 180.0 and -180.0 <= east <= 180.0):
+        raise ApiRefusal(
+            HTTP_422,
+            ErrorCode.INVALID_REQUEST,
+            "bbox longitudes must be between -180 and 180 (west, east).",
+            field="bbox",
+        )
+    if south > north or west > east:
+        raise ApiRefusal(
+            HTTP_422,
+            ErrorCode.INVALID_REQUEST,
+            f"bbox is inside out: south ({south}) must not be above north ({north}), "
+            f"and west ({west}) must not be right of east ({east}). A box crossing the "
+            "antimeridian has to be asked for as two.",
+            field="bbox",
+        )
+
+    return (south, west, north, east)
 
 
 @router.get(

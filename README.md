@@ -338,6 +338,19 @@ writing a client:
 | The engine descended to Mode B, dropped terms, refused an unsourced weight | `200` — those are findings the run carries |
 | Infrastructure broke | the job's status is `failed`, with a cause. Never a stack trace |
 
+**A run knows where it is.** Its bounding box is lifted from the centreline when it is
+stored, so a listing can be filtered by place without opening a payload:
+
+```bash
+curl "localhost:8000/runs?bbox=34.89,33.20,34.91,33.31" -H "X-Tenant-Id: $TENANT"
+```
+
+Four numbers, `south,west,north,east` in degrees. A run with no geometry — a panel you
+supplied directly has rows and no road — never matches, and a box that is inside out is a
+422 rather than an empty answer. This is deliberately not PostGIS: every spatial question
+the product asks is *which runs overlap this view*, which is four comparisons, and an
+extension between you and a working install has to earn its place.
+
 `GET /registry` serves `factors.yaml` — every factor, every adapter, its tier, its licence
 and what that licence obliges you to do — with the hash of the file it was read from, so
 you can tell whether a run was assessed under the registry you are now looking at. The

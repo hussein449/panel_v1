@@ -24,6 +24,7 @@ from uuid import UUID
 from roadrisk.store.base import (
     GIVE_UP_PREFIX,
     GIVE_UP_SUFFIX,
+    BBox,
     NotFound,
     refuse_if_held,
 )
@@ -352,7 +353,16 @@ class PostgresStore:
 
     _RUN_COLUMNS = (
         "id, tenant_id, project_id, job_id, corridor_id, schema_version, "
-        "engine_version, fingerprint, mode, rung, payload, created_at"
+        "engine_version, fingerprint, mode, rung, payload, created_at, "
+        "extent_west, extent_south, extent_east, extent_north"
+    )
+
+    #: Two boxes overlap when neither is wholly to one side of the other. Written out
+    #: rather than reached for a geometry type: see `migrations/0003_run_extent.sql` for
+    #: why PostGIS is not what answers this.
+    _OVERLAPS = (
+        "extent_west IS NOT NULL AND extent_west <= %s AND extent_east >= %s "
+        "AND extent_south <= %s AND extent_north >= %s"
     )
 
     def store_run(
@@ -376,8 +386,9 @@ class PostgresStore:
         )
         row = self._one(
             "INSERT INTO run (id, tenant_id, project_id, job_id, corridor_id, "
-            "schema_version, engine_version, fingerprint, mode, rung, payload) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "schema_version, engine_version, fingerprint, mode, rung, payload, "
+            "extent_west, extent_south, extent_east, extent_north) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING {self._RUN_COLUMNS}",
             (
                 record.id,
@@ -391,6 +402,10 @@ class PostgresStore:
                 record.mode,
                 record.rung,
                 json.dumps(record.payload),
+                record.extent_west,
+                record.extent_south,
+                record.extent_east,
+                record.extent_north,
             ),
         )
         return _run(row)
@@ -405,21 +420,31 @@ class PostgresStore:
         return _run(row)
 
     def list_runs(
-        self, tenant_id: UUID, project_id: UUID | None = None, *, limit: int = 50
+        self,
+        tenant_id: UUID,
+        project_id: UUID | None = None,
+        *,
+        limit: int = 50,
+        within: BBox | None = None,
     ) -> list[Run]:
-        if project_id is None:
-            rows = self._all(
-                f"SELECT {self._RUN_COLUMNS} FROM run WHERE tenant_id = %s "
-                "ORDER BY created_at DESC LIMIT %s",
-                (tenant_id, limit),
-            )
-        else:
-            rows = self._all(
-                f"SELECT {self._RUN_COLUMNS} FROM run "
-                "WHERE tenant_id = %s AND project_id = %s "
-                "ORDER BY created_at DESC LIMIT %s",
-                (tenant_id, project_id, limit),
-            )
+        where = ["tenant_id = %s"]
+        values: list[Any] = [tenant_id]
+
+        if project_id is not None:
+            where.append("project_id = %s")
+            values.append(project_id)
+
+        if within is not None:
+            south, west, north, east = within
+            where.append(f"({self._OVERLAPS})")
+            values.extend([east, west, north, south])
+
+        values.append(limit)
+        rows = self._all(
+            f"SELECT {self._RUN_COLUMNS} FROM run WHERE {' AND '.join(where)} "
+            "ORDER BY created_at DESC LIMIT %s",
+            tuple(values),
+        )
         return [_run(row) for row in rows]
 
     def find_run_for_job(self, tenant_id: UUID, job_id: UUID) -> Run | None:
@@ -582,6 +607,10 @@ def _run(row: tuple[Any, ...]) -> Run:
         rung=row[9],
         payload=row[10],
         created_at=row[11],
+        extent_west=row[12],
+        extent_south=row[13],
+        extent_east=row[14],
+        extent_north=row[15],
     )
 
 
