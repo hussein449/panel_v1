@@ -3,9 +3,17 @@
 *A single-file account of the whole system: the problem, the flow, what is built,
 what is not, and an explicit brief for drawing it as one figure.*
 
-Status as of **2026-08-19**. Sources for every claim here: [`STEPS.md`](STEPS.md) (the
+Status as of **2026-08-27**. Sources for every claim here: [`STEPS.md`](STEPS.md) (the
 plan), [`IMPLEMENTED.md`](IMPLEMENTED.md) (the build log), [`README.md`](README.md) (the
 user-facing description).
+
+**What changed since the last revision of this file (2026-08-19).** Stage 3 closed —
+registry weights enter as priors, a Leroux spatial field is fitted and reported, and every
+run is validated out of sample by default. Stage 4 closed — the report and its
+non-disableable limitations page exist, as one React component that is both the screen and
+the PDF. Stage 5 is most of the way through: runs are stored in Postgres, served over
+HTTP, and there is now a website over it. **The critical path has not moved**: every
+corridor run to date still uses synthetic crashes.
 
 ---
 
@@ -31,9 +39,12 @@ segments, builds an empty panel from the **geography** rather than from the cras
 fills that panel from free open data, checks whether the data can support a fitted
 statistical model, chooses its own mode accordingly, fits or scores, checks its own
 answers for contradictions, and returns a ranked list of dangerous segments where every
-number can be traced to a named source. The model is the easy part. The product is the
-**path** from *a road, a crash table and open data* to *a defensible ranked assessment* —
-in places that have no AADT, no road inventory and no survey budget.
+number can be traced to a named source. It writes that up as a report whose limitations
+page is assembled from what the run actually did and which no setting removes, keeps the
+run so it re-renders years later without a refit, and serves the whole thing over HTTP and
+on a website. The model is the easy part. The product is the **path** from *a road, a crash
+table and open data* to *a defensible ranked assessment* — in places that have no AADT, no
+road inventory and no survey budget.
 
 ---
 
@@ -80,8 +91,17 @@ coords → route → segment → panel skeleton → adapter fan-out → fuse
 | 8 | **Choose the mode — automatically** | Walk the ladder `A-full → A-reduced → A-minimal → B`, take the highest rung that passes every check. **The user has no override.** Every descent names the failed check and the dropped terms. | **Built** |
 | 9 | **Fit or score** | Mode A: NB2 GLM with `ln(exposure)` offset, panel-clustered standard errors, optionally a Bayesian random-intercept GLMM. Mode B: crash-type-decomposed weighted index from cited weights — **ranked score only, never a count**. | **Built** |
 | 10 | **Sign guard and diagnostics** | Every coefficient checked against its declared `expected_sign`. On contradiction, auto-run four confounding diagnostics plus a **spline** that hunts the U-shape none of the other four can see. | **Built** |
-| 11 | **Validate out-of-sample** | Spatial cross-validation, CURE plots, calibration on held-out units — reported by default, including when bad. | **Not built** (Step 3.4) |
-| 12 | **Rank and export** | Rank units, aggregate into blackspots, export an HTML/PDF report carrying method, mode, every factor with source/tier/licence/confidence, dropped terms, and a limitations page that cannot be disabled. | **Not built** (Stage 4) |
+| 11 | **Validate out-of-sample** | Spatial cross-validation over contiguous stretches, CURE plots read against a measured design effect, calibration on held-out units — reported by default, including when bad. | **Built** |
+| 12 | **Rank and export** | Rank units, aggregate into blackspots, render an HTML report carrying method, mode, every factor with source/tier/licence/confidence, dropped terms, and a limitations page that cannot be disabled. The PDF is that page printed, not a second document. | **Built** |
+
+**And then, optionally, three more.** They add reach, not credibility, and the sequencing
+rule in [`STEPS.md`](STEPS.md) says so plainly:
+
+| # | Step | What happens | State |
+|---|---|---|---|
+| 13 | **Keep the run** | The whole payload into Postgres as `jsonb`, scoped to a tenant from the first migration, artefacts by reference. A stored run re-renders months later **without a refit**. | **Built** (5.1b) |
+| 14 | **Serve it** | `POST /jobs` → `202`, a runner behind it, `GET /runs/{id}`. A refusal is a result: a broken panel is a `422` naming the column, a Mode B descent is a `200` carrying its receipts, and infrastructure failing is a job status with a cause. | **Built** (5.1c–d) |
+| 15 | **A website over it** | Projects, corridors, jobs, runs, the registry — and the report itself as one of the screens, the same component the emailed file is built from. | **Built** (5.3a–b) |
 
 **The two things that make it work, stated plainly:**
 
@@ -156,7 +176,8 @@ Terms are shed **by registry priority**, never by whichever happened to be signi
 | 2 | Panel-clustered standard errors | **Built** — intervals up to **3.86× wider**; two factors lose significance |
 | 3 | GAM spline on geometry | **Built** — a diagnostic that ships *no number*, by type |
 | 4 | Bayesian hierarchical NB, random intercept per segment | **Built** — credible intervals, σ_u estimated |
-| 4+ | Spatial CAR/BYM field | **Not built** — see §9 |
+| 4+ | Registry weights as priors | **Built** — the cited weights *are* the prior means, and each factor reports the share of its answer the prior accounts for |
+| 4+ | Spatial Leroux CAR field | **Built** — ρ with a credible interval, and a corridor that cannot tell is told so |
 
 **Why rung 2 matters more here than in most panels.** Every factor is *unit-constant* —
 curvature, gradient, lane count, every density is a property of a segment, repeated
@@ -187,6 +208,25 @@ Neither threshold is negotiable to make a fit pass. `--bayes` chooses **how** th
 are arrived at, **never** which mode or rung the engine picks — a test asserts the same
 panel returns the same mode, rung and factor list either way.
 
+### 5.4 What closed Stage 3 — priors and the spatial field
+
+**The two modes stopped being two systems.** *Mode B's cited weights **are** priors; Mode A
+is those priors updated by data.* `--priors` puts the registry's weight for a factor in as
+the prior mean, and the run reports the **share of each answer the prior accounts for** —
+34% on a 691-crash corridor, 11% on a 5,782-crash one. That number is the point: it says
+when you are reading the literature and when you are reading the road, per factor, rather
+than leaving it to be assumed.
+
+`expected_sign` enters as a *soft* prior and never as a truncation. Truncating a
+coefficient to its expected sign would make the sign guard structurally incapable of ever
+firing again — the one diagnostic whose whole job is to notice when the road disagrees with
+the literature.
+
+**Neighbouring segments are not independent, and now that is testable.** `--spatial` fits a
+Leroux CAR field over the corridor chain by joint Laplace — a corridor is a chain, so the
+precision matrix is tridiagonal and the integral stays cheap. It reports ρ with a credible
+interval, and on a corridor too short to tell it says exactly that instead of a number.
+
 ---
 
 ## 6. The honesty layer — rules enforced as code
@@ -215,6 +255,15 @@ They run *across* the whole flow, not at one point in it.
 | **A missing tag is not a zero.** | A factor needs half the corridor tagged to be emitted at all |
 | **Nothing is silent.** | Every gate result, descent, dropped term and absent column enters the run log |
 | **Every result is reproducible.** | The manifest fingerprints engine version, registry contents and input data |
+| **A prior is never a truncation.** | `expected_sign` enters as a soft prior; truncating would make the sign guard incapable of firing |
+| **Every run says how much of its answer came from the literature.** | Prior share, per factor — 34% on a thin corridor, 11% on a thick one |
+| **A corridor that cannot tell is told so.** | The spatial ρ comes back wide, and the run says the corridor cannot resolve it |
+| **The limitations page is data, not prose.** | Assembled from what the run did. No flag removes it, and a test tries every way to |
+| **The PDF is the report printed, not a second document.** | One React component. There is no template kept in visual sync by hand |
+| **A report renders from JSON alone.** | No engine object in scope, so a run stored months ago still renders |
+| **A refusal is a result, not an HTTP error.** | 422 names the column and creates no job; a Mode B descent is a **200** carrying its receipts |
+| **The mode is on every screen, because it is a layout element.** | A page is a child of its layout and cannot remove it — asserted, and fetched |
+| **Every read is scoped to a tenant, with no default.** | The store interface makes the argument impossible to omit; the API makes the header required |
 
 ---
 
@@ -224,17 +273,20 @@ They run *across* the whole flow, not at one point in it.
 |---|---|---|
 | **0 — Foundations** | ✅ **Done** | Package layout, registry schema, input contract, transforms |
 | **1 — Engine core** | ✅ **Done** | Registry, contract, 9 gates, mode ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from AASHTO HSM, the Elvik Power Model and iRAP |
-| **2 — Geospatial pipeline** | 🟡 **Nearly done** | Corridor from OSM, linear referencing, segmentation, panel skeleton, crash snapping, 12 Tier A + 2 Tier B factors behind one adapter contract, fusion with per-unit confidence, geographic cache. **Outstanding:** vision-model inference, DEM viewshed, PostGIS persistence |
-| **3 — Model depth** | 🟡 **Mostly done** | Panel-clustered SEs, GAM spline diagnostic, Bayesian random-intercept GLMM with credible intervals. **Outstanding:** registry-weights-as-priors, spatial CAR/BYM, out-of-sample validation |
-| **4 — Report and PDF** | ⬜ **Not started** | Jinja HTML template, WeasyPrint export, non-disableable limitations page |
-| **5 — Web layer** | ⬜ **Not started** | FastAPI, Celery worker, Next.js + MapLibre, accounts and storage |
+| **2 — Geospatial pipeline** | 🟡 **Nearly done** | Corridor from OSM, linear referencing, segmentation, panel skeleton, crash snapping, 12 Tier A + 2 Tier B factors behind one adapter contract, fusion with per-unit confidence, geographic cache. **Outstanding:** vision-model inference, DEM viewshed, PostGIS geometry persistence |
+| **3 — Model depth** | ✅ **Done** | Panel-clustered SEs, GAM spline diagnostic, Bayesian random-intercept GLMM with credible intervals, registry weights as priors with a reported prior share, a Leroux spatial field, and out-of-sample validation reported by default |
+| **4 — Report and PDF** | ✅ **Done** | One React component rendered from `run.json` alone: mode banner, ranking, factors with source/tier/licence/confidence, receipts, SVG figures with no external request, and a limitations page assembled from the run that no flag removes. The PDF is that page printed |
+| **5 — Web layer** | 🟡 **Mostly done** | Layering rule as a test (5.0), payload contract frozen and TypeScript generated from it (5.1a), Postgres storage tenant-scoped from the first migration (5.1b), FastAPI with the refusal contract enforced by exception handler (5.1c), an in-process runner (5.1d), adapters fanning out as independently-failable branches (5.2a, part one), the report as an importable library (5.3a), and a Next.js shell whose banner no route can omit (5.3b). **Outstanding:** Celery (5.2a), cost model and cap (5.2b), per-tenant secrets (5.2c), MapLibre (5.3c), the interactive layer (5.3d), auth and row-level policies (5.4) |
 | **6 — Deploy** | ⬜ **Not started** | Containers, hosting |
 
-**573 tests pass. `ruff check` clean.**
+**905 tests pass, 36 skipped. `ruff check` clean.**
 
-`core/` never imports the layers above it. That rule is why the geospatial dependencies
-are an optional extra rather than a hard requirement, and why GDAL — needed by exactly two
-of seventeen adapters — sits behind its own extra that the test suite never installs.
+`core/` never imports the layers above it — and since 5.0 that is a test rather than a
+docstring, checked by parsing the source with `ast` because half the package sits behind
+optional extras the suite never installs. It is why the geospatial dependencies are an
+optional extra rather than a hard requirement, why GDAL — needed by exactly two adapters —
+sits behind its own, and why `pip install roadrisk-panel` still needs neither a database,
+a web server nor a JavaScript toolchain.
 
 ---
 
@@ -272,6 +324,13 @@ and adapter path, not any road. This is stated three times in the run output. Se
 | The traffic proxy is unstable under its own window | 5/10/20 km margins move the peak unit from 1 → 26 → 19; **reported, and the reason the factor stays uncited** |
 | The Bayesian rung is fast enough | A-reduced, 5 factors → **~12 s** in pure Python |
 | The spline does not invent bends | A turn must survive resampling by unit — *"the same shape came back on 40 of 40 corridors"* |
+| Out-of-sample calibration holds | Spatial CV over contiguous stretches: observed **2,803** vs predicted **2,756**, ratio **1.02** |
+| A CURE plot needs its design effect measured | At realistic per-unit heterogeneity, **16–60%** of the curve falls outside naive bounds — *all of it spurious*. Read against the wrong band, every honest model looks broken |
+| The prior share is a real number, not a gesture | Same factor, two corridors: **34%** of the answer from the literature on 691 crashes, **11%** on 5,782 |
+| The spatial field admits ignorance | Planted ρ = 0.9: **0.89 [0.73, 0.98]** on 80 units; **0.44 [0.05, 0.86]** on 40 — reported as *this corridor cannot tell* |
+| The screen and the emailed file are one document | The same run through both entry points: `article.report` **49,929 characters, identical hash** |
+| The banner is on every screen, not most | 11 of 11 routes fetched and checked; **11 of 11 fail** when it is taken out of the layout |
+| A website did not disturb the product | After the workspace move, `report.html` rebuilt **byte-identical** |
 
 ### Defects the real data exposed, and what they cost
 
@@ -288,6 +347,19 @@ Recorded because they are the argument for validating on real roads at all:
   definition**: signage was 54% of the count and is not a struck-object hazard, and a 50 m
   radius was measuring the neighbourhood rather than the verge.
 
+**And two the later stages exposed, both about descriptions drifting apart:**
+
+- `posterior.coefficients` is a mapping, and the hand-written TypeScript had it typed as a
+  list. Every coefficient fell back silently to its frequentist interval under a *credible
+  interval* heading, and it survived three steps. That defect is the entire argument for
+  5.1a: there is now **one** description of the payload, in Python, and the TypeScript is
+  projected from it — as is the API envelope the website reads, for the same reason.
+- `.gitignore` has carried `runs/` since Stage 0 for output directories. It matches a
+  folder of that name at any depth, and it was quietly swallowing `web/shell/app/runs/` —
+  the layout carrying the mode banner. Everything built, every test passed, and the files
+  would not have been in the commit. Caught by reading `git status`, which is not a
+  mechanism, so there is now a test that asks git what it is hiding.
+
 ---
 
 ## 9. What is not built, and the critical path
@@ -302,22 +374,32 @@ Recorded because they are the argument for validating on real roads at all:
 
 | # | Item | Why it is not built |
 |---|---|---|
-| 1 | **Out-of-sample validation** (Step 3.4) | Spatial CV, CURE plots, calibration. The last piece of the credibility path |
-| 2 | **The report and its limitations page** (Stage 4) | Nothing structural blocks it; it is the deliverable clients actually receive |
-| 3 | **Registry weights as priors** (3.3b) | The unifying idea: *Mode B weights **are** priors; Mode A is those priors updated by data.* `core/weights.py` already does the hard half. **The trap:** `expected_sign` must enter as a *soft* prior — truncating a coefficient to its expected sign would make the sign guard structurally incapable of ever firing again |
-| 4 | **Spatial CAR/BYM** (3.3c) | **Blocked in a specific way.** The Bayesian rung is fast because it integrates the random intercepts out — independent 1-D integrals. A CAR field couples neighbours by construction, the integral stops factorising, and the trick evaporates. Three routes: Laplace on the joint latent field (a corridor is a *chain*, so the precision matrix is tridiagonal — cheap); a machine that can run PyMC; or drop it and say so |
-| 5 | **`mapillary_vision`** | Our own inference on sampled frames. The main cost trap in the pipeline at 50–150 USD of VLM calls per corridor, **and** it needs the poles-to-RHR mapping study before its output means anything |
-| 6 | **`dem_viewshed`** | `sight_distance_proxy` by marching the line of sight against terrain. Cheap to attempt; crude by nature — a DEM sees terrain but not vegetation, walls or parked vehicles |
-| 7 | **`population_density`** | The one Tier A factor with no adapter, blocked on *delivery format* not data: WorldPop ignores HTTP `Range` headers and streams the whole file; GHSL ships deflated zip tiles that cannot be windowed |
-| 8 | **PostGIS, web layer, deploy** | Deliberately deferred. A corridor fits in memory, the CLI is single-user, and there is no multi-tenant story yet. Building a schema now would be guessing at what the API wants |
+| 1 | **A third region, and primary *and* secondary roads** | The call topic asks for at least three regions with region-level comparison. Two corridors exist, both on synthetic crashes — which is the item above wearing a different hat |
+| 2 | **Hazard layers — flood, fire, storm, snow** (unstaged) | The cheapest quarter of the call topic available anywhere: the adapter contract and raster windowing already fit them exactly, and JRC river flood maps, EFFIS and ERA5 are free. **The highest-value unbuilt work in this repository after real crash data** |
+| 3 | **Celery** (5.2a, part two) | Adapters fan out today, but across threads in one process. Nothing survives a deploy and there is no retry. The decision to make first is whether to fan out over *branches* (both already JSON-shaped) or over *fetches* through a shared cache — which needs object storage at 6.2 |
+| 4 | **Cost model and spend cap** (5.2b) | Nothing counts spend anywhere. The only cost figure in the repository is the 50–150 USD per corridor recorded against the unbuilt `mapillary_vision`. A cap has to refuse *before* the call, and its refusal is a receipt like any other |
+| 5 | **MapLibre and the interactive layer** (5.3c–d) | The screen's map is not the document's: the report draws inline SVG so that no external image request exists anywhere in it, and MapLibre needs tiles, which is a network dependency and an attribution obligation. They are deliberately not consolidated |
+| 6 | **Auth and row-level policies** (5.4a) | `X-Tenant-Id` scopes every read and proves nothing. The storage seam was built for this from the first migration; what is missing is identity and a database that refuses a cross-tenant read on its own |
+| 7 | **`mapillary_vision`** | Our own inference on sampled frames. The main cost trap in the pipeline at 50–150 USD of VLM calls per corridor, **and** it needs the poles-to-RHR mapping study before its output means anything |
+| 8 | **`dem_viewshed`** | `sight_distance_proxy` by marching the line of sight against terrain. Cheap to attempt; crude by nature — a DEM sees terrain but not vegetation, walls or parked vehicles |
+| 9 | **`population_density`** | The one Tier A factor with no working adapter, blocked on *delivery format* not data: WorldPop ignores HTTP `Range` headers and streams the whole file; GHSL ships deflated zip tiles that cannot be windowed |
+| 10 | **PostGIS geometry, containers, hosting** | Runs are in Postgres as `jsonb`; *geometry* is not, and nothing yet needs a spatial index. Deploy is Stage 6 |
 
 ### Environment constraints worth knowing
 
-PyMC installs but **cannot sample** on the development machine: no C++ compiler, so
-PyTensor falls back to pure Python, and Windows Smart App Control refuses the unsigned
-native DLLs that Numba, `nutpie` and JAX would need. Turning that policy off was declined
-— it cannot be re-enabled without reinstalling Windows. **The requirement was met in pure
-Python instead.** WSL2 would sidestep it without weakening any security setting.
+PyMC installs but **cannot sample** on the original development machine: no C++ compiler,
+so PyTensor falls back to pure Python, and Windows Smart App Control refuses the unsigned
+native DLLs that Numba, `nutpie` and JAX would need. Turning that policy off was declined —
+it cannot be re-enabled without reinstalling Windows. **The requirement was met in pure
+Python instead**, which is why the Bayesian rung integrates the segment effects out by
+quadrature rather than sampling them, and why the spatial field is a joint Laplace over a
+tridiagonal precision matrix.
+
+**Development moved to WSL2 / Ubuntu on 2026-08-24**, because the same policy blocks every
+compiled Python wheel the project depends on — numpy, pandas, statsmodels, pydantic-core.
+Nothing about the package changed; the interpreter simply has to live somewhere it is
+allowed to run. The JavaScript toolchain moved with it, and rebuilding the report bundle in
+WSL produced a file byte-identical to the one built on Windows.
 
 ### Open decisions that need a human, not a code change
 
@@ -344,7 +426,8 @@ are given verbatim.
 ### 10.1 Figure 1 — the master flow
 
 **Format:** landscape, left-to-right, five vertical bands, plus one full-width band along
-the bottom. A0 or 16:9.
+the bottom. A0 or 16:9. A sixth, narrower band is described at the end — it is what the
+system became after the analysis was finished, and it is deliberately drawn smaller.
 
 **Colour key** — use it consistently and put the legend top-right:
 
@@ -447,10 +530,25 @@ built)`**
 - On contradiction, a branch into five diagnostics: `factor alone` · `with each correlated
   partner` · `correlation matrix` · `leave-one-unit-out` · `GAM spline — hunts the U-shape`
   *Tag the spline:* **`ships no number, by type`**
-- `11. Out-of-sample validation` — **draw as not started**
+- `11. Out-of-sample validation` — sub-label: *spatial CV over contiguous stretches · CURE
+  against a **measured** design effect · calibration on held-out units*
 - `12. Rank units → blackspots`
-- `Report: HTML + PDF` — **draw as not started**
-- `Limitations page` — **draw as not started**, tagged **`cannot be disabled by config`**
+- `Report: one component` — tag it **`the screen and the PDF are the same document`**
+- `Limitations page` — tagged **`assembled from the run · no flag removes it`**
+
+**Band 6 — KEEP IT, SERVE IT, SHOW IT** *(optional; draw narrower than the others)*
+
+Everything here **adds reach, not credibility**, and the figure should not let it look
+like part of the analysis. A thin separating rule and a smaller type size say it best.
+
+- `Store the run` — sub-label: *the whole payload as `jsonb`, tenant-scoped from the first
+  migration.* Tag: **`re-renders months later without a refit`**
+- `Serve it` — sub-label: *`POST /jobs` → 202 · a runner behind it.* Tag in **red outline**:
+  **`a refusal is a result — 422 names the column, a Mode B descent is a 200`**
+- `The website` — sub-label: *projects · corridors · jobs · runs · the report itself.*
+  Tag: **`the same component the emailed file is built from`**
+- Draw a small banner strip pinned across the top of the website box, labelled
+  **`the mode banner is a layout element — no route can omit it`**
 
 **Bottom band — THE HONESTY LAYER** *(full width, spanning every band above, with small
 upward ticks into each)*
@@ -458,17 +556,22 @@ upward ticks into each)*
 Label it: **`Run log · provenance · reproducibility manifest · refusal receipts`**
 and beneath: **`Nothing is silent. Degrade loudly.`**
 
-Place four badges along it:
+Place five badges along it:
 
 - `Every gate result, descent and dropped term is logged`
 - `Every value carries source · tier · licence · confidence to the PDF`
 - `Two identical runs fingerprint identically`
 - `A cache never makes a run look fresher than it is`
+- `Every run says how much of its answer came from the literature`
 
 **Bottom-right corner — a status strip:**
 
-`Stage 0 ✅ · Stage 1 ✅ · Stage 2 🟡 · Stage 3 🟡 · Stage 4 ⬜ · Stage 5 ⬜ · Stage 6 ⬜
-— 573 tests passing`
+`Stage 0 ✅ · Stage 1 ✅ · Stage 2 🟡 · Stage 3 ✅ · Stage 4 ✅ · Stage 5 🟡 · Stage 6 ⬜
+— 905 tests passing`
+
+**One more thing the figure must not flatter.** Wherever crashes enter the drawing, put a
+small red-outlined tag on them: **`synthetic on every corridor run to date`**. It is the
+single most important caveat in the system and the easiest one for a diagram to hide.
 
 ### 10.2 Figure 2 — the recurring shape *(optional inset)*
 
@@ -498,7 +601,7 @@ before the illustration.
 flowchart LR
   subgraph IN["① INPUTS"]
     A1["Road ref + bbox<br/><i>or centreline CSV</i>"]
-    A2["Police crash table<br/><b>the one required input</b>"]
+    A2["Police crash table<br/><b>the one required input</b><br/><i>synthetic on every run to date</i>"]
     A3["Client inventory<br/><i>Tier D, optional</i>"]
   end
 
@@ -535,6 +638,8 @@ flowchart LR
     D6["NB2 GLM + ln exposure offset"]
     D7["Panel-clustered SE<br/><i>up to 3.86x wider</i>"]
     D8["Bayesian GLMM<br/><i>credible intervals, sigma_u</i>"]
+    D9["Registry weights as priors<br/><i>prior share reported per factor</i>"]
+    D10["Leroux spatial field<br/><i>rho, or 'this corridor cannot tell'</i>"]
     D1 --> D2
     D2 -->|"fails"| D3
     D3 -->|"fails"| D4
@@ -543,16 +648,28 @@ flowchart LR
     D3 --> D6
     D4 --> D6
     D6 --> D7 --> D8
+    D8 -.-> D9
+    D8 -.-> D10
   end
 
   subgraph OUT["⑤ EXPLAIN, THEN DELIVER"]
     E1["SIGN GUARD<br/><i>every beta vs expected_sign</i>"]
     E2["5 diagnostics<br/><i>incl. GAM spline — ships no number</i>"]
-    E3["Out-of-sample validation<br/><b>NOT BUILT</b>"]
+    E3["Out-of-sample validation<br/><i>spatial CV · CURE · calibration</i>"]
     E4["Rank units into blackspots"]
-    E5["Report + limitations page<br/><b>NOT BUILT</b>"]
+    E5["REPORT<br/><i>one component: the screen and the PDF</i>"]
+    E6["Limitations page<br/><b>no flag removes it</b>"]
     E1 -->|"contradiction"| E2
-    E1 --> E3 --> E4 --> E5
+    E1 --> E3 --> E4 --> E5 --> E6
+  end
+
+  subgraph WEB["⑥ KEEP IT, SERVE IT, SHOW IT — reach, not credibility"]
+    F1["Store the run<br/><i>jsonb, tenant-scoped</i>"]
+    F2["HTTP API<br/><b>a refusal is a result</b>"]
+    F3["The website<br/><i>the same Report component</i>"]
+    F4["MapLibre map<br/><b>NOT BUILT</b>"]
+    F1 --> F2 --> F3
+    F3 -.-> F4
   end
 
   A1 --> B1
@@ -562,12 +679,14 @@ flowchart LR
   C7 --> D1
   D5 --> E4
   D8 --> E1
+  E6 --> F1
 
   LOG["<b>THE HONESTY LAYER</b> — run log · provenance · manifest · refusal receipts<br/><i>Nothing is silent. Degrade loudly.</i>"]
   GEO -.-> LOG
   FILL -.-> LOG
   DECIDE -.-> LOG
   OUT -.-> LOG
+  WEB -.-> LOG
 ```
 
 ### 10.4 If only one sentence fits under the figure
@@ -582,6 +701,7 @@ flowchart LR
 
 ```
 src/roadrisk/
+├── contract/                one description of the payload — the bottom of the layer order
 ├── core/                    plain library — no web, no network, no database
 │   ├── registry/            22 declarative factors (schema, loader, factors.yaml)
 │   ├── contract.py          the six required columns; exposure derivation
@@ -593,8 +713,9 @@ src/roadrisk/
 │   ├── gates.py             the nine validation checks
 │   ├── ladder.py            A-full → A-reduced → A-minimal → B
 │   ├── gam.py               the rung 3 spline
-│   ├── models/              Poisson (reference), NB2 (shipped), Bayes, Mode B index
+│   ├── models/              Poisson (reference), NB2 (shipped), Bayes, spatial, Mode B index
 │   ├── signguard.py         expected_sign enforcement and follow-up diagnostics
+│   ├── validation.py        spatial CV, CURE, calibration — reported even when bad
 │   ├── runlog.py            append-only event log, reproducibility manifest
 │   └── engine.py            the one entry point
 ├── geo/                     geography → panel. Optional extra; core never imports it
@@ -606,13 +727,37 @@ src/roadrisk/
 │   ├── geometry.py          curvature, computed from the centreline alone
 │   ├── osm.py               fetch a corridor by road ref; stitch, bridge, gate
 │   ├── adapters/            one factor, one source, one tier, one licence
+│   ├── branches.py          adapters as independently-failable units, and the fan-out
 │   ├── cache.py             remember fetches by geography, and report their age
 │   └── pipeline.py          the orchestrator
+├── report/                  the seam between a finished run and the page that shows it
+│   ├── limitations.py       what this run cannot support, read off the run itself
+│   ├── pdf.py               print the written report; the browser is a dependency of nothing
+│   └── static/index.html    the built report — committed, so installing needs no Node
+├── store/                   where runs live once the process that made them has gone
+│   ├── base.py              the interface — every read takes a tenant, with no default
+│   ├── memory.py            needs no server, and is not a toy — the suite runs on it
+│   ├── postgres.py          plain SQL over psycopg3, no ORM
+│   └── migrations/          numbered SQL, each recorded with the hash that produced it
+├── api/                     the product over HTTP. Optional extra; nothing below imports it
+│   ├── errors.py            the refusal contract — one envelope, three distinct outcomes
+│   ├── runner.py            the work, the interface, and the seam Celery replaces
+│   └── routes/              meta, registry, projects, corridors, jobs, runs
 ├── demo.py                  synthetic panels for tests and demonstration
+├── storecli.py              `roadrisk store` — kept apart so `assess` never needs psycopg
 └── cli.py                   mode banner, refusal receipt, descent receipt
+
+web/                         one report, imported three times. Nothing else renders it
+├── src/report/              the library — Report, sections, figures, styles, generated types
+├── src/entries/             the file:// bundle, and mountReport() for a host page
+└── shell/                   the website — routes, two layouts, and the banners in them
 ```
 
-**The layering rule:** `core/` never imports the layers above it. That is why the
+**The layering rule:** `core/` never imports the layers above it — `core → demo → geo →
+report → api → worker → cli`, downhill only. Since 5.0 that is a test rather than a
+docstring, and it has a fourth check for the loophole: `core` imports the package root for
+its version string, so the day the root re-exports something from `geo`, importing the
+engine imports shapely while every direct import still points downhill. It is why the
 geospatial dependencies are an optional extra rather than a hard requirement, and why GDAL
 — the heaviest thing this package can depend on, needed by exactly two adapters — sits
 behind its own extra that the test suite never installs.
@@ -624,8 +769,18 @@ roadrisk demo                                   # end to end on a synthetic corr
 roadrisk demo --crash-rows-only                 # watch Mode A be refused
 roadrisk demo --u-shape curve_density           # watch the sign guard and the spline
 roadrisk demo --units 40 --periods 12 --bayes   # credible intervals instead of p-values
+roadrisk corridor --demo --bayes --report out/  # coordinates to a readable report, one command
 roadrisk registry                               # the 22 factors and their weight status
+roadrisk serve --tenant                         # the API, and a tenant to use it with
+
 python tools/validate_corridor.py               # the two real corridors
 python tools/validate_coverage.py               # proves the clustered intervals honest
 python tools/validate_posterior.py              # puts the two rungs side by side
+python tools/generate_types.py --check          # the TypeScript still matches the Python
+python tools/check_shell.py --tenant …          # every screen still carries the banner
+```
+
+```bash
+cd web && npm ci && npm run build               # rebuild the committed report bundle
+cd web/shell && npm run dev                     # the website, over a running API
 ```
