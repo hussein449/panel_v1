@@ -5,7 +5,241 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-26 (latest) — Step 5.3a: one report, imported twice
+## 2026-08-27 (latest) — Step 5.3b: a website, and one thing on it nobody can remove
+
+**Delivered:** `web/shell/` — a Next.js app over the API, with the deployment banner as a
+*layout* element rather than a component each page remembers. Eleven screens, every one of
+them carrying it, proven twice: by parsing the sources and by fetching the routes.
+
+```bash
+roadrisk serve --tenant                  # prints the tenant to point the shell at
+cd web && npm ci
+cd shell && ROADRISK_TENANT_ID=… npm run dev
+
+pytest tests/test_shell.py               # the arrangement
+python tools/check_shell.py --tenant …   # the result, against a running shell
+```
+
+```
+web/shell/
+├── app/
+│   ├── layout.tsx                the root layout — the deployment banner, then the page
+│   ├── page.tsx                  what this is, what it will not do, how to see one
+│   ├── projects/…                list, create, corridors, jobs
+│   ├── jobs/[jobId]/             status, and why a Mode B descent is a job that succeeded
+│   ├── runs/[runId]/layout.tsx   the mode banner, above every screen about a run
+│   ├── runs/[runId]/page.tsx     <ReportView run={…} /> and nothing else
+│   ├── runs/[runId]/files/       the artefacts, and why this run has none
+│   ├── registry/                 factors, tiers, licences, and the file's hash
+│   └── downloads/[runId]/[kind]/route.ts   the artefact proxy — not a screen
+├── components/   DeploymentBanner, RunModeBanner, ReportView, Problem, AutoRefresh
+└── lib/          api.ts · actions.ts · format.ts · wire.ts (generated)
+```
+
+### The done-when is structural, which is the only way it stays true
+
+*Mode banner unmissable on every screen — no route can omit it.* The way to fail that is
+not deletion. It is the banner quietly becoming each page's responsibility, at which point
+it is on eleven screens and missing from the twelfth, and nothing says so.
+
+So it is in `app/layout.tsx`. Next wraps every page in that file; a page is a child, and a
+child cannot remove its parent. `tests/test_shell.py` asserts the arrangement rather than
+the intention:
+
+| Asserted | What it stops |
+|---|---|
+| Exactly one file renders `<html>` | A second root layout under a route group — an ordinary thing to reach for, and it takes that route out from under the banner |
+| The banner's line has no `&&`, no ternary, and comes before `{children}` | A condition that is false in exactly the cases that matter: no tenant, API down, health throwing |
+| `DeploymentBanner` has no `return null` | The same absence, one level in |
+| Nothing but the layout mentions it | It becoming each page's job |
+| No `pages/` directory | The older router, which works, and whose routes no app layout wraps |
+| Every screen under `runs/[runId]` is under a layout that states the mode, and none states it itself | 5.3c's map and 5.3d's detail layer arriving without it |
+| No shell source is hidden from git | Below — it had already happened |
+
+**All seven were verified against a planted violation**, one at a time, and each names the
+file and the rule. A test that cannot fail is decoration.
+
+### The near-miss worth writing down
+
+`.gitignore` has carried `runs/` since Stage 0, for run output directories. It matches a
+folder of that name **at any depth**, and `web/shell/app/runs/` is one — the segment whose
+layout carries the mode banner.
+
+Everything passed. The app built, `tests/test_shell.py` was green, and `check_shell.py`
+found the banner on all eleven screens. The files simply would not have been in the commit,
+and the step's own deliverable would have arrived broken on any other machine. It was
+caught by reading `git status` rather than by anything failing, which is not a mechanism —
+so the pattern now carries a negation, and there is a test that asks git what it is hiding.
+
+### And then it was fetched, because parsing cannot see everything
+
+`tools/check_shell.py` discovers every route from the filesystem — not a list, which would
+pass on the day it was written — creates a project and a demonstration run so the
+parameterised routes resolve, and looks for the banner in the HTML that came back:
+
+```
+ok    /                                          (200, banner, 13,390 bytes)
+ok    /projects/…/jobs/new                       (200, banner, 20,953 bytes)
+ok    /registry                                  (200, banner, 47,036 bytes)
+ok    /runs/…/files                              (200, banner + mode, 13,028 bytes)
+ok    /runs/…                                    (200, banner + mode, 229,733 bytes)
+ok    /no-such-page                              (404, banner, 9,487 bytes)
+All 11 screens carry the banner they must carry.
+```
+
+With the banner taken out of the layout: **11 of 11 fail.** The two checks do not overlap.
+A structural test cannot see a banner that renders to nothing because a fetch threw; a
+fetch cannot see the route somebody adds next year. What only the fetch establishes is
+that the banner is in the *server-rendered* HTML — it is a server component, so a reader
+with no JavaScript still gets it, which is the difference between a banner and a hope.
+
+Something else worth recording: with the banner removed, the build failed before the check
+could run. `noUnusedLocals` caught the now-unused import. Three independent things have to
+be defeated to ship a screen without it.
+
+### Two banners, two facts, and neither is written down
+
+The **deployment** banner is the root layout's, and every line of it is read off
+`GET /health`:
+
+- `auth: null` → *not authenticated; `X-Tenant-Id` scopes which rows exist and does not
+  prove who you are.* When 5.4a lands, `auth` stops being null and this stops saying it —
+  **without anybody editing the file.** A banner whose warnings are hard-coded is one that
+  eventually lies in the reassuring direction.
+- `runner: "in-process"` → *jobs run inside the API process; work in flight does not
+  survive a restart.* `runner: null` says something different and worse: nothing will ever
+  pick your job up.
+- `artefacts_available: false` → downloads are off, and which variable turns them on.
+- Unreachable API → the banner changes colour and says so, and the rest of the screen says
+  it too. This is why `getHealth` is the one call in `lib/api.ts` that never throws: a
+  layout that throws takes the whole screen with it, and the thing that must never
+  disappear would be the thing an outage removes.
+
+The **mode** banner is `app/runs/[runId]/layout.tsx`: the engine's own `banner` string, the
+rung, and a distinct state for a synthetic corridor. The report carries its own copy, and
+the duplication is deliberate — the report is the artefact that leaves the building, so its
+banner belongs to the document and prints in the running header of every page. This one is
+for the screens around it that are not the document.
+
+### The shell takes the report's React, not the other way round
+
+`web/` is an npm workspace now (`web/package.json` gains `workspaces: ["shell"]`), so there
+is **one** React, hoisted, that both the report library and the app resolve to. Two copies
+of React in one document is a broken hooks dispatcher rather than a large download, and a
+linked package is the usual way to end up with two.
+
+That pins the shell to **Next 14**, the last line that runs on React 18, while Next 16 is
+current. The trade is deliberate and it is the right way round: upgrading the workspace to
+React 19 would rebuild `report.html`, and **a step that adds a website has no business
+changing the file `pip install` ships.** When the report moves to React 19, the shell moves
+to Next 16 with it — one React, always.
+
+Measured rather than assumed: after the workspace move, `npm run build` produced a
+**byte-identical** `src/roadrisk/report/static/index.html`. The one change to the report
+package is an exports entry for its stylesheet, which the shell's root layout imports so
+that a document embedded in the app looks like the document that gets emailed — the same
+file, not a copy of its palette. Shell classes are all prefixed `shell-`, because the way
+to keep `.banner` meaning the mode banner is to never write a second `.banner`.
+
+### `web/shell/lib/wire.ts` is generated, for 5.1a's reason one layer out
+
+The app is the first client that has to describe `GET /jobs/{id}` in TypeScript, and a
+hand-written `Job` here is the 4.7 defect with new names: `JobStatus` grows a sixth value,
+the shell knows five, and a job in the new state renders as nothing at all under a heading
+that looks fine. So `tools/generate_types.py` now emits two files — the payload from
+`roadrisk.contract`, the envelope from `roadrisk.store.records`, `roadrisk.api.schemas` and
+`roadrisk.api.errors`. `types.ts` is byte-identical to before.
+
+Three decisions in the projection are worth the words:
+
+- **`Run` becomes `StoredRun`.** The row is not the payload, and one file cannot hold two
+  `Run`s. Its `payload` is typed as the report library's `Run`, imported by name.
+- **A response has every field; a request body does not.** A Python default is about
+  construction — a `Job` needs no id because the store is about to give it one — and
+  FastAPI serialises the field anyway. Projecting `id?: string` would describe a response
+  the API cannot produce and make every reader write `job.id!`.
+- **Enums project as unions of literals**, not as empty interfaces. The payload contract
+  has no enums; the wire is nothing but them.
+
+### Everything works with JavaScript switched off
+
+Server actions render as plain `<form method="POST">`, so the browser posts and the server
+acts. Measured by posting the forms exactly as a scriptless browser would:
+
+```
+POST /projects                        -> 303 /projects/b88c79b4-…
+POST the job form (demo, europe)      -> 303 /jobs/c71ab5a1-…   status running
+POST /projects with an empty name     -> 303 /projects?error=body.name%3A%20String%20should…
+   on the page: body.name: String should have at least 1 character
+POST a half-specified bounding box    -> refused by the shell, before the API is asked
+   on the page: A bounding box needs all four of south, west, north and east… Got 1.
+```
+
+A refusal comes back as a query parameter rather than as a thrown error, and that is the
+point: the 422 names the column, that sentence is the whole value of the refusal, and a
+generic error page would lose it. Pages call the API through `attempt`, which turns a throw
+back into a value, because a production Next build replaces an uncaught server error with a
+digest hash — and a shell whose entire argument is *a refusal is a result* cannot hand the
+reader one of those.
+
+The only script in the app is the job page's auto-refresh, with a *check again* link beside
+it that does the same thing.
+
+### Downloads are proxied, and that is not incidental
+
+The API needs `X-Tenant-Id`; a browser has none and must not be given one, because that
+header is not authentication and belongs to a process the operator controls rather than to
+a page they hand out. So `app/downloads/[runId]/[kind]/route.ts` fetches with the header
+and streams the bytes through unchanged — unchanged because the hash the files list shows
+is what those bytes should come to. Measured:
+
+```
+report.pdf        -> 404, the API's own message: "…has no report.pdf. It has no artefacts."
+not-a-kind        -> 404 from the shell; the API is never asked
+../../etc/passwd  -> 404 from the shell; the API is never asked
+the API directly, as a browser link would -> 401 tenant_required
+```
+
+### It walked into a gap and closed it: `roadrisk serve --tenant`
+
+Running in memory is offered as a real way to try the service. It was not one. Every route
+that touches a row needs a tenant, tenants are created by `roadrisk store new-tenant`, and
+that needs a database — so an in-memory deployment had no tenant, no way to make one, and
+answered *No tenant …* to everything worth asking.
+
+`roadrisk serve --tenant` generates an id, creates the tenant and prints it. It reaches the
+app through `$ROADRISK_MEMORY_TENANT`, because uvicorn is handed the factory *by name* so
+that `--reload` works and there is nowhere for the CLI to pass an argument — the same
+channel, and the same reason, as the runner. The id is resolved in the CLI rather than in
+the app so that `--reload` re-creates the *same* tenant instead of invalidating whatever
+the operator had just pasted. A malformed value stops the process: the alternative is a
+service that starts, reports healthy, and refuses every request for a reason nobody can
+see. Refused outright with a database configured, where the command belongs to a person who
+can read what it did.
+
+### Known, and deliberately left
+
+- **The report route ships the whole payload to the browser.** `<Report>` has a print
+  button and an error boundary, so it is a client component, and the run is serialised into
+  the page to hydrate it — around 230 kB of HTML for the demonstration corridor. 5.3d is
+  where the screen stops being the whole document.
+- **Parity with the single-file bundle was measured at 5.3a with a browser, not here.**
+  There is no browser in this environment. What holds it true is construction — one
+  `Report`, imported — plus the assertions that the shell defines no second one and that
+  `ReportView` renders nothing but `Report` and `Boundary`.
+- **The download proxy has never carried a real file.** The in-process runner writes no
+  artefacts, and importing a CLI-produced run needs a database. Both refusal paths are
+  measured; the success path is not.
+- **No JavaScript test suite**, unchanged from 5.3a. The checks here are a Python test over
+  the sources and an HTTP tool against a running app, and both would be better in CI.
+- **Next's telemetry is disabled** in the scripts and in `next.config.mjs`. Nothing else in
+  this repository phones home, and a build tool doing it quietly is out of keeping.
+- **`--tenant` is not a login.** It creates a row in a store that dies with the process. It
+  makes the memory mode usable; 5.4a is what makes any of this safe to expose.
+
+---
+
+## 2026-08-26 — Step 5.3a: one report, imported twice
 
 **Delivered:** `web/src/` split into a report library and two thin entry points. The
 single-file bundle still opens from `file://` with nothing running, and a page somebody

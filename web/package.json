@@ -4,9 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "description": "The report, as a library plus two thin entry points. One renderer: what a client reads, what prints to PDF, and what the Next.js shell mounts.",
+  "workspaces": [
+    "shell"
+  ],
   "exports": {
     ".": "./src/entries/mount.tsx",
-    "./report": "./src/report/index.ts"
+    "./report": "./src/report/index.ts",
+    "./styles.css": "./src/report/styles.css"
   },
   "scripts": {
     "dev": "vite",

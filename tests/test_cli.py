@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 
+import pytest
 from typer.testing import CliRunner
 
 from roadrisk.cli import _make_output_utf8_safe, app
@@ -79,6 +80,33 @@ class TestInstallCommandsSurviveRendering:
 
         assert result.exit_code == 0
         assert "roadrisk-panel[api]" in _unwrapped(result.output)
+
+
+class TestServeTenant:
+    """`--tenant` is what makes the in-memory service usable, and only that one."""
+
+    def test_it_is_refused_with_a_database_configured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A tenant in a database outlives the process, and has a command of its own.
+
+        Seeding one from a web process would create it per worker, during a deploy,
+        with nobody watching — which is the same argument that keeps migrations out of
+        `create_app`. The refusal names the command that does it properly.
+        """
+        pytest.importorskip("fastapi", reason="serve needs the api extra")
+        from roadrisk.store.postgres import DSN_ENV
+
+        monkeypatch.setenv(DSN_ENV, "postgresql:///nowhere")
+        result = runner.invoke(app, ["serve", "--tenant"])
+
+        assert result.exit_code != 0
+        # `_unwrapped` joins Rich's hard-wrapped lines without a space, and this refusal
+        # happens to break between `store` and `new-tenant`. The command name survives
+        # the break; the phrase does not.
+        said = _unwrapped(result.output)
+        assert "new-tenant" in said
+        assert DSN_ENV in said
 
 
 class TestCorridorCommand:

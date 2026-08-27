@@ -18,6 +18,12 @@ htmlcov/
 
 # Runs and data
 runs/
+# …but not the route that *shows* one. `runs/` was written for output directories and
+# matches any folder of that name at any depth, which silently swallowed the shell's run
+# segment — the layout carrying the mode banner included. Caught by reading `git status`
+# rather than by anything failing, which is the argument for the negation being here
+# instead of the pattern being loosened.
+!web/shell/app/runs/
 data/
 # Fetched-data caches. `--cache DIR` stores gzipped API responses keyed by query;
 # they are reproducible from the network, they carry their own age, and they are not

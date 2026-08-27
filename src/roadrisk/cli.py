@@ -985,6 +985,13 @@ def serve(
         bool,
         typer.Option("--reload", help="Restart on source changes. Development only."),
     ] = False,
+    tenant: Annotated[
+        bool,
+        typer.Option(
+            "--tenant",
+            help="Create a tenant in the in-memory store and print its id.",
+        ),
+    ] = False,
 ) -> None:
     """Serve the HTTP API. Needs `pip install "roadrisk-panel\\[api]"`.
 
@@ -993,11 +1000,19 @@ def serve(
     stops. The second is a real way to try the API out, and it is not disguised as
     anything else — `GET /health` reports what this process can and cannot do.
 
+    **--tenant is what makes the memory mode usable at all.** Every route that touches a
+    row needs a tenant, and the command that creates one needs a database — so without
+    this the in-memory service could only refuse. It generates an id, creates the tenant
+    and prints it; set $ROADRISK_MEMORY_TENANT yourself to fix the id across restarts.
+    It is refused with a database configured, where `roadrisk store new-tenant` is the
+    command and the tenant outlives the process.
+
     Binds the loopback interface by default, deliberately. `X-Tenant-Id` is a claim
     rather than a credential until step 5.4a, and a service with no authentication
     should not become reachable from the network because a default was convenient.
     """
     import os
+    from uuid import uuid4
 
     from roadrisk.store.postgres import DSN_ENV
 
@@ -1007,7 +1022,7 @@ def serve(
     try:
         import uvicorn
 
-        from roadrisk.api.app import RUNNER_ENV
+        from roadrisk.api.app import MEMORY_TENANT_ENV, RUNNER_ENV
     except ImportError as exc:
         # The backslash escapes the bracket for Rich, which would otherwise read
         # `[api]` as a markup tag, find no such style, and drop it — printing an
@@ -1018,6 +1033,20 @@ def serve(
         )
         raise typer.Exit(EXIT_UNAVAILABLE) from exc
 
+    if tenant and os.environ.get(DSN_ENV):
+        raise typer.BadParameter(
+            f"--tenant is for the in-memory store only, and ${DSN_ENV} is set. A "
+            "tenant in a database outlives this process and is created by somebody "
+            'who can see what it did: roadrisk store new-tenant "a name"',
+            param_hint="--tenant",
+        )
+
+    if tenant:
+        # Resolved here rather than in the app, so that --reload re-creates the *same*
+        # tenant on every restart. A fresh id per reload would invalidate whatever the
+        # operator had just pasted into their client.
+        os.environ.setdefault(MEMORY_TENANT_ENV, str(uuid4()))
+
     storage = (
         f"Postgres via ${DSN_ENV}"
         if os.environ.get(DSN_ENV)
@@ -1027,6 +1056,11 @@ def serve(
         f"[bold]Road Risk Panel[/bold] {__version__} on "
         f"http://{host}:{port}  ·  docs at /docs"
     )
+    if tenant:
+        console.print(
+            f"[bold]Tenant:[/bold] {os.environ[MEMORY_TENANT_ENV]}  "
+            "[dim](export ROADRISK_TENANT_ID to it, or send it as X-Tenant-Id)[/dim]"
+        )
     console.print(
         f"[dim]Storage: {storage}  ·  Runner: {os.environ.get(RUNNER_ENV, 'in-process')}"
         "  ·  Auth: none until 5.4a[/dim]"

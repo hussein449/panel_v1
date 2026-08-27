@@ -9,7 +9,7 @@ know it is done. Status is tracked here; what was actually built is logged in
 **Sequencing rule, from the brief:** make the model defensible on two corridors → make it
 modular → then sell it. Stage 1 and Stage 3 are the credibility path. Stage 5 is not.
 
-**Where the build is, 2026-08-26.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
+**Where the build is, 2026-08-27.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
 in, a printed and sourced report out, with every number traceable and a limitations page
 nothing can remove. **Stage 5 has started.** 5.0 made the layering rule a test, before the
 packages that could break it existed; 5.1a froze the payload contract and made
@@ -18,13 +18,16 @@ first migration; 5.1c serves all of it over HTTP, with the refusal contract enfo
 exception handler rather than by intention; and 5.1d put a runner behind it, so **the
 whole product now works over HTTP**: `roadrisk serve`, then `POST /jobs` with
 `{"demo": true}`, and a finished assessment comes back in seconds with no broker, no
-network and no data. Step 5.1 is complete. What is still missing is throughput and
-durability — work in flight does not survive a restart, which is 5.2a — and a website
-rather than an API explorer, which is 5.3b. **5.2a is half done**: adapters now fan out and
-a failing one costs a factor rather than the corridor, but the fan-out is across threads in
-one process — Celery is not built, and the boxed note under 5.2a says what that costs and
-what picking it up would involve. The one thing no part of Stage 5 addresses is
-the critical
+network and no data. Step 5.1 is complete. **5.3a and 5.3b made it a website**: one
+`<Report>` imported by the file that gets emailed and by the app, and a Next.js shell
+whose every screen carries the two things about this deployment a client would otherwise
+discover by watching a job never finish — because the banner is a layout element and a
+route cannot opt out of its layout. What is still missing is throughput and durability:
+work in flight does not survive a restart, which is 5.2a. **5.2a is half done**: adapters
+now fan out and a failing one costs a factor rather than the corridor, but the fan-out is
+across threads in one process — Celery is not built, and the boxed note under 5.2a says
+what that costs and what picking it up would involve. The one thing no part of Stage 5
+addresses is the critical
 path: this is still validated on two corridors with synthetic crashes, and one real
 police extract is worth more than any of what follows.
 
@@ -795,7 +798,7 @@ executes it.
 | `[ ]` | **5.2b** Cost model + cap | Per-source request accounting, a price table, a per-project cap enforced *before* the call | A job that would breach stops at the boundary, names the source, and the partial run is still a run |
 | `[ ]` | **5.2c** Secrets per tenant | Per-project keys, validated at entry, and an Overpass identity with a rate budget | A scope-less Mapillary token is refused when the key is entered, not rediscovered per run |
 | `[x]` | **5.3a** Report as a library | `web/src/` splits into `<Report run={run} />` and two thin entry points ✅ | The single-file bundle still opens from `file://` ✅ · the app renders the same component tree ✅ |
-| `[ ]` | **5.3b** Next.js shell | Routes, layout, and the mode banner as a *layout* element | Mode banner unmissable on every screen — no route can omit it |
+| `[x]` | **5.3b** Next.js shell | Routes, layout, and the mode banner as a *layout* element ✅ | Mode banner unmissable on every screen — no route can omit it ✅ |
 | `[ ]` | **5.3c** MapLibre map | Corridor geometry, units coloured by rank, factor provenance on click | Tiles never enter the report path; the document keeps its own SVG map |
 | `[ ]` | **5.3d** Interactive layer | The hover and detail layer 4.4 deferred as screen-only | Native `<title>` still works with JavaScript off |
 | `[ ]` | **5.4a** Auth + RLS | Supabase auth, row-level policies | The *database* refuses a cross-tenant read, proven by querying as tenant B |
@@ -1173,6 +1176,76 @@ it, not to the directory it happened to be in.
 package must never need a JavaScript toolchain, so `report.html` stays in the Python
 package as a build artefact; `web/dist/` — the library build — is ignored, because nothing
 in the Python side consumes it.
+
+### 5.3b — a website, and one thing on it nobody can remove *(done)*
+
+```bash
+roadrisk serve --tenant                  # prints the tenant to point the shell at
+cd web && npm ci
+cd shell && ROADRISK_TENANT_ID=… npm run dev
+
+pytest tests/test_shell.py               # the arrangement
+python tools/check_shell.py --tenant …   # the result, against a running shell
+```
+
+```
+web/shell/
+├── app/            routes — projects, corridors, jobs, runs, registry, downloads
+│   ├── layout.tsx  the root layout: the deployment banner, and everything under it
+│   └── runs/[runId]/layout.tsx   the run's mode banner, above every screen about a run
+├── components/     the banners, the report's mount point, the problem panel
+└── lib/            api.ts (one place sets the tenant header), actions.ts, wire.ts
+```
+
+**The done-when is a structural claim, not a diligent one.** Next wraps every page in the
+root layout; a page is a child and a child cannot remove its parent. Put the banner in
+each page instead and it is on every screen until somebody adds the twelfth, which is the
+one it will be missing from. `tests/test_shell.py` asserts the arrangement — exactly one
+file renders `<html>`, the banner is rendered there with no condition on it, no page
+imports it, there is no `pages/` directory to bypass the App Router with — and each of
+those was verified against a planted violation. One of them exists because it happened:
+`.gitignore` has carried `runs/` since Stage 0 for output directories, it matches a folder
+of that name at any depth, and it was quietly swallowing `web/shell/app/runs/` — the
+layout carrying the mode banner. Everything passed; the files would not have been in the
+commit.
+
+**Two banners, because they are two different facts.** The *deployment* banner is the
+root layout's: the tenant header is not authentication, jobs run inside the API process
+and do not survive a restart, artefact download is off. Every line of it is read off
+`GET /health` rather than written in, so when 5.4a puts real identities behind the header
+this stops calling the deployment unauthenticated without anybody editing it. The *mode*
+banner is the run segment's layout — `A-full`, `B`, the rung, and whether the corridor was
+synthetic — so the map at 5.3c and the detail layer at 5.3d state which mode produced what
+they are showing, by being children of it.
+
+**`tools/check_shell.py` is the other half**, and it is not the same check. It fetches
+every route the app actually has, discovered from the filesystem rather than listed, and
+looks for the banner in the HTML that came back. A structural test cannot see a banner
+that renders to nothing; a fetch cannot see the route somebody adds next year. Measured:
+**11 screens, all carrying it**, and 11 of 11 failing when the banner is taken out of the
+layout.
+
+**The shell takes the report's React, not the other way round.** `web/` is an npm
+workspace now, with one hoisted React that both the report and the app resolve to — two
+copies in one document is a broken hooks dispatcher rather than a large download. That
+pins the app to Next 14, which is the last line on React 18, and the trade is deliberate:
+a step that adds a website has no business changing the file `pip install` ships.
+`report.html` rebuilt **byte-identical** after the move.
+
+**`web/shell/lib/wire.ts` is generated**, by the same tool that projects the payload. A
+hand-written `Job` in the app is the 4.7 defect one layer out — `JobStatus` grows a sixth
+value, the shell knows five, and a job in the new state renders as nothing at all.
+
+**Every form works with JavaScript switched off**, and a refusal survives the trip: a
+project with no name comes back as *body.name: String should have at least 1 character* on
+the page the reader lands on, because a 422 that names the column is the entire value of
+that refusal. The only script in the app is the job page's auto-refresh, and there is a
+link beside it that does the same thing.
+
+**It also walked into a gap and closed it.** The in-memory service is offered as a real
+way to try the API, and it was not one: every route that touches a row needs a tenant,
+`roadrisk store new-tenant` needs a database, so an in-memory deployment could only answer
+*No tenant …*. `roadrisk serve --tenant` creates one and prints it.
 
 ### 5.3 — the map on the screen is not the map in the document
 

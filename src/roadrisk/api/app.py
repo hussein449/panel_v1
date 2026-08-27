@@ -14,6 +14,7 @@ import logging
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from fastapi import FastAPI
 
@@ -25,7 +26,7 @@ from roadrisk.api.runner import InlineRunner, Runner, ThreadedRunner
 from roadrisk.api.settings import ApiSettings
 from roadrisk.contract import SCHEMA_VERSION
 from roadrisk.core.registry import Registry, load_registry
-from roadrisk.store import JobStatus, MemoryStore
+from roadrisk.store import JobStatus, MemoryStore, Tenant
 from roadrisk.store.postgres import DSN_ENV
 
 log = logging.getLogger("roadrisk.api")
@@ -45,6 +46,10 @@ RUNNER_ENV = "ROADRISK_RUNNER"
 #: not throughput. Throughput is 5.2a, on machines that do nothing else.
 RUNNER_WORKERS_ENV = "ROADRISK_RUNNER_WORKERS"
 DEFAULT_RUNNER_WORKERS = 2
+
+#: A tenant id to create in the **in-memory** store at startup. See :func:`_seed_tenant`.
+#: `roadrisk serve --tenant` sets it; a Postgres deployment ignores it and has a command.
+MEMORY_TENANT_ENV = "ROADRISK_MEMORY_TENANT"
 
 #: Distinguishes "no runner argument was given" from "a runner of None was given".
 #: Both are meaningful and they are not the same: the first takes the environment's
@@ -207,7 +212,50 @@ def _reclaim_before() -> datetime | None:
 
 def _default_provider() -> StoreProvider:
     dsn = os.environ.get(DSN_ENV)
-    return per_request_postgres(dsn) if dsn else shared_store(MemoryStore())
+    if dsn:
+        return per_request_postgres(dsn)
+    store = MemoryStore()
+    _seed_tenant(store)
+    return shared_store(store)
+
+
+def _seed_tenant(store: MemoryStore) -> None:
+    """Create the tenant named by ``$ROADRISK_MEMORY_TENANT``, if there is one.
+
+    **The gap step 5.3b walked into.** Running in memory is offered as a real way to try
+    the service, and it was not one: every route that touches a row requires a tenant,
+    tenants are made by `roadrisk store new-tenant`, and that needs a database. So the
+    memory deployment had no tenant, no way to make one, and answered *No tenant …* to
+    everything a client could usefully ask. `roadrisk serve --tenant` closes it, and the
+    environment is how it reaches this factory — the same channel the runner uses, for
+    the same reason: uvicorn is handed the factory by name so that `--reload` works, and
+    there is nowhere for the CLI to pass an argument.
+
+    Postgres deliberately does not read this. A store that outlives the process has a
+    command for creating tenants, run by a person who can see what it did.
+
+    A malformed value stops the process rather than being ignored: the alternative is a
+    service that starts, looks healthy, and refuses every request for a reason nobody
+    can see.
+    """
+    raw = os.environ.get(MEMORY_TENANT_ENV, "").strip()
+    if not raw:
+        return
+    try:
+        tenant_id = UUID(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"${MEMORY_TENANT_ENV} must be a UUID, got {raw!r}. It is the id of the "
+            "tenant to create in the in-memory store; `roadrisk serve --tenant` "
+            "generates one."
+        ) from exc
+
+    store.create_tenant(Tenant(id=tenant_id, name="local"))
+    log.warning(
+        "In-memory tenant %s created at startup. It exists for as long as this process "
+        "does, and so does everything filed under it.",
+        tenant_id,
+    )
 
 
 def _default_runner(provider: StoreProvider, registry: Registry) -> Runner | None:

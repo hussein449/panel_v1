@@ -290,7 +290,14 @@ roadrisk store show <run-id> --report out/   # rendered, not refitted
 ```bash
 pip install "roadrisk-panel[api]"            # fastapi + uvicorn
 roadrisk serve                               # http://127.0.0.1:8000 · docs at /docs
+roadrisk serve --tenant                      # …and a tenant, for the in-memory store
 ```
+
+Without a database the whole service runs in memory, and `--tenant` is what makes that a
+real way to try it: every route that touches a row needs a tenant, and the command that
+creates one needs a database. It generates an id, creates the tenant and prints it. With
+`$ROADRISK_DATABASE_URL` set the flag is refused, because there `roadrisk store new-tenant`
+is the command and the tenant outlives the process.
 
 **Try it in one request.** Open `/docs`, create a project, then post a demo job — a
 synthetic 10 km corridor that needs no data, no network and no crash extract:
@@ -345,6 +352,38 @@ export ROADRISK_ARTEFACT_ROOT=/srv/roadrisk/artefacts
 
 Serving an artefact means opening a path that came out of a database column, so that
 variable is an allow-list rather than a convenience, and it has no default.
+
+---
+
+## And a website over it
+
+```bash
+cd web && npm ci                             # one install for the report and the app
+cd shell
+ROADRISK_API_URL=http://127.0.0.1:8000 ROADRISK_TENANT_ID=<the tenant> npm run dev
+```
+
+Projects, corridors, jobs and runs, with the report itself as one of the screens — the
+same `<Report>` component the single-file bundle is built from, so what you read here and
+what arrives in somebody's inbox cannot drift apart. Printing the run page produces the
+report and only the report; the app's chrome is hidden in `@media print`.
+
+**Two banners, and neither can be taken off a screen.** The root layout carries what this
+deployment is — that `X-Tenant-Id` is not authentication, that jobs run inside the API
+process and do not survive a restart, that artefact download is off — every line of it read
+off `GET /health` rather than written into the page, so it stops saying so when it stops
+being true. The run segment's layout carries the *mode*: `A-full`, `B`, the rung, and
+whether the corridor was synthetic. A page is a child of its layout and cannot remove it,
+which is why the banner is there rather than in each page; `pytest tests/test_shell.py`
+asserts the arrangement, and `python tools/check_shell.py` fetches every route and looks
+for the banner in the HTML that came back.
+
+Everything works with JavaScript switched off — the forms post to the server, and a
+refusal comes back on the page with the column the API named. The one exception is the job
+page's automatic refresh, which has a link beside it that does the same thing.
+
+The browser only ever talks to this app, never to the API: the tenant header belongs to a
+process you control, so artefact downloads are proxied rather than linked.
 
 ---
 
@@ -519,8 +558,8 @@ src/roadrisk/
 ├── storecli.py              `roadrisk store` — kept apart so `assess` never needs psycopg
 └── cli.py                   mode banner, refusal receipt, descent receipt
 
-web/                         one report, imported twice. Entries render none of it
-├── src/report/              the library — what the Next.js shell will import
+web/                         one report, imported three times. Nothing else renders it
+├── src/report/              the library — what the bundle, a host page and the app import
 │   ├── Report.tsx           the whole report — what a client reads, and what prints
 │   ├── sections.tsx         banner, ranking, model, factors, checks, credits, limits
 │   ├── figures.tsx          risk strip, corridor map, CURE, calibration, spline — all SVG
@@ -528,18 +567,33 @@ web/                         one report, imported twice. Entries render none of 
 │   ├── Boundary.tsx         a rendering failure must not become a blank page
 │   ├── styles.css           one stylesheet, screen and `@page` alike
 │   ├── types.ts             the JSON contract, as TypeScript. Generated, not written
-│   └── index.ts             the public surface both entries import
-└── src/entries/
-    ├── standalone.tsx       the file:// bundle: the injected run, or a file picker
-    └── mount.tsx            mountReport(element, run), for a page somebody else owns
+│   └── index.ts             the public surface every entry imports
+├── src/entries/
+│   ├── standalone.tsx       the file:// bundle: the injected run, or a file picker
+│   └── mount.tsx            mountReport(element, run), for a page somebody else owns
+└── shell/                   the website. One React with the report, so report.html cannot move
+    ├── app/layout.tsx       the deployment banner — the one thing no route can omit
+    ├── app/runs/[runId]/    layout.tsx states the mode; page.tsx mounts <Report>
+    ├── app/…                projects, corridors, jobs, registry, the download proxy
+    ├── components/          the two banners, the report's mount point, the problem panel
+    └── lib/                 api.ts sets the tenant header, once · wire.ts is generated
 ```
 
 The page is compiled to a single self-contained HTML file and **committed**, so
 installing this package never needs a JavaScript toolchain. Only changing the page does:
 
 ```bash
-cd web && npm install && npm run build
+cd web && npm ci && npm run build
 ```
+
+`npm run build:lib` emits the same report as an importable module for a host page that is
+not React, with React left external. That output is *not* committed — nothing on the
+Python side consumes it, and neither is the shell's build.
+
+`web/` is one npm workspace, so there is one React that the report and the app both
+resolve to — two copies in a document is a broken hooks dispatcher rather than a large
+download. It also means the app takes the report's React version rather than the other way
+round: adding a website must not change the file `pip install` ships.
 
 `core/` never imports the layers above it. That rule paid for itself in the M51 panel and
 carries over unchanged — and it is why the geospatial dependencies are an optional extra

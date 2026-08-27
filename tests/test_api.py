@@ -563,6 +563,60 @@ def test_health_names_the_runner_or_admits_there_is_none(
     assert body["auth"] is None, "Still nobody's identity, until 5.4a."
 
 
+def test_the_memory_store_can_be_given_a_tenant_to_start_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gap step 5.3b walked into, closed.
+
+    Running in memory is offered as a real way to try the service, and it was not one:
+    every route that touches a row needs a tenant, the command that creates one needs a
+    database, and so an in-memory deployment could only answer *No tenant …* to
+    everything worth asking. `roadrisk serve --tenant` sets this variable, and the
+    factory — which is handed to uvicorn by name and takes no arguments — reads it.
+    """
+    from uuid import uuid4
+
+    from roadrisk.api.app import MEMORY_TENANT_ENV
+    from roadrisk.store.postgres import DSN_ENV
+
+    tenant_id = uuid4()
+    monkeypatch.setenv(MEMORY_TENANT_ENV, str(tenant_id))
+    monkeypatch.delenv(DSN_ENV, raising=False)
+
+    client = TestClient(create_app(runner=None))
+    made = client.post(
+        "/projects",
+        json={"name": "a project"},
+        headers={"X-Tenant-Id": str(tenant_id)},
+    )
+    assert made.status_code == 201, made.text
+
+    # And nothing about tenancy has softened: another tenant is still one with no rows,
+    # rather than one with somebody else's.
+    theirs = client.get("/projects", headers={"X-Tenant-Id": str(uuid4())})
+    assert theirs.status_code == 200
+    assert theirs.json() == []
+
+
+def test_a_malformed_memory_tenant_stops_the_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rather than starting a service that looks healthy and refuses every request.
+
+    The failure mode of ignoring it is the worst kind available: `GET /health` says ok,
+    every route that touches a row says *No tenant*, and the cause is a typo in an
+    environment variable that nothing on the screen mentions.
+    """
+    from roadrisk.api.app import MEMORY_TENANT_ENV
+    from roadrisk.store.postgres import DSN_ENV
+
+    monkeypatch.setenv(MEMORY_TENANT_ENV, "not-a-uuid")
+    monkeypatch.delenv(DSN_ENV, raising=False)
+
+    with pytest.raises(ValueError, match=MEMORY_TENANT_ENV):
+        create_app(runner=None)
+
+
 def test_a_job_carries_everything_needed_to_run_it_later(
     client: TestClient, auth: dict[str, str], project: dict[str, Any]
 ) -> None:

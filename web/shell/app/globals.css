@@ -1,0 +1,408 @@
+/*
+ * The shell's chrome, and nothing else.
+ *
+ * The report's stylesheet is imported before this one, from the report package, and it
+ * owns the document: the palette, the type, the tables inside a report, the paged-media
+ * rules that turn a run into a PDF. This file adds what a website has and a document
+ * does not — a banner, navigation, listings, forms — and takes its colours from the
+ * variables that stylesheet defines, so there is one palette rather than two that drift.
+ *
+ * Every class here is prefixed `shell-`. The report's class names are not namespaced
+ * because it was the only thing on the page for five stages; now it is not, and the way
+ * to keep `.banner` meaning the mode banner is to never write a second `.banner`.
+ */
+
+/* The report's stylesheet pads the body for a document that is alone on the page. Here
+   it is not: the banner is full-bleed and the padding belongs to the main column. */
+body {
+  padding: 0;
+}
+
+.shell-main {
+  padding: 2rem 1.25rem 3rem;
+}
+
+.shell-page {
+  max-width: var(--measure);
+  margin: 0 auto;
+}
+
+.shell-sans {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+/* ---- the deployment banner ------------------------------------------------
+ *
+ * Step 5.3b's done-when. It is the first thing in the body, it is rendered on the
+ * server so it is in the HTML rather than painted afterwards, and there is no control
+ * that removes it.
+ */
+
+.shell-banner {
+  padding: 0.85rem clamp(1rem, 4vw, 2rem);
+  border-bottom: 1px solid;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.shell-banner--ok {
+  background: #eef7f1;
+  border-color: #b8dcc6;
+  color: #14603a;
+}
+
+.shell-banner--warn {
+  background: #fdf5e6;
+  border-color: #ebd5a6;
+  color: #6f4700;
+}
+
+.shell-banner--alarm {
+  background: #fcecec;
+  border-color: #e6b9b9;
+  color: #8c2323;
+}
+
+.shell-banner__lead {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.4rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+
+.shell-banner__dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.shell-banner__facts {
+  margin: 0;
+  padding-left: 1.1rem;
+  max-width: 80rem;
+}
+
+.shell-banner__facts li + li {
+  margin-top: 0.3rem;
+}
+
+.shell-banner__meta {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.shell-banner code,
+.shell-runbanner code {
+  font-family: "SF Mono", "Cascadia Mono", Consolas, monospace;
+  font-size: 0.92em;
+}
+
+/* ---- navigation ---------------------------------------------------------- */
+
+.shell-nav {
+  display: flex;
+  align-items: baseline;
+  gap: 1.25rem;
+  padding: 0.75rem clamp(1rem, 4vw, 2rem);
+  background: var(--page);
+  border-bottom: 1px solid var(--rule);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.88rem;
+}
+
+.shell-nav a {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.shell-nav a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.shell-nav__home {
+  font-weight: 700;
+  color: var(--ink) !important;
+  margin-right: auto;
+}
+
+.shell-foot {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+/* ---- the furniture a listing needs --------------------------------------- */
+
+.shell-card {
+  background: var(--page);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1.25rem clamp(1rem, 3vw, 2rem);
+  margin-bottom: 1.25rem;
+}
+
+.shell-card h2 {
+  font-size: 1.05rem;
+  border-bottom-width: 1px;
+}
+
+.shell-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.85rem;
+}
+
+.shell-table th {
+  text-align: left;
+  font-weight: 650;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--ink-soft);
+  padding: 0.4rem 0.6rem 0.4rem 0;
+  white-space: nowrap;
+}
+
+.shell-table td {
+  border-bottom: 1px solid var(--rule-soft);
+  padding: 0.45rem 0.6rem 0.45rem 0;
+  vertical-align: top;
+}
+
+.shell-mono {
+  font-family: "SF Mono", "Cascadia Mono", Consolas, monospace;
+  font-size: 0.85em;
+  color: var(--ink-faint);
+}
+
+.shell-empty {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+/* ---- forms --------------------------------------------------------------- */
+
+.shell-form {
+  display: grid;
+  gap: 0.9rem;
+  max-width: 34rem;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.88rem;
+}
+
+.shell-form label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 650;
+  color: var(--ink-soft);
+}
+
+.shell-form .shell-hint {
+  font-weight: 400;
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+}
+
+.shell-form input[type="text"],
+.shell-form input[type="number"],
+.shell-form select {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--page);
+  color: var(--ink);
+}
+
+.shell-form fieldset {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.75rem 1rem;
+}
+
+.shell-form legend {
+  font-weight: 650;
+  color: var(--ink-soft);
+  padding: 0 0.35rem;
+}
+
+.shell-check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-weight: 400;
+}
+
+.shell-button {
+  font: inherit;
+  font-weight: 650;
+  padding: 0.5rem 1.1rem;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  justify-self: start;
+}
+
+.shell-button:hover {
+  filter: brightness(1.1);
+}
+
+/* ---- states -------------------------------------------------------------- */
+
+.shell-note {
+  border-left: 3px solid var(--rule);
+  padding: 0.1rem 0 0.1rem 0.9rem;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.shell-problem {
+  background: #fcecec;
+  border: 1px solid #e6b9b9;
+  border-radius: 3px;
+  color: #8c2323;
+  padding: 0.75rem 1rem;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.88rem;
+}
+
+.shell-status {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.shell-status--queued,
+.shell-status--running {
+  background: #eef2f7;
+  border-color: #c3d0de;
+  color: #33506f;
+}
+
+.shell-status--succeeded {
+  background: #eef7f1;
+  border-color: #b8dcc6;
+  color: #14603a;
+}
+
+.shell-status--failed,
+.shell-status--rejected {
+  background: #fcecec;
+  border-color: #e6b9b9;
+  color: #8c2323;
+}
+
+/* ---- the run's own banner and tabs ---------------------------------------
+ *
+ * The mode a run was produced in, in the run segment's layout, so that no screen about
+ * a run can be added without it. The report carries its own copy of this fact, because
+ * the report is the thing that leaves the building; this one is for the screens around
+ * it that are not the document.
+ */
+
+.shell-runbanner {
+  max-width: var(--measure);
+  margin: 0 auto 1rem;
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 0.7rem 1rem;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.85rem;
+}
+
+.shell-runbanner--a {
+  background: #eef7f1;
+  border-color: #b8dcc6;
+  color: #14603a;
+}
+
+.shell-runbanner--b {
+  background: #fdf5e6;
+  border-color: #ebd5a6;
+  color: #7a4e00;
+}
+
+.shell-runbanner--demo {
+  background: #f3eefb;
+  border-color: #cfc0e8;
+  color: #4b2d7f;
+}
+
+.shell-runbanner__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.7rem;
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+
+.shell-runbanner__detail {
+  margin: 0.35rem 0 0;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.shell-tabs {
+  max-width: var(--measure);
+  margin: 0 auto 1.25rem;
+  display: flex;
+  gap: 0.4rem;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.85rem;
+}
+
+.shell-tabs a {
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--page);
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.shell-tabs a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- printing -------------------------------------------------------------
+ *
+ * Printing a run must produce the report and only the report — step 4.5's promise, and
+ * the reason `report.html` and this app are the same component. The chrome goes; the
+ * report's own paged-media rules are untouched, because they are not in this file.
+ */
+
+@media print {
+  .shell-chrome,
+  .shell-runbanner,
+  .shell-tabs {
+    display: none !important;
+  }
+
+  .shell-main {
+    padding: 0;
+  }
+}

@@ -3,3 +3,8 @@ node_modules/
 # is not React. A build artefact of `src/`, unlike the single-file bundle, which *is*
 # committed because installing this package must never need a JavaScript toolchain.
 dist/
+# The shell's build. Nothing on the Python side consumes it either: `report.html` is
+# committed because installing the package must not need Node, and a website is not
+# something `pip install` ships.
+shell/.next/
+shell/tsconfig.tsbuildinfo
