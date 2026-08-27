@@ -34,6 +34,9 @@ const RunMapCanvas = dynamic(() => import("./RunMapCanvas"), {
 
 const RANK_LIMIT = 25;
 
+/** The limitation the engine writes when the corridor was invented rather than fetched. */
+const SYNTHETIC = "synthetic_corridor";
+
 function metres(value: number): string {
   return `${Math.round(value).toLocaleString("en-GB")} m`;
 }
@@ -70,6 +73,9 @@ export default function RunMap({
   const units = useMemo(() => unitFeatures(run), [run]);
   const boundaries = useMemo(() => boundaryFeatures(run), [run]);
   const extent = useMemo(() => bounds(units), [units]);
+  const synthetic = run.limitations.some(
+    (limitation) => limitation.code === SYNTHETIC,
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -133,6 +139,21 @@ export default function RunMap({
             segment boundary
           </span>
         </div>
+
+        {/*
+          A basemap makes this necessary. A synthetic corridor drawn on an empty
+          background is obviously a fixture; the same line over real streets, with real
+          place names beside it, looks exactly like an assessment of a real road — which
+          is the single failure this product exists to prevent. The run banner above says
+          the corridor is invented; this says what that means *for the picture*.
+        */}
+        {synthetic && basemap ? (
+          <p className="shell-problem">
+            <strong>This line is not a road.</strong> The corridor is synthetic, so it is
+            drawn at invented coordinates over a real basemap — whatever is underneath it
+            has nothing to do with this assessment, and neither has anything named nearby.
+          </p>
+        ) : null}
 
         {failure ? (
           <p className="shell-problem">
