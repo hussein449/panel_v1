@@ -799,6 +799,174 @@ def test_a_demo_report_says_on_its_own_face_that_there_is_no_road(
     assert limitations[0]["detail"] in render_report(payload)
 
 
+# -- what the crash table is actually for --------------------------------------
+
+
+@pytest.fixture
+def offline_corridor(monkeypatch: pytest.MonkeyPatch):
+    """Stop the runner reaching Overpass, and hand it a known centreline instead.
+
+    `_fetch_centreline` builds its own `HttpOverpassClient`, so a corridor job is the
+    one path in this file that would otherwise touch the network. Everything under test
+    here happens *after* the fetch.
+    """
+    from roadrisk.geo.demo import synthetic_centreline
+
+    points = synthetic_centreline(length_km=10.0)
+    monkeypatch.setattr(
+        "roadrisk.api.runner._fetch_centreline", lambda corridor: points
+    )
+    return points
+
+
+def crashes_along(points, periods, *, seed: int = 7):
+    """A crash table on the road, in the shape the API takes.
+
+    **Deliberately sparse.** A crash in every cell leaves no zero-crash rows, and the
+    engine refuses Mode A on that — correctly, and it is the single most load-bearing
+    rule in the codebase. Real crash data is sparse, so this is too: crashes fall on
+    part of the corridor, in part of the calendar, and most cells stay empty.
+    """
+    import random
+
+    rng = random.Random(seed)
+    return [
+        {
+            "latitude": points[index][0],
+            "longitude": points[index][1],
+            "period": rng.choice(periods),
+        }
+        # The lower half of the corridor, so the upper half is genuinely crash-free
+        # rather than merely quiet.
+        for index in (
+            rng.randrange(len(points) // 2) for _ in range(220)
+        )
+    ]
+
+
+class TestASuppliedCrashTableIsWhatMakesModeAPossible:
+    """The gap this whole change exists to close.
+
+    `crashes=None` was hard-coded in the runner, so a corridor assessed over HTTP had a
+    panel of zeroes and **could not reach Mode A by any route**. The CLI has taken a
+    crash table since Stage 2; the API could not, and nothing said so.
+    """
+
+    def test_a_corridor_with_crashes_reaches_mode_a(
+        self,
+        running_client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+        offline_corridor,
+    ) -> None:
+        periods = [f"2019-{month:02d}" for month in range(1, 13)]
+        submitted = running_client.post(
+            "/jobs",
+            json={
+                "project_id": project["id"],
+                "corridor_id": corridor["id"],
+                "crashes": crashes_along(offline_corridor, periods),
+            },
+            headers=auth,
+        )
+        assert submitted.status_code == 202
+        job_id = submitted.json()["id"]
+
+        job = running_client.get(f"/jobs/{job_id}", headers=auth).json()
+        assert job["status"] == "succeeded", job["error"]
+
+        payload = running_client.get(f"/jobs/{job_id}/run", headers=auth).json()[
+            "payload"
+        ]
+        assert payload["assessment"]["mode"] == "A", (
+            "a corridor with a real crash table must be able to reach a fitted model; "
+            "this is the assertion the API could not have passed before"
+        )
+        assert payload["corridor"]["snap"]["n_snapped"] > 0
+
+    def test_the_same_corridor_without_crashes_cannot(
+        self,
+        running_client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+        offline_corridor,
+    ) -> None:
+        """The control. Mode B is not a bug here — it is the honest floor."""
+        job_id = running_client.post(
+            "/jobs",
+            json={"project_id": project["id"], "corridor_id": corridor["id"]},
+            headers=auth,
+        ).json()["id"]
+
+        payload = running_client.get(f"/jobs/{job_id}/run", headers=auth).json()[
+            "payload"
+        ]
+        assert payload["assessment"]["mode"] == "B"
+
+    def test_the_panel_is_built_over_the_periods_the_crashes_cover(
+        self,
+        running_client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+        offline_corridor,
+    ) -> None:
+        """The trap that would have made the whole feature look like it worked.
+
+        `monthly_periods` invents 2024-01 onwards. A 2019 crash table against that panel
+        snaps nothing: every crash is dropped as "period not in panel", the run reports
+        a road with no crashes, and it does so in Mode B with total confidence. So the
+        crash table decides the calendar, and this is the test that says so.
+        """
+        periods = [f"2019-{month:02d}" for month in range(1, 13)]
+        job_id = running_client.post(
+            "/jobs",
+            json={
+                "project_id": project["id"],
+                "corridor_id": corridor["id"],
+                "crashes": crashes_along(offline_corridor, periods),
+            },
+            headers=auth,
+        ).json()["id"]
+
+        payload = running_client.get(f"/jobs/{job_id}/run", headers=auth).json()[
+            "payload"
+        ]
+        assert payload["corridor"]["snap"]["n_snapped"] > 0, (
+            "every crash was dropped — the panel's calendar and the crash table's "
+            "do not overlap"
+        )
+
+    def test_the_report_downloads_for_a_run_the_service_itself_made(
+        self,
+        running_client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+        offline_corridor,
+    ) -> None:
+        """The last step of the flow, on a run that wrote no files — because none do."""
+        periods = [f"2019-{month:02d}" for month in range(1, 13)]
+        job_id = running_client.post(
+            "/jobs",
+            json={
+                "project_id": project["id"],
+                "corridor_id": corridor["id"],
+                "crashes": crashes_along(offline_corridor, periods),
+            },
+            headers=auth,
+        ).json()["id"]
+        run_id = running_client.get(f"/jobs/{job_id}/run", headers=auth).json()["id"]
+
+        assert running_client.get(f"/runs/{run_id}/artefacts", headers=auth).json() == []
+
+        report = running_client.get(f"/runs/{run_id}/report.html", headers=auth)
+        assert report.status_code == 200
+        assert len(report.text) > 100_000
+
+
 def test_runs_can_be_listed_by_where_the_road_is(
     running_client: TestClient, auth: dict[str, str], project: dict[str, Any]
 ) -> None:
@@ -1405,3 +1573,351 @@ def write_artefact(
             sha256=hashlib.sha256(content).hexdigest(),
         )
     )
+
+
+# -- the crash table, over the wire --------------------------------------------
+#
+# The gap this closes is the largest one the API had. `corridor_id` built a panel with
+# `crashes=None` hard-coded, so **every real road assessed over HTTP could only ever be
+# Mode B** — a ranking, never a fitted model — while the CLI had taken `--crashes` since
+# Stage 2. These tests are about the boundary: what it accepts, and what it refuses
+# before a job exists.
+
+
+def some_crashes(n: int = 3, **overrides: Any) -> list[dict[str, Any]]:
+    """A crash table in the shape the CLI's `--crashes` CSV has always had."""
+    return [
+        {
+            "latitude": 34.9 + index * 0.001,
+            "longitude": 33.2 + index * 0.001,
+            "period": "2019-03",
+            **overrides,
+        }
+        for index in range(n)
+    ]
+
+
+def submit_with_crashes(
+    client: TestClient,
+    auth: dict[str, str],
+    project: dict[str, Any],
+    corridor: dict[str, Any],
+    crashes: Any,
+) -> Any:
+    return client.post(
+        "/jobs",
+        json={
+            "project_id": project["id"],
+            "corridor_id": corridor["id"],
+            "crashes": crashes,
+        },
+        headers=auth,
+    )
+
+
+class TestACrashTableReachesTheJob:
+    def test_it_is_accepted_and_stored_on_the_job(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+    ) -> None:
+        response = submit_with_crashes(
+            client, auth, project, corridor, some_crashes(4)
+        )
+
+        assert response.status_code == 202
+        assert len(response.json()["params"]["crashes"]) == 4
+
+    def test_omitting_it_is_still_legal_and_changes_nothing(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+    ) -> None:
+        """A road with no crash extract is the case this product was built for."""
+        response = client.post(
+            "/jobs",
+            json={"project_id": project["id"], "corridor_id": corridor["id"]},
+            headers=auth,
+        )
+
+        assert response.status_code == 202
+        assert response.json()["params"]["crashes"] is None
+
+
+class TestACrashTableThatCouldNotBeSnappedIsRefused:
+    """Every one of these would otherwise be a confident Mode B run built on nothing.
+
+    That is the failure mode: a crash table that cannot be snapped is not an error
+    anywhere downstream. The crashes land in "dropped, with a reason", the panel keeps
+    its zero rows, and the report describes a road with no crashes on it — which is a
+    perfectly well-formed answer to a question nobody asked.
+    """
+
+    @pytest.mark.parametrize("column", ["latitude", "longitude", "period"])
+    def test_a_missing_column_is_a_422_naming_it(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+        column: str,
+    ) -> None:
+        rows = [
+            {k: v for k, v in row.items() if k != column} for row in some_crashes()
+        ]
+        response = submit_with_crashes(client, auth, project, corridor, rows)
+
+        assert response.status_code == 422
+        assert column in response.json()["error"]["message"]
+
+    def test_and_no_job_is_created(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+    ) -> None:
+        """The refusal contract's first row: rejected at submit, nothing queued."""
+        rows = [
+            {k: v for k, v in row.items() if k != "period"} for row in some_crashes()
+        ]
+        submit_with_crashes(client, auth, project, corridor, rows)
+
+        listed = client.get(f"/projects/{project['id']}/jobs", headers=auth)
+        assert listed.json() == []
+
+    def test_a_coordinate_that_is_not_a_number_is_named_with_its_row(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+    ) -> None:
+        rows = some_crashes(2)
+        rows[1]["latitude"] = "34.9N"
+        response = submit_with_crashes(client, auth, project, corridor, rows)
+
+        assert response.status_code == 422
+        message = response.json()["error"]["message"]
+        assert "row 1" in message and "latitude" in message
+
+    def test_coordinates_off_the_planet_suggest_the_likely_cause(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+    ) -> None:
+        """Latitude 33.2 and longitude 34.9 is the swap, and it is the common one."""
+        response = submit_with_crashes(
+            client, auth, project, corridor, some_crashes(1, latitude=133.2)
+        )
+
+        assert response.status_code == 422
+        assert "wrong way round" in response.json()["error"]["message"]
+
+    def test_an_empty_table_says_to_omit_it_instead(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        project: dict[str, Any],
+        corridor: dict[str, Any],
+    ) -> None:
+        response = submit_with_crashes(client, auth, project, corridor, [])
+
+        assert response.status_code == 422
+        assert "Omit it entirely" in response.json()["error"]["message"]
+
+    def test_crashes_without_a_corridor_are_refused(
+        self, client: TestClient, auth: dict[str, str], project: dict[str, Any]
+    ) -> None:
+        """A demo invents its own crashes along an invented road."""
+        response = client.post(
+            "/jobs",
+            json={
+                "project_id": project["id"],
+                "demo": True,
+                "crashes": some_crashes(),
+            },
+            headers=auth,
+        )
+
+        assert response.status_code == 422
+        assert "corridor_id" in response.json()["error"]["message"]
+
+    def test_crashes_beside_a_panel_are_refused(
+        self, client: TestClient, auth: dict[str, str], project: dict[str, Any]
+    ) -> None:
+        """A panel already carries `n_crashes`. Two answers, nothing to choose."""
+        response = client.post(
+            "/jobs",
+            json={
+                "project_id": project["id"],
+                "panel": a_valid_panel(),
+                "crashes": some_crashes(),
+            },
+            headers=auth,
+        )
+
+        assert response.status_code == 422
+        assert "n_crashes" in response.json()["error"]["message"]
+
+
+# -- a road identified by name -------------------------------------------------
+
+
+class TestACorridorMayBeSelectedByName:
+    def test_a_name_is_accepted_and_round_trips(
+        self, client: TestClient, auth: dict[str, str], project: dict[str, Any]
+    ) -> None:
+        response = client.post(
+            f"/projects/{project['id']}/corridors",
+            json={
+                "name": "Kings Road",
+                "osm_name": "Kings Road",
+                "bbox": [34.6, 32.9, 35.1, 33.5],
+            },
+            headers=auth,
+        )
+
+        assert response.status_code == 201
+        assert response.json()["osm_name"] == "Kings Road"
+        assert response.json()["ref"] is None
+
+    def test_both_selectors_at_once_is_refused(
+        self, client: TestClient, auth: dict[str, str], project: dict[str, Any]
+    ) -> None:
+        """Nothing could say which query produced the centreline."""
+        response = client.post(
+            f"/projects/{project['id']}/corridors",
+            json={
+                "name": "confused",
+                "ref": "B9",
+                "osm_name": "Kings Road",
+                "bbox": [34.6, 32.9, 35.1, 33.5],
+            },
+            headers=auth,
+        )
+
+        assert response.status_code == 422
+        assert "not both" in response.json()["error"]["message"]
+
+    def test_a_selector_with_no_box_is_refused(
+        self, client: TestClient, auth: dict[str, str], project: dict[str, Any]
+    ) -> None:
+        """Unbounded, Overpass answers with the planet and times out a minute later."""
+        response = client.post(
+            f"/projects/{project['id']}/corridors",
+            json={"name": "boxless", "ref": "B9"},
+            headers=auth,
+        )
+
+        assert response.status_code == 422
+        assert "bbox" in response.json()["error"]["message"]
+
+    def test_a_job_on_a_named_corridor_is_queued(
+        self, client: TestClient, auth: dict[str, str], project: dict[str, Any]
+    ) -> None:
+        """The gate used to insist on `ref`, which put every named road out of reach."""
+        named = client.post(
+            f"/projects/{project['id']}/corridors",
+            json={
+                "name": "Kings Road",
+                "osm_name": "Kings Road",
+                "bbox": [34.6, 32.9, 35.1, 33.5],
+            },
+            headers=auth,
+        ).json()
+
+        response = client.post(
+            "/jobs",
+            json={"project_id": project["id"], "corridor_id": named["id"]},
+            headers=auth,
+        )
+
+        assert response.status_code == 202
+
+
+# -- the report, rendered on demand --------------------------------------------
+
+
+class TestTheReportIsServedWithoutBeingStored:
+    """A run made by this service writes no files, so there was nothing to download.
+
+    Rendering on demand is the fix that matches the design rather than working around
+    it: a payload re-renders months later under a page that has since been improved,
+    and a stored HTML file would freeze the page a run was made with.
+    """
+
+    def test_it_renders_the_stored_payload(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        store: MemoryStore,
+        tenant: Tenant,
+        project: dict[str, Any],
+        mode_a_payload: dict[str, Any],
+    ) -> None:
+        run = store.store_run(tenant.id, uuid_of(project), mode_a_payload)
+
+        response = client.get(f"/runs/{run.id}/report.html", headers=auth)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert "<html" in response.text
+        assert "roadrisk-run" in response.text, "the run never reached the page"
+
+    def test_it_is_an_attachment_rather_than_a_page_to_visit(
+        self,
+        client: TestClient,
+        auth: dict[str, str],
+        store: MemoryStore,
+        tenant: Tenant,
+        project: dict[str, Any],
+        mode_a_payload: dict[str, Any],
+    ) -> None:
+        """Inline would mean this origin executing a document it renders for anyone."""
+        run = store.store_run(tenant.id, uuid_of(project), mode_a_payload)
+
+        response = client.get(f"/runs/{run.id}/report.html", headers=auth)
+
+        assert "attachment" in response.headers["content-disposition"]
+
+    def test_it_needs_no_artefact_root(
+        self,
+        store: MemoryStore,
+        tenant: Tenant,
+        auth: dict[str, str],
+        mode_a_payload: dict[str, Any],
+    ) -> None:
+        """Nothing here opens a path out of a column, so the allow-list is irrelevant."""
+        app = create_app(
+            store_provider=shared_store(store), settings=ApiSettings(), runner=None
+        )
+        offline = TestClient(app)
+        project = offline.post("/projects", json={"name": "p"}, headers=auth).json()
+        run = store.store_run(tenant.id, uuid_of(project), mode_a_payload)
+
+        assert offline.get(f"/runs/{run.id}/report.html", headers=auth).status_code == 200
+
+    def test_another_tenants_run_is_not_rendered(
+        self,
+        client: TestClient,
+        store: MemoryStore,
+        tenant: Tenant,
+        project: dict[str, Any],
+        mode_a_payload: dict[str, Any],
+    ) -> None:
+        run = store.store_run(tenant.id, uuid_of(project), mode_a_payload)
+        stranger = store.create_tenant(Tenant(name="somebody else"))
+
+        response = client.get(
+            f"/runs/{run.id}/report.html",
+            headers={"X-Tenant-Id": str(stranger.id)},
+        )
+
+        assert response.status_code == 404

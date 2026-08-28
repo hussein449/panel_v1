@@ -14,8 +14,10 @@ import pytest
 from roadrisk.geo.errors import CorridorError
 from roadrisk.geo.osm import (
     BoundingBox,
+    Selector,
     build_query,
     fetch_corridor,
+    fetch_corridor_by,
 )
 
 # A patch of Cyprus, so the UTM zone and metre-per-degree scaling are realistic.
@@ -423,3 +425,103 @@ class TestResultFeedsThePipeline:
             client=client_returning(way(straight(0, 2000), name="Troodos Road")),
         )
         assert result.tags["name"] == "Troodos Road"
+
+
+# -- selecting a road by name --------------------------------------------------
+#
+# A name is the same query with a weaker guarantee. What makes it safe is the
+# fragmentation gate that was already here: two unrelated roads sharing one name are a
+# fragmented collection, which is exactly what that gate refuses. These tests hold that
+# claim rather than restate it.
+
+
+def named(points: list[tuple[float, float]], road: str) -> dict:
+    """A way carrying a name and NO ref — the case ref-only selection cannot reach."""
+    element = way(points, name=road)
+    del element["tags"]["ref"]
+    return element
+
+
+def two_roads_one_name(road: str) -> list[dict]:
+    """Two equal runs 4 km apart. Unbridgeable, so the longest carries about half."""
+    return [
+        named(straight(0, 2000), road),
+        named([at(east, 4000.0) for east in range(6000, 8001, 50)], road),
+    ]
+
+
+class TestSelectingByName:
+    def test_the_query_asks_for_the_name_tag(self) -> None:
+        query = build_query(Selector.by_name("High Street"), BBOX)
+
+        assert '"name"="High Street"' in query
+        assert '"ref"' not in query
+        assert "out geom;" in query
+
+    def test_a_bare_string_still_means_a_reference(self) -> None:
+        """Every caller that passed a string kept its meaning when names arrived."""
+        assert build_query("B9", BBOX) == build_query(Selector.by_ref("B9"), BBOX)
+
+    def test_it_resolves_a_road_that_has_no_reference(self) -> None:
+        client = client_returning(
+            named(straight(0, 800), "Kings Road"),
+            named(straight(800, 1600), "Kings Road"),
+        )
+        result = fetch_corridor_by(Selector.by_name("Kings Road"), BBOX, client=client)
+
+        assert result.ref == "Kings Road"
+        assert result.selector_key == "name"
+        assert result.selector == Selector("name", "Kings Road")
+        assert result.n_pieces_after_merge == 1
+
+    def test_two_unrelated_roads_of_the_same_name_are_refused(self) -> None:
+        """The whole reason a name may be trusted less than a reference."""
+        client = client_returning(*two_roads_one_name("High Street"))
+
+        with pytest.raises(CorridorError, match="fragmented collection"):
+            fetch_corridor_by(Selector.by_name("High Street"), BBOX, client=client)
+
+    def test_that_refusal_explains_what_is_specific_to_a_name(self) -> None:
+        client = client_returning(*two_roads_one_name("High Street"))
+
+        with pytest.raises(CorridorError, match="not unique the way a reference"):
+            fetch_corridor_by(Selector.by_name("High Street"), BBOX, client=client)
+
+    def test_a_name_is_held_to_a_higher_share_than_a_reference(self) -> None:
+        assert (
+            Selector.by_name("High Street").min_longest_share
+            > Selector.by_ref("B9").min_longest_share
+        )
+
+    def test_nothing_found_says_the_name_is_matched_exactly(self) -> None:
+        with pytest.raises(CorridorError, match="exact match"):
+            fetch_corridor_by(
+                Selector.by_name("Nowhere Lane"), BBOX, client=client_returning()
+            )
+
+
+class TestTheSelectorItself:
+    def test_a_quote_in_a_name_cannot_end_the_query_string(self) -> None:
+        """Unescaped, this closes the string early and matches something else.
+
+        It could not arise while only references were selectable, because a reference
+        is alphanumeric. It can now, and it fails quietly rather than loudly.
+        """
+        query = build_query(Selector.by_name('Bill "Bojangles" Way'), BBOX)
+
+        assert '\\"Bojangles\\"' in query
+        assert query.count('"name"=') == 1
+        assert query.endswith("out geom;")
+
+    def test_a_backslash_is_escaped_too(self) -> None:
+        query = build_query(Selector.by_name("Back\\slash Road"), BBOX)
+
+        assert "Back\\\\slash" in query
+
+    def test_only_ref_and_name_select_a_road(self) -> None:
+        with pytest.raises(CorridorError, match="'ref' or 'name'"):
+            Selector("highway", "primary")
+
+    def test_an_empty_value_is_refused(self) -> None:
+        with pytest.raises(CorridorError, match="cannot be empty"):
+            Selector.by_name("   ")

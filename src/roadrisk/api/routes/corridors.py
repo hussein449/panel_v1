@@ -46,6 +46,7 @@ def create_corridor(
             project_id=project_id,
             name=body.name,
             ref=body.ref,
+            osm_name=body.osm_name,
             bbox=body.bbox,
             unit_length_m=body.unit_length_m,
         )

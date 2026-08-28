@@ -70,7 +70,7 @@ export interface ArtefactOut {
  * Deliberately *not* the resolved geometry. Geometry belongs to a run, because the
  * OSM extract behind it changes: two runs of the same corridor a month apart are two
  * different centrelines and must not be conflated. What is stable is the request —
- * this reference, this bounding box, this unit length.
+ * this selector, this bounding box, this unit length.
  */
 export interface Corridor {
   id: string;
@@ -78,6 +78,7 @@ export interface Corridor {
   project_id: string;
   name: string;
   ref: string | null;
+  osm_name: string | null;
   bbox: [number, number, number, number] | null;
   unit_length_m: number;
   created_at: string | null;
@@ -86,8 +87,10 @@ export interface Corridor {
 /** Created under the project in the path. `project_id` is never in the body. */
 export interface CorridorCreate {
   name: string;
-  /** Road reference as OSM knows it, e.g. 'B9'. Null for a client-supplied centreline. */
+  /** Road reference as OSM knows it, e.g. 'B9'. Null for a client-supplied centreline, or when the road is identified by 'osm_name'. */
   ref?: string | null;
+  /** The road's OSM 'name' tag, for a road that carries no reference — most residential and urban streets. Matched exactly, including case and punctuation. A name is not unique the way a reference is, so a box holding two roads of this name is refused as fragmented rather than welded into one corridor. */
+  osm_name?: string | null;
   bbox?: [number, number, number, number] | null;
   unit_length_m?: number;
 }
@@ -96,6 +99,7 @@ export interface CorridorCreate {
 export interface CorridorPatch {
   name?: string | null;
   ref?: string | null;
+  osm_name?: string | null;
   bbox?: [number, number, number, number] | null;
   unit_length_m?: number | null;
 }
@@ -238,6 +242,7 @@ export interface JobSpec {
   source: "corridor" | "panel" | "demo";
   options: JobOptions;
   panel: (Record<string, unknown>)[] | null;
+  crashes: (Record<string, unknown>)[] | null;
 }
 
 /**
@@ -265,6 +270,8 @@ export interface JobSubmission {
   corridor_id?: string | null;
   /** Rows of a panel you already built, as objects. Validated against the input contract before the job exists, so a panel that could never be assessed never becomes a queued job. */
   panel?: (Record<string, unknown>)[] | null;
+  /** The crash table for this road, as objects with 'latitude', 'longitude' and 'period' — the CLI's `--crashes` CSV, in JSON. Optional, and the single most consequential thing you can supply: **without it the engine has no counts to fit and the run can only be Mode B.** Legal only alongside 'corridor_id'. Validated here, so a table that could never be snapped is a 422 naming the column rather than a confident ranking built from crash data that went nowhere. */
+  crashes?: (Record<string, unknown>)[] | null;
   /** Assess a synthetic 10 km corridor with an invented crash table. Needs no network and no data. **The resulting report says on its own face that there is no real road in it** — the flag travels into the payload and the limitations page reports it as material, so a demonstration cannot be mistaken for an assessment by whoever you send it to. */
   demo?: boolean;
   params?: JobOptions;

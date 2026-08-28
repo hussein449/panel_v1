@@ -117,7 +117,7 @@
       },
       "Corridor": {
         "additionalProperties": false,
-        "description": "A road, as the parameters needed to fetch and segment it again.\n\nDeliberately *not* the resolved geometry. Geometry belongs to a run, because the\nOSM extract behind it changes: two runs of the same corridor a month apart are two\ndifferent centrelines and must not be conflated. What is stable is the request \u2014\nthis reference, this bounding box, this unit length.",
+        "description": "A road, as the parameters needed to fetch and segment it again.\n\nDeliberately *not* the resolved geometry. Geometry belongs to a run, because the\nOSM extract behind it changes: two runs of the same corridor a month apart are two\ndifferent centrelines and must not be conflated. What is stable is the request \u2014\nthis selector, this bounding box, this unit length.",
         "properties": {
           "bbox": {
             "anyOf": [
@@ -166,6 +166,17 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "osm_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Osm Name"
           },
           "project_id": {
             "format": "uuid",
@@ -240,6 +251,19 @@
             "title": "Name",
             "type": "string"
           },
+          "osm_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The road's OSM 'name' tag, for a road that carries no reference \u2014 most residential and urban streets. Matched exactly, including case and punctuation. A name is not unique the way a reference is, so a box holding two roads of this name is refused as fragmented rather than welded into one corridor.",
+            "title": "Osm Name"
+          },
           "ref": {
             "anyOf": [
               {
@@ -250,7 +274,7 @@
                 "type": "null"
               }
             ],
-            "description": "Road reference as OSM knows it, e.g. 'B9'. Null for a client-supplied centreline.",
+            "description": "Road reference as OSM knows it, e.g. 'B9'. Null for a client-supplied centreline, or when the road is identified by 'osm_name'.",
             "title": "Ref"
           },
           "unit_length_m": {
@@ -311,6 +335,18 @@
               }
             ],
             "title": "Name"
+          },
+          "osm_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Osm Name"
           },
           "ref": {
             "anyOf": [
@@ -754,6 +790,22 @@
               }
             ],
             "title": "Corridor Id"
+          },
+          "crashes": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The crash table for this road, as objects with 'latitude', 'longitude' and 'period' \u2014 the CLI's `--crashes` CSV, in JSON. Optional, and the single most consequential thing you can supply: **without it the engine has no counts to fit and the run can only be Mode B.** Legal only alongside 'corridor_id'. Validated here, so a table that could never be snapped is a 422 naming the column rather than a confident ranking built from crash data that went nowhere.",
+            "title": "Crashes"
           },
           "demo": {
             "default": false,
@@ -3358,6 +3410,107 @@
           }
         },
         "summary": "Download one artefact",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/report.html": {
+      "get": {
+        "description": "Put the stored payload inside the compiled page and hand back the document.\n\n**Rendered, never stored.** A run assessed by this service writes no files \u2014 it is a\npayload, and `list_artefacts` returns nothing for it. That is a deliberate property\nrather than a gap: a payload re-renders months later under a report page that has\nsince been improved, and a stored HTML file would freeze the page a run was made\nwith. So the way to download a report is to build it now, from the run, with the\nrenderer the CLI and the website both already use.\n\nIt is therefore *not* an artefact and is not served through the artefact path: there\nis no URI, no disk, no `$ROADRISK_ARTEFACT_ROOT` and no allow-list to check, because\nnothing here opens a file whose path came out of a column. The one thing it shares\nwith that path is `Content-Disposition: attachment` \u2014 this is a document to save,\nand serving HTML inline would mean this origin executing it.",
+        "operationId": "render_run_report_runs__run_id__report_html_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which tenant's rows this request may see. Required on every route that touches a row. **This is not authentication** \u2014 step 5.4a replaces it with a real identity and row-level policies in the database. An unknown tenant is not an error: it is a tenant with no rows, which is what tenancy means.",
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {}
+            },
+            "description": "One self-contained HTML document, served as an attachment."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Refused before anything was read."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No tenant. See X-Tenant-Id."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, for this tenant."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The request or the panel was refused."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Logged, with a reference. Never a trace."
+          },
+          "501": {
+            "description": "This build ships no compiled report page."
+          }
+        },
+        "summary": "The report for this run, rendered on demand",
         "tags": [
           "runs"
         ]

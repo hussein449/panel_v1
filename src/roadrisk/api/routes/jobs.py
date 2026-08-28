@@ -97,21 +97,26 @@ def submit_job(
                 f"not {body.project_id}.",
                 field="body.corridor_id",
             )
-        if corridor.ref is None or corridor.bbox is None:
-            # A corridor may legitimately have neither — the record's own docstring
-            # says so, for a client-supplied centreline. There is no way to supply one
-            # over HTTP yet, so a job on such a corridor has no geometry to fetch and
-            # is refused now rather than failing in a worker at 5.1d.
+        selected = corridor.ref is not None or corridor.osm_name is not None
+        if not selected or corridor.bbox is None:
+            # A corridor may legitimately have no selector at all — the record's own
+            # docstring says so, for a client-supplied centreline. There is no way to
+            # supply one over HTTP yet, so a job on such a corridor has no geometry to
+            # fetch and is refused now rather than failing in a worker at 5.1d.
             raise ApiRefusal(
                 HTTP_422,
                 ErrorCode.INVALID_REQUEST,
                 f"Corridor {corridor.id} has "
-                f"{'no OSM reference' if corridor.ref is None else 'no bounding box'}, "
-                "so there is nothing to fetch. Give it both, or submit a panel you "
-                "have already built.",
+                + (
+                    "no OSM reference and no name"
+                    if not selected
+                    else "no bounding box"
+                )
+                + ", so there is nothing to fetch. Give it a 'ref' or an 'osm_name', "
+                "and a 'bbox', or submit a panel you have already built.",
                 field="body.corridor_id",
             )
-        spec = JobSpec(source="corridor", options=body.params)
+        spec = JobSpec(source="corridor", options=body.params, crashes=body.crashes)
     else:
         assert body.panel is not None  # guaranteed by JobSubmission's validator
         _check_panel(body.panel, settings.max_panel_rows)

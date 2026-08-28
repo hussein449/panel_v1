@@ -95,10 +95,53 @@ class CorridorBody(Body):
         default=None,
         max_length=64,
         description="Road reference as OSM knows it, e.g. 'B9'. Null for a "
-        "client-supplied centreline.",
+        "client-supplied centreline, or when the road is identified by 'osm_name'.",
+    )
+    osm_name: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "The road's OSM 'name' tag, for a road that carries no reference — most "
+            "residential and urban streets. Matched exactly, including case and "
+            "punctuation. A name is not unique the way a reference is, so a box "
+            "holding two roads of this name is refused as fragmented rather than "
+            "welded into one corridor."
+        ),
     )
     bbox: BBox | None = None
     unit_length_m: float = Field(default=500.0, gt=0.0, le=100_000.0)
+
+    @model_validator(mode="after")
+    def _one_selector_at_most(self) -> CorridorBody:
+        """A road is identified one way, or not at all.
+
+        Both set is not a doubly-identified road; it is a row where nothing can say
+        which query produced the centreline, and two runs of it a month apart could
+        resolve different roads. Migration 0004 refuses it in the database as well —
+        this exists so the refusal names the field while the row does not yet exist.
+        """
+        if self.ref is not None and self.osm_name is not None:
+            raise ValueError(
+                "give 'ref' or 'osm_name', not both: a road is identified by its "
+                "reference or by its name, and a corridor carrying both cannot say "
+                "which query produced its centreline."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _a_selector_needs_somewhere_to_look(self) -> CorridorBody:
+        """Overpass answers an unbounded query with the planet, then times out.
+
+        Which surfaces a minute later in a worker as an infrastructure failure, when it
+        is really a submission that could never have worked.
+        """
+        if (self.ref is not None or self.osm_name is not None) and self.bbox is None:
+            raise ValueError(
+                "a road selected by 'ref' or 'osm_name' needs a 'bbox' to look in. "
+                "Without one the query covers the planet and the mirror times out "
+                "rather than answering."
+            )
+        return self
 
     @model_validator(mode="after")
     def _box_is_the_right_way_up(self) -> CorridorBody:
@@ -135,6 +178,7 @@ class CorridorPatch(Body):
 
     name: Name | None = None
     ref: str | None = Field(default=None, max_length=64)
+    osm_name: str | None = Field(default=None, max_length=200)
     bbox: BBox | None = None
     unit_length_m: float | None = Field(default=None, gt=0.0, le=100_000.0)
 
@@ -181,6 +225,62 @@ class JobOptions(Body):
 
 
 PanelRows = list[dict[str, Any]]
+CrashRows = list[dict[str, Any]]
+
+#: What a crash row must carry to be snapped onto a corridor. The same three the CLI's
+#: `--crashes` CSV requires, and for the same reason: a coordinate to project onto the
+#: centreline and a period to file the result under.
+CRASH_COLUMNS = ("latitude", "longitude", "period")
+
+
+def _check_crash_rows(rows: CrashRows) -> CrashRows:
+    """Refuse a crash table at submit, naming what is wrong with it.
+
+    **Why this is here rather than in the pipeline.** A crash table that cannot be
+    snapped produces a run with no crashes on it — which is not an error anywhere
+    downstream. It is a Mode B ranking, produced confidently, from a corridor whose
+    crash data silently went nowhere. That is exactly the failure this project refuses
+    to ship, so the table is checked before a job exists and the refusal names the
+    column, in keeping with the contract the README sets out for a 422.
+    """
+    if not rows:
+        raise ValueError(
+            "'crashes' was given but is empty. Omit it entirely to assess the road "
+            "without a crash table — the engine will say so and score Mode B."
+        )
+
+    missing = sorted(set(CRASH_COLUMNS) - set(rows[0]))
+    if missing:
+        raise ValueError(
+            f"crash rows are missing column(s): {', '.join(missing)}. Every row needs "
+            f"{', '.join(CRASH_COLUMNS)} — a coordinate to put it on the road, and a "
+            "period to count it in."
+        )
+
+    for index, row in enumerate(rows):
+        for column in ("latitude", "longitude"):
+            value = row.get(column)
+            if not isinstance(value, int | float) or isinstance(value, bool):
+                raise ValueError(
+                    f"crash row {index} has {column}={value!r}, which is not a number. "
+                    "Coordinates are decimal degrees."
+                )
+        latitude, longitude = row["latitude"], row["longitude"]
+        if not -90.0 <= latitude <= 90.0:
+            raise ValueError(
+                f"crash row {index} has latitude={latitude}, which is not on Earth. "
+                "Latitude and longitude may be the wrong way round."
+            )
+        if not -180.0 <= longitude <= 180.0:
+            raise ValueError(
+                f"crash row {index} has longitude={longitude}, which is not on Earth."
+            )
+        if not str(row.get("period", "")).strip():
+            raise ValueError(
+                f"crash row {index} has an empty period. A crash with no period cannot "
+                "be counted in one."
+            )
+    return rows
 
 
 class JobSubmission(Body):
@@ -199,6 +299,18 @@ class JobSubmission(Body):
         description="Rows of a panel you already built, as objects. Validated against "
         "the input contract before the job exists, so a panel that could never be "
         "assessed never becomes a queued job.",
+    )
+    crashes: CrashRows | None = Field(
+        default=None,
+        description=(
+            "The crash table for this road, as objects with 'latitude', 'longitude' "
+            "and 'period' — the CLI's `--crashes` CSV, in JSON. Optional, and the "
+            "single most consequential thing you can supply: **without it the engine "
+            "has no counts to fit and the run can only be Mode B.** Legal only "
+            "alongside 'corridor_id'. Validated here, so a table that could never be "
+            "snapped is a 422 naming the column rather than a confident ranking built "
+            "from crash data that went nowhere."
+        ),
     )
     demo: bool = Field(
         default=False,
@@ -256,6 +368,30 @@ class JobSubmission(Body):
             )
         return self
 
+    @model_validator(mode="after")
+    def _crashes_belong_to_a_corridor(self) -> JobSubmission:
+        """Crashes are snapped onto a centreline, so there has to be one.
+
+        A panel already carries `n_crashes` per row — supplying both would be two
+        answers to one question, with nothing to say which wins. A demo invents its own
+        crash table along an invented road, so a real one has nowhere to land.
+        """
+        if self.crashes is None:
+            return self
+        if self.corridor_id is None:
+            raise ValueError(
+                "'crashes' needs 'corridor_id': a crash table is snapped onto a "
+                "centreline, and "
+                + (
+                    "a demo corridor's centreline is invented, so real crashes have "
+                    "no road to land on."
+                    if self.demo
+                    else "a panel you supply already carries 'n_crashes' per row."
+                )
+            )
+        _check_crash_rows(self.crashes)
+        return self
+
 
 class JobSpec(Body):
     """What is stored in `job.params`, and what 5.1d reads back to execute it.
@@ -272,6 +408,10 @@ class JobSpec(Body):
     #: and `log_exposure` are derived, and keeping the derivation would freeze a copy of
     #: the contract inside a row.
     panel: PanelRows | None = None
+    #: Present only for a corridor job that was given one. Stored as submitted for the
+    #: same reason as `panel`: snapping is the pipeline's job, and a row that kept its
+    #: result would freeze a copy of the tolerance the run was made with.
+    crashes: CrashRows | None = None
 
 
 # -- runs and artefacts --------------------------------------------------------

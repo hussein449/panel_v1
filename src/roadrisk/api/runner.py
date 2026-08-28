@@ -288,7 +288,19 @@ def _build_corridor(
         ) from exc
 
     options = spec.options
-    periods = monthly_periods(options.n_periods)
+    crashes = _crash_frame(spec)
+    # **A supplied crash table decides the calendar.** `monthly_periods` invents
+    # 2024-01 onwards, which is right for a demo and quietly catastrophic for real data:
+    # give it crashes from 2019 and every one falls outside the panel, is counted under
+    # "period not in panel", and the run describes a road with no crashes on it —
+    # confidently, and in Mode B, which is the exact failure this project exists to
+    # refuse. The periods a crash table actually covers are the only honest calendar for
+    # a panel built to receive it.
+    periods = (
+        _periods_from(crashes)
+        if crashes is not None
+        else monthly_periods(options.n_periods)
+    )
     unit_length_m = options.unit_length_m or 500.0
 
     if spec.source == "demo":
@@ -317,22 +329,64 @@ def _build_corridor(
         points,
         periods=periods,
         name=corridor.name,
-        crashes=None,
+        crashes=crashes,
         target_length_m=corridor.unit_length_m or unit_length_m,
         tolerance_m=options.tolerance_m,
         registry=registry,
-        ref=corridor.ref,
+        ref=corridor.ref or corridor.osm_name,
         **_clients(options),
     )
 
 
+def _crash_frame(spec: JobSpec) -> Any:
+    """The submitted crash table as a dataframe, or None.
+
+    Columns are left exactly as submitted. `build_corridor_panel` takes the column names
+    as arguments and does the snapping itself, so converting anything here would be this
+    module holding a second opinion about a contract that already has one.
+    """
+    if not spec.crashes:
+        return None
+    import pandas as pd
+
+    return pd.DataFrame(spec.crashes)
+
+
+def _periods_from(crashes: Any) -> list[str]:
+    """The calendar a crash table covers, in order.
+
+    Sorted as strings, which is why the CLI's `YYYY-MM` convention matters: it sorts
+    chronologically on its own. A period label that does not is still handled correctly
+    — the panel is a set of cells and the order only decides how they are listed — but
+    it reads oddly in a report, and that is the caller's choice to make.
+
+    Every period is kept, including ones with a single crash. Trimming to a "busy"
+    window would drop the zero-crash cells that Mode A is built on.
+    """
+    return sorted({str(period) for period in crashes["period"].tolist()})
+
+
 def _fetch_centreline(corridor: Any) -> list[tuple[float, float]]:
-    """Resolve the road from OSM. The submit boundary has already checked both inputs."""
-    from roadrisk.geo.osm import BoundingBox, HttpOverpassClient, fetch_corridor
+    """Resolve the road from OSM. The submit boundary has already checked both inputs.
+
+    Which tag identifies the road is the corridor's own record to hold — the store
+    refuses a row carrying both, so there is nothing to choose between here.
+    """
+    from roadrisk.geo.osm import (
+        BoundingBox,
+        HttpOverpassClient,
+        Selector,
+        fetch_corridor_by,
+    )
 
     south, west, north, east = corridor.bbox
-    result = fetch_corridor(
-        corridor.ref,
+    selector = (
+        Selector.by_ref(corridor.ref)
+        if corridor.ref is not None
+        else Selector.by_name(corridor.osm_name)
+    )
+    result = fetch_corridor_by(
+        selector,
         BoundingBox(south=south, west=west, north=north, east=east),
         client=HttpOverpassClient(),
     )

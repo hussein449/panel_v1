@@ -1,11 +1,25 @@
-"""Step 2.2b — resolve a corridor from OpenStreetMap by road reference.
+"""Step 2.2b — resolve a corridor from OpenStreetMap by road reference or name.
 
-    ref + bounding box  →  fetch fragments  →  stitch  →  bridge gaps  →  trim  →  gate
+    selector + bounding box  →  fetch  →  stitch  →  bridge gaps  →  trim  →  gate
 
-Fetching **by road reference** rather than routing between two points is deliberate.
-A routing engine returns the *fastest* path, which will happily leave the road you
-asked about and continue on a motorway — and you would not know. Asking OSM for
-``ref="B9"`` cannot return anything that is not the B9.
+Fetching **by tag** rather than routing between two points is deliberate. A routing
+engine returns the *fastest* path, which will happily leave the road you asked about and
+continue on a motorway — and you would not know. Asking OSM for ``ref="B9"`` cannot
+return anything that is not the B9.
+
+**A name is the same query with a weaker guarantee, not a different mechanism.** Most
+roads this product is aimed at carry a ``ref``; residential and urban streets often carry
+only a ``name``, and refusing those outright put a whole class of corridor out of reach.
+So a selector is a tag key and a value, and everything downstream of the query is
+identical.
+
+What makes that safe is a gate that was already here. A reference is effectively unique
+inside a sensible box; a name is emphatically not, and two unrelated *High Street*s in
+one box is the obvious failure. But two unrelated roads produce a **fragmented
+collection** — precisely what :data:`MIN_LONGEST_SHARE` exists to refuse, with a message
+that says why. The rule that makes ``ref`` trustworthy protects ``name`` too. A name is
+simply held to a higher share (:data:`MIN_LONGEST_SHARE_NAME`), because it has less claim
+to the benefit of the doubt — not because it is checked differently.
 
 **The network is injectable.** :class:`OverpassClient` is a protocol; the default
 implementation uses the stdlib, and tests supply a fake. Nothing here touches the
@@ -48,6 +62,16 @@ DEFAULT_MAX_GAP_M = 25.0
 #: Below it, the fetch produced a fragmented mess rather than a corridor, and the
 #: brief's "reject if the route leaves the named road" gate has its equivalent here.
 MIN_LONGEST_SHARE = 0.6
+
+#: The same test when the selector was a **name** rather than a reference.
+#:
+#: Higher, and deliberately so. `ref="B9"` is close enough to unique inside a sensible
+#: box that anything else coming back is a data error. A name is not: "High Street"
+#: matches every High Street in the box, and two of them are two corridors welded into
+#: one answer. That failure looks exactly like fragmentation, so the existing gate
+#: catches it — this only decides how much fragmentation is forgiven first, and a name
+#: has less claim to be forgiven than a reference does.
+MIN_LONGEST_SHARE_NAME = 0.8
 
 #: The same test on a divided road, where roughly half of what comes back is the other
 #: carriageway and a 0.6 threshold would reject every motorway.
@@ -175,6 +199,9 @@ class CorridorFetch:
     """An assembled centreline and everything that happened to it on the way."""
 
     points: list[tuple[float, float]]
+    #: The selector's *value* — "B9", or "High Street". Named `ref` because it was a
+    #: reference for five stages and renaming it would churn every caller to say the
+    #: same thing; `selector_key` below says which tag it came from.
     ref: str
     n_fragments: int
     n_pieces_after_merge: int
@@ -185,17 +212,85 @@ class CorridorFetch:
     excluded_km: float = 0.0
     tags: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    #: "ref" or "name". Last and defaulted so that every existing construction of this
+    #: dataclass — the tests included — keeps meaning exactly what it meant.
+    selector_key: str = "ref"
 
     @property
     def n_vertices(self) -> int:
         return len(self.points)
 
+    @property
+    def selector(self) -> Selector:
+        """How this corridor was asked for, back in one piece."""
+        return Selector(self.selector_key, self.ref)
 
-def build_query(ref: str, bbox: BoundingBox, *, timeout_s: int = 60) -> str:
-    """Overpass QL for every highway way carrying this reference inside the box."""
+
+@dataclass(frozen=True)
+class Selector:
+    """Which OSM tag identifies the road, and what it has to equal.
+
+    Two of them exist and there will not be a third without a reason: `ref`, which is
+    what a road authority calls a road, and `name`, which is what everybody else calls
+    it. Both are exact matches — no regex, no fuzzy match. A near-match that silently
+    returned a different road is the failure this whole module is arranged to prevent.
+    """
+
+    key: str
+    value: str
+
+    @classmethod
+    def by_ref(cls, ref: str) -> Selector:
+        return cls("ref", ref)
+
+    @classmethod
+    def by_name(cls, name: str) -> Selector:
+        return cls("name", name)
+
+    def __post_init__(self) -> None:
+        if self.key not in ("ref", "name"):
+            raise CorridorError(
+                f"a road is selected by 'ref' or 'name', not {self.key!r}."
+            )
+        if not self.value.strip():
+            raise CorridorError(f"the {self.key} to fetch cannot be empty.")
+
+    @property
+    def min_longest_share(self) -> float:
+        """How much fragmentation this selector is forgiven. See the constants."""
+        return MIN_LONGEST_SHARE if self.key == "ref" else MIN_LONGEST_SHARE_NAME
+
+    def __str__(self) -> str:
+        return f"{self.key}='{self.value}'"
+
+
+def _quote(value: str) -> str:
+    r"""Escape a tag value for an Overpass QL double-quoted string.
+
+    Overpass takes backslash escapes inside `"..."`, so a road actually named
+    ``Bill "Bojangles" Way`` — or any name carrying a backslash — has to be escaped
+    rather than interpolated. Before names were selectable this could not arise, because
+    a `ref` is alphanumeric; now it can, and an unescaped quote does not fail loudly. It
+    ends the string early and builds a query that either errors obscurely at the mirror
+    or, far worse, matches something else.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def build_query(
+    selector: Selector | str, bbox: BoundingBox, *, timeout_s: int = 60
+) -> str:
+    """Overpass QL for every highway way matching this selector inside the box.
+
+    A bare string is read as a `ref`, so every existing caller keeps working.
+    """
+    chosen = (
+        selector if isinstance(selector, Selector) else Selector.by_ref(selector)
+    )
     return (
         f"[out:json][timeout:{timeout_s}];"
-        f'way["ref"="{ref}"]["highway"]({bbox.as_overpass()});'
+        f'way["{chosen.key}"="{_quote(chosen.value)}"]["highway"]'
+        f"({bbox.as_overpass()});"
         f"out geom;"
     )
 
@@ -210,7 +305,10 @@ def fetch_corridor(
     max_gap_m: float = DEFAULT_MAX_GAP_M,
     endpoint_tolerance_m: float = DEFAULT_ENDPOINT_TOLERANCE_M,
 ) -> CorridorFetch:
-    """Resolve a corridor centreline from OSM.
+    """Resolve a corridor centreline from OSM by road reference.
+
+    The original entry point, and the one every caller that knows it wants a reference
+    should keep using. :func:`fetch_corridor_by` is the same thing for a name.
 
     Args:
         ref: Road reference as tagged in OSM, e.g. ``"B9"``, ``"I 95"``, ``"A1"``.
@@ -225,15 +323,61 @@ def fetch_corridor(
         CorridorError: Nothing was returned, the result is too fragmented to be a
             corridor, or a requested endpoint is nowhere near the road.
     """
+    return fetch_corridor_by(
+        Selector.by_ref(ref),
+        bbox,
+        client=client,
+        start=start,
+        end=end,
+        max_gap_m=max_gap_m,
+        endpoint_tolerance_m=endpoint_tolerance_m,
+    )
+
+
+def fetch_corridor_by(
+    selector: Selector,
+    bbox: BoundingBox,
+    *,
+    client: OverpassClient | None = None,
+    start: tuple[float, float] | None = None,
+    end: tuple[float, float] | None = None,
+    max_gap_m: float = DEFAULT_MAX_GAP_M,
+    endpoint_tolerance_m: float = DEFAULT_ENDPOINT_TOLERANCE_M,
+) -> CorridorFetch:
+    """Resolve a corridor centreline from OSM by any supported selector.
+
+    Identical to :func:`fetch_corridor` in everything but which tag is matched and how
+    much fragmentation is forgiven — see :class:`Selector` and the note at the top of
+    this module for why that is the whole of the difference.
+
+    Args:
+        selector: :meth:`Selector.by_ref` or :meth:`Selector.by_name`.
+        bbox: Area to search.
+        client: Overpass client. Defaults to the HTTP one; inject a fake to avoid
+            the network.
+        start, end: Optional (latitude, longitude) to trim the corridor to.
+        max_gap_m: Largest gap between fragments that will be bridged.
+        endpoint_tolerance_m: How far a requested start/end may sit from the line.
+
+    Raises:
+        CorridorError: Nothing was returned, the result is too fragmented to be a
+            corridor, or a requested endpoint is nowhere near the road.
+    """
     active = client if client is not None else HttpOverpassClient()
-    payload = active(build_query(ref, bbox))
+    payload = active(build_query(selector, bbox))
     ways = [e for e in payload.get("elements", []) if e.get("type") == "way"]
 
     if not ways:
         raise CorridorError(
-            f"OSM returned no ways tagged ref='{ref}' inside {bbox.as_overpass()}. "
-            "Check the reference is exactly as OSM spells it (they vary: 'I 95' not "
-            "'I-95', 'A1' not 'A 1') and that the box actually covers the road."
+            f"OSM returned no ways tagged {selector} inside {bbox.as_overpass()}. "
+            + (
+                "Check the reference is exactly as OSM spells it (they vary: 'I 95' "
+                "not 'I-95', 'A1' not 'A 1') and that the box actually covers the road."
+                if selector.key == "ref"
+                else "Check the name is exactly as OSM spells it — it is an exact "
+                "match, including case, punctuation and any language prefix — and that "
+                "the box actually covers the road."
+            )
         )
 
     lines = [
@@ -243,7 +387,7 @@ def fetch_corridor(
     ]
     if not lines:
         raise CorridorError(
-            f"OSM returned {len(ways)} way(s) for ref='{ref}' but none carried "
+            f"OSM returned {len(ways)} way(s) for {selector} but none carried "
             "geometry. The query must use 'out geom;'."
         )
 
@@ -260,25 +404,36 @@ def fetch_corridor(
 
     total = line.length + sum(piece.length for piece in leftovers)
     longest_share = (line.length / total) if total else 0.0
-    threshold = MIN_LONGEST_SHARE_DIVIDED if divided else MIN_LONGEST_SHARE
+    threshold = (
+        MIN_LONGEST_SHARE_DIVIDED if divided else selector.min_longest_share
+    )
 
     if longest_share < threshold:
         raise CorridorError(
-            f"the longest continuous run of ref='{ref}' carries only "
+            f"the longest continuous run of {selector} carries only "
             f"{longest_share:.0%} of the {total / 1000:.1f} km returned"
             + (" (divided road)" if divided else "")
             + ". That is a fragmented collection, not a corridor. Widen the bounding "
             "box so the road is not clipped, raise max_gap_m if the road is genuinely "
-            "broken into pieces, or check the reference is right."
+            "broken into pieces, or check the "
+            + ("reference" if selector.key == "ref" else "name")
+            + " is right."
+            + (
+                ""
+                if selector.key == "ref"
+                else " A name is not unique the way a reference is: if this box "
+                "contains two unrelated roads of the same name, this is what that "
+                "looks like, and a smaller box is the fix."
+            )
         )
 
     excluded_km = sum(piece.length for piece in leftovers) / 1000.0
     if divided:
         warnings.append(
-            f"ref='{ref}' is a DIVIDED road — {_oneway_count(ways)} of {len(ways)} "
+            f"{selector} is a DIVIDED road — {_oneway_count(ways)} of {len(ways)} "
             "OSM ways are one-way, which is how each carriageway is stored. The "
             f"corridor here is ONE carriageway ({line.length / 1000:.2f} km); "
-            f"{excluded_km:.2f} km carrying the same reference was excluded, most of "
+            f"{excluded_km:.2f} km carrying the same tag was excluded, most of "
             "it the opposite direction. If the crash table covers both directions, "
             "assess each carriageway separately or widen the snapping tolerance to "
             "take in both — and say in the report which you did."
@@ -287,15 +442,18 @@ def fetch_corridor(
         # Undivided roads can still have a parallel twin — a service road, or a
         # duplicated trace. Geometry is the only signal available there.
         parallel, _ = _classify_leftovers(leftovers, line)
-        warnings.extend(_carriageway_warning(parallel, line, ref))
+        warnings.extend(_carriageway_warning(parallel, line, str(selector)))
 
     if start is not None or end is not None:
-        line = _trim(line, projector, start, end, endpoint_tolerance_m, ref)
+        line = _trim(
+            line, projector, start, end, endpoint_tolerance_m, str(selector)
+        )
 
     points = [projector.point_to_wgs84(x, y) for x, y in line.coords]
     return CorridorFetch(
         points=points,
-        ref=ref,
+        ref=selector.value,
+        selector_key=selector.key,
         n_fragments=len(lines),
         n_pieces_after_merge=len(pieces),
         longest_share=longest_share,
@@ -443,23 +601,27 @@ def _trim(
     start: tuple[float, float] | None,
     end: tuple[float, float] | None,
     tolerance_m: float,
-    ref: str,
+    label: str,
 ) -> LineString:
-    """Cut the assembled line down to the requested extent."""
+    """Cut the assembled line down to the requested extent.
+
+    `label` arrives already formatted as ``ref='B9'`` or ``name='High Street'`` — see
+    :meth:`Selector.__str__` — so nothing here has to know which kind it was.
+    """
     start_m = 0.0
     end_m = line.length
 
     if start is not None:
-        start_m = _chainage_of(line, projector, start, tolerance_m, ref, "start")
+        start_m = _chainage_of(line, projector, start, tolerance_m, label, "start")
     if end is not None:
-        end_m = _chainage_of(line, projector, end, tolerance_m, ref, "end")
+        end_m = _chainage_of(line, projector, end, tolerance_m, label, "end")
 
     if start_m > end_m:
         start_m, end_m = end_m, start_m
 
     if end_m - start_m < 1.0:
         raise CorridorError(
-            f"the start and end supplied resolve to the same point on ref='{ref}'. "
+            f"the start and end supplied resolve to the same point on {label}. "
             "They may both be nearest the same spot, or the wrong way round."
         )
 
@@ -471,8 +633,8 @@ def _chainage_of(
     projector: Projector,
     point: tuple[float, float],
     tolerance_m: float,
-    ref: str,
-    label: str,
+    selector_label: str,
+    end_label: str,
 ) -> float:
     x, y = projector.point_to_metric(*point)
     projected = Point(x, y)
@@ -480,9 +642,9 @@ def _chainage_of(
 
     if distance > tolerance_m:
         raise CorridorError(
-            f"the {label} coordinate is {distance:,.0f} m from ref='{ref}', beyond the "
-            f"{tolerance_m:,.0f} m tolerance. It is probably on a different road, or "
-            "the reference is not the road you meant."
+            f"the {end_label} coordinate is {distance:,.0f} m from {selector_label}, "
+            f"beyond the {tolerance_m:,.0f} m tolerance. It is probably on a different "
+            "road, or the road selected is not the one you meant."
         )
     return float(line.project(projected))
 
@@ -514,14 +676,16 @@ def _classify_leftovers(
 def _carriageway_warning(
     discarded: list[LineString],
     line: LineString,
-    ref: str,
+    label: str,
 ) -> list[str]:
     """Flag a discarded piece long enough to be the other carriageway.
 
-    A divided road is two separate ways in OSM, both tagged with the same reference.
-    They never merge, because they never touch, and the turn check in :func:`_join`
-    stops them being welded end to end. Taking the longest gives one direction of
-    travel — usually what is wanted, but never silently.
+    A divided road is two separate ways in OSM, both carrying the same tag. They never
+    merge, because they never touch, and the turn check in :func:`_join` stops them
+    being welded end to end. Taking the longest gives one direction of travel — usually
+    what is wanted, but never silently.
+
+    `label` arrives already formatted — see :meth:`Selector.__str__`.
     """
     rivals = [
         piece for piece in discarded if piece.length >= CARRIAGEWAY_SHARE * line.length
@@ -530,7 +694,7 @@ def _carriageway_warning(
         return []
 
     return [
-        f"A separate run of ref='{ref}' is {rivals[0].length / line.length:.0%} as long "
+        f"A separate run of {label} is {rivals[0].length / line.length:.0%} as long "
         "as the corridor selected. On a divided road that is the opposite carriageway, "
         "which OSM stores as its own way. The corridor here is ONE direction of travel. "
         "If the crash table covers both directions, either assess each carriageway "
@@ -544,11 +708,14 @@ __all__ = [
     "DEFAULT_ENDPOINT_TOLERANCE_M",
     "DEFAULT_MAX_GAP_M",
     "MIN_LONGEST_SHARE",
+    "MIN_LONGEST_SHARE_NAME",
     "OVERPASS_ENDPOINTS",
     "BoundingBox",
     "CorridorFetch",
     "HttpOverpassClient",
     "OverpassClient",
+    "Selector",
     "build_query",
     "fetch_corridor",
+    "fetch_corridor_by",
 ]

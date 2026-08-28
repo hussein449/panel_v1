@@ -160,17 +160,20 @@ class PostgresStore:
 
     # -- corridors -------------------------------------------------------------
 
+    # `osm_name` is appended rather than slotted in beside `ref`, so that the positional
+    # indices `_corridor` reads are the ones it has always read.
     _CORRIDOR_COLUMNS = (
         "id, tenant_id, project_id, name, ref, "
-        "bbox_south, bbox_west, bbox_north, bbox_east, unit_length_m, created_at"
+        "bbox_south, bbox_west, bbox_north, bbox_east, unit_length_m, created_at, "
+        "osm_name"
     )
 
     def create_corridor(self, corridor: Corridor) -> Corridor:
         box = corridor.bbox or (None, None, None, None)
         row = self._one(
             "INSERT INTO corridor (id, tenant_id, project_id, name, ref, "
-            "bbox_south, bbox_west, bbox_north, bbox_east, unit_length_m) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "bbox_south, bbox_west, bbox_north, bbox_east, unit_length_m, osm_name) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING {self._CORRIDOR_COLUMNS}",
             (
                 corridor.id,
@@ -180,6 +183,7 @@ class PostgresStore:
                 corridor.ref,
                 *box,
                 corridor.unit_length_m,
+                corridor.osm_name,
             ),
         )
         return _corridor(row)
@@ -207,13 +211,14 @@ class PostgresStore:
         box = corridor.bbox or (None, None, None, None)
         row = self._one(
             "UPDATE corridor SET name = %s, ref = %s, bbox_south = %s, bbox_west = %s, "
-            "bbox_north = %s, bbox_east = %s, unit_length_m = %s "
+            "bbox_north = %s, bbox_east = %s, unit_length_m = %s, osm_name = %s "
             f"WHERE tenant_id = %s AND id = %s RETURNING {self._CORRIDOR_COLUMNS}",
             (
                 corridor.name,
                 corridor.ref,
                 *box,
                 corridor.unit_length_m,
+                corridor.osm_name,
                 tenant_id,
                 corridor.id,
             ),
@@ -574,6 +579,7 @@ def _corridor(row: tuple[Any, ...]) -> Corridor:
         bbox=None if box[0] is None else (box[0], box[1], box[2], box[3]),
         unit_length_m=row[9],
         created_at=row[10],
+        osm_name=row[11],
     )
 
 

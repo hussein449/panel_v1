@@ -87,15 +87,24 @@ class Corridor(Record):
     Deliberately *not* the resolved geometry. Geometry belongs to a run, because the
     OSM extract behind it changes: two runs of the same corridor a month apart are two
     different centrelines and must not be conflated. What is stable is the request —
-    this reference, this bounding box, this unit length.
+    this selector, this bounding box, this unit length.
     """
 
     id: UUID = Field(default_factory=uuid4)
     tenant_id: UUID
     project_id: UUID
     name: str
-    #: Road reference as OSM knows it, e.g. "B9". Null for a client-supplied centreline.
+    #: Road reference as OSM knows it, e.g. "B9". Null for a client-supplied centreline,
+    #: and null when the road is identified by :attr:`osm_name` instead.
     ref: str | None = None
+    #: The road's OSM ``name`` tag, for a road carrying no reference — which is most
+    #: residential and urban streets, and was previously unreachable.
+    #:
+    #: Called `osm_name` because `name` above is this corridor's own label and the two
+    #: are different things: a corridor called "Kings Road, north section" is fetched by
+    #: ``osm_name="Kings Road"``. At most one selector is set, and the database says so
+    #: too — see migration 0004.
+    osm_name: str | None = None
     #: south, west, north, east in degrees.
     bbox: tuple[float, float, float, float] | None = None
     unit_length_m: float = 500.0

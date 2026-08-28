@@ -21,7 +21,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 from fastapi.responses import FileResponse
 
 from roadrisk.api.deps import SettingsDep, StoreDep, TenantId
@@ -169,6 +169,60 @@ def get_run(run_id: UUID, tenant_id: TenantId, store: StoreDep) -> Run:
     second answer to a question already answered, and the two could disagree.
     """
     return store.get_run(tenant_id, run_id)
+
+
+@router.get(
+    "/runs/{run_id}/report.html",
+    summary="The report for this run, rendered on demand",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "One self-contained HTML document, served as an attachment.",
+            "content": {"text/html": {}},
+        },
+        501: {"description": "This build ships no compiled report page."},
+    },
+)
+def render_run_report(run_id: UUID, tenant_id: TenantId, store: StoreDep) -> Response:
+    """Put the stored payload inside the compiled page and hand back the document.
+
+    **Rendered, never stored.** A run assessed by this service writes no files — it is a
+    payload, and `list_artefacts` returns nothing for it. That is a deliberate property
+    rather than a gap: a payload re-renders months later under a report page that has
+    since been improved, and a stored HTML file would freeze the page a run was made
+    with. So the way to download a report is to build it now, from the run, with the
+    renderer the CLI and the website both already use.
+
+    It is therefore *not* an artefact and is not served through the artefact path: there
+    is no URI, no disk, no `$ROADRISK_ARTEFACT_ROOT` and no allow-list to check, because
+    nothing here opens a file whose path came out of a column. The one thing it shares
+    with that path is `Content-Disposition: attachment` — this is a document to save,
+    and serving HTML inline would mean this origin executing it.
+    """
+    run = store.get_run(tenant_id, run_id)
+
+    # Imported here, not at module scope. `roadrisk.report` reads the compiled page off
+    # disk at call time, and a build that shipped without it should fail this request
+    # with a cause rather than fail to import the whole API.
+    from roadrisk.report import ReportTemplateError, render_report
+
+    try:
+        document = render_report(run.payload)
+    except ReportTemplateError as exc:
+        raise ApiRefusal(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            ErrorCode.UNSUPPORTED,
+            f"This build cannot render a report: {exc}. The page is compiled from "
+            "web/src/report by `npm run build` and committed with the package.",
+        ) from exc
+
+    return Response(
+        content=document,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="report-{run_id}.html"'
+        },
+    )
 
 
 @router.get(

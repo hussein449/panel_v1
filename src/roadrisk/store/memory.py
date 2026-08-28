@@ -150,6 +150,7 @@ class MemoryStore:
             update={
                 "name": corridor.name,
                 "ref": corridor.ref,
+                "osm_name": corridor.osm_name,
                 "bbox": corridor.bbox,
                 "unit_length_m": corridor.unit_length_m,
             }
