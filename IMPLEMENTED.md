@@ -5,7 +5,80 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-28 (latest) — Step 5.2a finished: jobs that outlive the process that took them
+## 2026-08-28 (latest) — Step 0.4: the checks that were discipline until now
+
+**Delivered:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Two jobs, on every
+push and every pull request. Until this file existed, every guarantee in five stages of
+work was somebody remembering to run something.
+
+```
+engine · py3.11   ruff · pytest against a real Postgres · the skips must be gone
+engine · py3.12   ditto
+report + shell    npm ci · rebuild the bundle and diff it · typecheck and build the app
+```
+
+### The store was the backend nobody tested
+
+Forty-two tests skip when `$ROADRISK_DATABASE_URL` is unset, thirty-eight of them
+`tests/test_store.py`. They are the entire Postgres half — so the store a deployment runs
+on was the one store never exercised, while `MemoryStore` passed on every run and looked
+like coverage.
+
+The skip was honest about itself, and that is precisely what made it invisible: **a green
+suite with forty-two fewer tests than it thinks reads exactly like a green suite.** CI
+gives the job a `postgres:16` service and sets the variable. The fixtures already call
+`store.migrate()`, so an empty database is the whole setup.
+
+Measured on 2026-08-28: `36 passed, 38 skipped in 2.03s` without the variable,
+**`74 passed in 2.87s`** with it. Thirteen seconds for the full suite's worth of store
+coverage, unpaid for five stages.
+
+A second step then greps the skip reason back out of pytest's own report and fails on it.
+That is not belt-and-braces — it is the actual failure mode. This does not regress as a
+broken test; it regresses as the variable quietly not arriving, and everything going green
+again with a third of the store untested.
+
+### The shipped report can go stale and nothing on the Python side can tell
+
+`report/static/index.html` is a build artefact of `web/src/report/` that is **committed**,
+so `pip install` never needs a JavaScript toolchain. The only guard was
+`test_the_shipped_bundle_is_not_left_behind_by_the_split`, which asserts the file is over
+100 kB and contains `createRoot` — a check that a *completely stale* bundle passes without
+difficulty. Its docstring says why: *"the JavaScript toolchain that rebuilds it does not
+run in this environment"*. That stopped being true on 2026-08-26, when Node went into WSL.
+
+CI rebuilds it and diffs it, which is the check that test wanted to be. Both directions
+verified before committing:
+
+| | Result |
+|---|---|
+| Committed bundle vs a fresh `npm run build` today | byte-identical — SHA `af6e54a6…` before and after |
+| One line appended to the bundle | step fails, names the file, prints the diffstat |
+
+### Two smaller things
+
+**`requires-python = ">=3.11"` was a promise nothing checked.** The matrix runs both. numpy
+and statsmodels ship per-version wheels, so this is not a formality about syntax.
+
+**Node is pinned to 24.** The bundle has to come out byte-identical to the committed one,
+and that is a property of the toolchain as much as of the source.
+
+### What was deliberately left out
+
+- **No `[raster]`.** That extra is GDAL, exactly two of twelve factors need it, and both
+  raster adapters take an injectable sampler — so installing it would roughly double the
+  job to test nothing that is not already tested.
+- **No `ruff format`.** `ruff check` is clean and stays in CI. `ruff format --check` says
+  103 of 151 files would be reformatted; that is a decision about this repository's diff
+  history, not something a CI file should impose in passing.
+- **No end-to-end `tools/check_shell.py`.** It fetches every route of a *running* app and
+  looks for the banner in the HTML that came back, which is the right next addition — and
+  it wants a job that can start an API and a shell without becoming the flaky one that
+  teaches people to ignore a red tick.
+
+---
+
+## 2026-08-28 (earlier) — Step 5.2a finished: jobs that outlive the process that took them
 
 **Delivered:** `roadrisk.worker` — a Celery queue, a `roadrisk worker` command that drains
 it, and `roadrisk serve --queue` to put jobs on it instead of running them in a thread

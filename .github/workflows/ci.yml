@@ -1,0 +1,167 @@
+# The checks that were discipline until now.
+#
+# Every guarantee in this repository was, until this file existed, somebody remembering
+# to run something. Three of them are worth more than the rest:
+#
+#   * **Postgres actually runs.** Forty-two tests skip when `$ROADRISK_DATABASE_URL` is
+#     unset, and they are the whole store — so the backend a deployment uses was the one
+#     backend never exercised. The service below sets the variable, the fixtures migrate
+#     themselves, and the skips become tests.
+#   * **The committed report bundle is rebuilt and compared.** `report/static/index.html`
+#     is a build artefact of `web/src/report/` that ships inside the wheel, so that
+#     installing needs no JavaScript toolchain. Nothing on the Python side can tell that
+#     it has gone stale — `test_report_library.py` only checks it is over 100 kB — and a
+#     stale bundle is a report that silently renders last week's page.
+#   * **The generated files are regenerated.** `web/src/report/types.ts` and
+#     `docs/openapi.json` are written by `tools/`, and the tests already re-run the
+#     generators and diff them. That only helps if the tests are run.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push supersedes the first: nothing here needs a run against a commit that is
+# already history, and the Postgres job is the slowest thing in the repository.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Vercel is told not to phone home in `next.config.mjs` and in the npm scripts. CI is a
+  # third place `next` gets invoked from, so it is told here too.
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  python:
+    name: engine · py${{ matrix.python }}
+    runs-on: ubuntu-latest
+
+    # 3.11 is the floor `requires-python` promises and 3.12 is what this is developed on.
+    # A promise nothing checks is a wish, and the two differ by more than syntax — the
+    # engine leans on numpy and statsmodels, whose wheels are built per version.
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: roadrisk
+        ports:
+          - 5432:5432
+        # Without this the suite races the container and fails on connection refused,
+        # which reads like a broken store rather than a slow start.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The store's fixtures call `store.migrate()` themselves, so an empty database is
+      # all this needs — no `roadrisk store init` step, and no schema checked in twice.
+      ROADRISK_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/roadrisk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # `worker` is not in `dev` on purpose — the API runs jobs in-process and a
+      # deployment that serves stored runs should not install a queue. `tests/test_worker.py`
+      # does need it, so CI asks for it explicitly rather than widening `dev`.
+      #
+      # `raster` is deliberately absent: it is GDAL, exactly two of twelve factors need
+      # it, and both raster adapters take an injectable sampler so the suite never does.
+      #
+      # `uv venv` fetches the interpreter itself when it is not already there, so there is
+      # no separate setup-python step. The venv's own binaries are then invoked directly
+      # rather than through `uv run`: a `uv.lock` sits beside this, and `uv run` would
+      # resolve against the lock — which does not carry these extras — instead of against
+      # the editable install the line above just made.
+      - name: Install
+        run: |
+          uv venv --python ${{ matrix.python }}
+          uv pip install -e ".[dev,worker]"
+
+      - name: Lint
+        run: .venv/bin/python -m ruff check .
+
+      # `--durations` because the spatial rung is ~90 s of the run and the day that
+      # doubles is worth seeing in the log rather than discovering as a timeout.
+      - name: Test
+        run: .venv/bin/python -m pytest -q --durations=10
+
+      # Proof the skips are gone. If the store is ever silently skipped again — a renamed
+      # variable, a service that did not come up — this fails instead of going green with
+      # forty-two fewer tests than it thinks.
+      - name: Assert the Postgres suite actually ran
+        run: |
+          .venv/bin/python -m pytest -q tests/test_store.py -rs 2>&1 | tee /tmp/store.txt
+          if grep -q 'ROADRISK_DATABASE_URL is not set' /tmp/store.txt; then
+            echo "::error::The Postgres backend skipped. ROADRISK_DATABASE_URL did not reach pytest."
+            exit 1
+          fi
+
+  web:
+    name: report + shell
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the major the lockfile was resolved with. The report bundle has to come
+      # out byte-identical to the committed one, and that is a property of the toolchain
+      # as much as of the source.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # One install for the workspace: `web/` and `web/shell/` share a single React, and
+      # two copies in one document is a broken hooks dispatcher rather than a big download.
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      # This is `tsc --noEmit && vite build` — the typecheck and the bundle in one.
+      - name: Build the report
+        working-directory: web
+        run: npm run build
+
+      # The check this job exists for. `npm run build` writes straight into the Python
+      # package, so a diff here means the committed artefact does not match the source it
+      # claims to be built from — and `pip install` ships the committed one.
+      - name: The committed bundle matches its source
+        run: |
+          if ! git diff --quiet -- src/roadrisk/report/static/index.html; then
+            echo "::error file=src/roadrisk/report/static/index.html::Stale bundle. Run 'cd web && npm run build' and commit the result."
+            git diff --stat -- src/roadrisk/report/static/index.html
+            exit 1
+          fi
+          echo "The shipped report is in sync with web/src/report/."
+
+      - name: Typecheck the shell
+        working-directory: web/shell
+        run: npm run lint
+
+      # Catches what a typecheck cannot: a server component that throws while rendering,
+      # a route that will not build. It needs no API — every route is dynamic, and the
+      # pages render their own "not configured" state rather than failing.
+      - name: Build the shell
+        working-directory: web/shell
+        run: npm run build

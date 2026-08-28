@@ -690,3 +690,33 @@ the run log records what was lost.
 ```bash
 pytest
 ```
+
+**Forty-two of them skip, and they are the whole Postgres store.** `MemoryStore` and
+`PostgresStore` implement one protocol and the conformance suite runs against both — but
+only the half that needs no server runs by default, which means the backend a deployment
+actually uses is the one that never gets exercised. Point it at a database and they stop
+skipping:
+
+```bash
+createdb roadrisk
+ROADRISK_DATABASE_URL=postgresql:///roadrisk pytest
+```
+
+The fixtures migrate the database themselves, so an empty one is all this needs. It costs
+about thirteen seconds.
+
+The web side is checked separately, and `npm run build` is a typecheck as well as a build:
+
+```bash
+cd web && npm ci && npm run build   # the report: tsc --noEmit, then the bundle
+cd shell && npm run lint            # the app: tsc --noEmit
+```
+
+If `npm run build` leaves `src/roadrisk/report/static/index.html` modified, the committed
+bundle had gone stale — that file is a build artefact of `web/src/report/` that ships
+inside the wheel, so that `pip install` needs no JavaScript toolchain. Commit the rebuild.
+
+All of the above runs on every push and every pull request — see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), which additionally runs the suite
+on Python 3.11 as well as 3.12, because `requires-python = ">=3.11"` is a promise and a
+promise nothing checks is a wish.

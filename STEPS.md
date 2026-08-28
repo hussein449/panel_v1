@@ -48,6 +48,46 @@ somewhere it is allowed to run. The JavaScript toolchain is unaffected either wa
 | `[x]` | **0.1** Repo skeleton | Package layout, `pyproject.toml`, gitignore, README | `pip install -e .` works |
 | `[x]` | **0.2** Factor registry schema | Pydantic models for `Factor` / `Registry`, YAML loader | A malformed registry fails loudly with the field named |
 | `[x]` | **0.3** Input contract + transforms | Required columns, typing, exposure derivation, `ln`/`ln1p`/`identity`/`zscore` | A panel missing a required column is rejected with the column named |
+| `[x]` | **0.4** CI | The suite on 3.11 and 3.12 against a real Postgres, ruff, and the shipped report bundle rebuilt and diffed | The forty-two store tests stop skipping ✅ · a stale `report/static/index.html` fails the build ✅ |
+
+### 0.4 — the checks that were discipline until now *(done, late)*
+
+Numbered here because it belongs with the foundations, dated where it actually landed:
+**after 5.2a**, which is five stages of guarantees that were nothing but somebody
+remembering to run something. Three of them were worth the file.
+
+**The store was the backend nobody tested.** Forty-two tests skip when
+`$ROADRISK_DATABASE_URL` is unset, and they are the entire Postgres half — so the store a
+deployment runs on was the one store never exercised, while `MemoryStore` passed on every
+run and looked like coverage. The skip was honest about itself and that is exactly what
+made it invisible: a green suite with forty-two fewer tests than it thinks reads the same
+as a green suite. CI sets the variable against a service container; the fixtures already
+call `store.migrate()`, so an empty database is the whole setup, and it costs thirteen
+seconds. A second step greps the skip reason back out of the report and fails on it,
+because the way this regresses is not a broken test — it is the variable quietly not
+arriving, and going green again.
+
+**The shipped report can go stale and nothing on the Python side can tell.**
+`report/static/index.html` is a build artefact of `web/src/report/` that is *committed*,
+so `pip install` never needs Node — and the only guard was
+`test_the_shipped_bundle_is_not_left_behind_by_the_split`, which asserts the file is over
+100 kB and contains `createRoot`. Its docstring gives the reason: *"the JavaScript
+toolchain that rebuilds it does not run in this environment"*. That stopped being true on
+2026-08-26, when Node went into WSL. CI rebuilds the bundle and diffs it, which is the
+check that test wanted to be. Verified both ways on 2026-08-28: the committed file is
+byte-identical to a fresh build today, and a planted edit fails the step.
+
+**`requires-python = ">=3.11"` was a promise nothing checked.** The matrix runs 3.11 as
+well as 3.12. It is not a formality — numpy and statsmodels ship per-version wheels, and
+the floor is a claim made to anyone installing this.
+
+**What is deliberately not here.** No `[raster]`: that extra is GDAL, exactly two of
+twelve factors need it, and both raster adapters take an injectable sampler so the suite
+never does — installing it would double the job to test nothing. No `ruff format`: 103 of
+151 files would be reformatted, and a formatting sweep is a decision about this
+repository's diff history, not something CI should impose in passing. No end-to-end
+`tools/check_shell.py` run against a live API and shell: it is the right next addition and
+it wants a job that can start two servers without becoming the flaky one.
 
 ---
 
