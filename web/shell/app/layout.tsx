@@ -44,13 +44,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <DeploymentBanner />
+        {/* Assess first, because it is what somebody came here to do. Projects,
+            corridors and the job form all still exist and all still work — they are
+            the surface for *choosing*, not the surface for starting, so they sit
+            behind one word rather than in front of everything. */}
         <nav className="shell-nav shell-chrome" aria-label="Sections">
           <Link className="shell-nav__home" href="/">
             Road risk
           </Link>
-          <Link href="/projects">Projects</Link>
+          <Link href="/">Assess</Link>
           <Link href="/runs">Runs</Link>
           <Link href="/registry">Registry</Link>
+          <Link href="/about">About</Link>
+          <Link className="shell-nav__aside" href="/projects">
+            Advanced
+          </Link>
         </nav>
         <main className="shell-main">{children}</main>
         <footer className="shell-foot shell-chrome">

@@ -7,6 +7,7 @@ import {
   createCorridor,
   createProject,
   describeProblem,
+  listProjects,
   submitJob,
 } from "./api";
 import type { JobOptions, JobSubmission } from "./wire";
@@ -98,6 +99,174 @@ export async function createCorridorAction(form: FormData): Promise<void> {
     destination = back(here, error);
   }
   redirect(destination);
+}
+
+// -- the landing flow ----------------------------------------------------------
+
+/**
+ * Where runs made from the front page are filed.
+ *
+ * A project is a real object with a spend cap on it and it is not going away — but it is
+ * not a question somebody arriving with a road in mind can answer, and asking it first
+ * was most of what made this product feel like paperwork. So one is found or made, and
+ * the reader meets projects when they go looking for them under *Advanced*.
+ */
+const DEFAULT_PROJECT = "Assessments";
+
+async function defaultProject(): Promise<string> {
+  const existing = await listProjects();
+  const found = existing.find((project) => project.name === DEFAULT_PROJECT);
+  return (found ?? (await createProject(DEFAULT_PROJECT, null))).id;
+}
+
+/**
+ * The whole of the front page, as one submission: road in, job out.
+ *
+ * **The crash CSV is parsed here rather than in the browser.** Everything else on this
+ * app works with JavaScript switched off, and a file input posts perfectly well without
+ * it; parsing on the client would also put a piece of the input contract in the
+ * frontend, where the 4.7 defect came from. What the parser does *not* do is validate:
+ * the API refuses a table that could never be snapped and names the column, and a second
+ * opinion here could only disagree with it.
+ */
+export async function assessRoadAction(form: FormData): Promise<void> {
+  const key = text(form, "selector_key");
+  const value = text(form, "selector_value");
+  const label = text(form, "label") || value;
+
+  if (key === "" || value === "") {
+    redirect(back("/", new Error("Pick a road on the map first.")));
+  }
+
+  const corners = ["south", "west", "north", "east"].map((corner) =>
+    optionalNumber(form, corner),
+  );
+  if (corners.some((corner) => corner === null || Number.isNaN(corner))) {
+    redirect(
+      back(
+        "/",
+        new Error(
+          "The map did not report an area to search in. Move the map once and try again.",
+        ),
+      ),
+    );
+  }
+
+  let destination: string;
+  try {
+    const crashes = await readCrashCsv(form.get("crashes"));
+    const projectId = await defaultProject();
+
+    const corridor = await createCorridor(projectId, {
+      name: label,
+      ref: key === "ref" ? value : null,
+      osm_name: key === "name" ? value : null,
+      bbox: corners as [number, number, number, number],
+      unit_length_m: 500,
+    });
+
+    const submission: JobSubmission = {
+      project_id: projectId,
+      corridor_id: corridor.id,
+      panel: null,
+      demo: false,
+      crashes,
+      params: {
+        // **On by default, and the reason is not convenience.** Without OSM the panel
+        // carries the two factors geometry alone can produce, and the assessment is
+        // nearly empty. The job form under Advanced leaves every adapter off because
+        // that screen is for someone choosing; this one is for someone who wants their
+        // road assessed.
+        adapters: ["osm"],
+      } as JobOptions,
+    };
+
+    const job = await submitJob(submission);
+    revalidatePath("/runs");
+    destination = `/jobs/${job.id}`;
+  } catch (error) {
+    destination = back("/", error);
+  }
+  redirect(destination);
+}
+
+/**
+ * A crash CSV as the rows the API takes, or null when no file was chosen.
+ *
+ * Deliberately small. It reads the three columns the input contract names and passes
+ * every other column through untouched, because the pipeline takes column names as
+ * arguments and a parser that renamed things here would be holding a second opinion
+ * about a contract that already has one. Quoted fields are handled because address-like
+ * columns routinely contain commas; anything more elaborate belongs in a library, and
+ * this file should not grow one for a format this narrow.
+ */
+async function readCrashCsv(file: FormDataEntryValue | null) {
+  if (!file || typeof file === "string" || file.size === 0) return null;
+
+  const text = await file.text();
+  const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
+  if (lines.length < 2) {
+    throw new Error(
+      `${file.name} has no rows under its header. A crash file needs one row per crash.`,
+    );
+  }
+
+  const header = splitCsvLine(lines[0]).map((cell) => cell.trim().toLowerCase());
+  return lines.slice(1).map((line, index) => {
+    const cells = splitCsvLine(line);
+    if (cells.length !== header.length) {
+      throw new Error(
+        `${file.name} line ${index + 2} has ${cells.length} value(s) where the header ` +
+          `has ${header.length}. A stray comma inside an unquoted field is the usual cause.`,
+      );
+    }
+    const row: Record<string, unknown> = {};
+    header.forEach((column, position) => {
+      const raw = cells[position].trim();
+      // Numbers where the API expects numbers, and the raw string everywhere else. A
+      // latitude arriving as "34.9" is a 422 about a coordinate that is not a number,
+      // which is a confusing way to be told about a CSV.
+      row[column] =
+        column === "latitude" || column === "longitude"
+          ? raw === ""
+            ? raw
+            : Number(raw)
+          : raw;
+    });
+    return row;
+  });
+}
+
+/** One CSV line, honouring double-quoted fields and `""` as an escaped quote. */
+function splitCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (quoted) {
+      if (character === '"') {
+        if (line[index + 1] === '"') {
+          cell += '"';
+          index += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        cell += character;
+      }
+    } else if (character === '"') {
+      quoted = true;
+    } else if (character === ",") {
+      cells.push(cell);
+      cell = "";
+    } else {
+      cell += character;
+    }
+  }
+  cells.push(cell);
+  return cells.map((value) => value.replace(/^﻿/, ""));
 }
 
 export async function submitJobAction(form: FormData): Promise<void> {

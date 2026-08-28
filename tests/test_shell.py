@@ -496,3 +496,78 @@ def test_the_generated_wire_types_say_they_are_generated() -> None:
     header = WIRE_TS.read_text(encoding="utf-8")[:1200]
     assert "GENERATED FILE" in header
     assert "tools/generate_types.py" in header
+
+
+# -- the landing flow, and what it is allowed to reach for ----------------------
+
+#: Every host this app may contact, and the variable that turns each one off. The
+#: basemap was the only one for two steps; place search is the second. The point of
+#: writing them down is that a third cannot arrive without editing this list.
+EXTERNAL_SERVICES = {
+    "tiles.openfreemap.org": "ROADRISK_MAP_STYLE",
+    "nominatim.openstreetmap.org": "ROADRISK_GEOCODER_URL",
+}
+
+
+def test_every_external_service_can_be_switched_off() -> None:
+    """A deployment that must make no outside request has to be able to say so.
+
+    Both are genuinely optional — the map draws a corridor on an empty background with
+    no tiles, and the search box disappears with no geocoder — and both are switched off
+    the same way, by an environment variable set to `none`. A service without one would
+    be a network dependency this product could not be deployed without, which is a
+    different product from the one whose report opens from a disk.
+    """
+    text = "\n".join(sources(SHELL).values())
+    for host, variable in EXTERNAL_SERVICES.items():
+        assert host in text, f"{host} is no longer reached at all; drop it from here"
+        assert variable in text, (
+            f"{host} is contacted but {variable} appears nowhere in the shell. "
+            "Every external service this app uses must be switchable off."
+        )
+
+
+def test_no_new_external_host_arrives_unnoticed() -> None:
+    """Two services, and each one cost a deliberate decision.
+
+    The report reaches nothing at all — a test above asserts the shipped bundle carries
+    no tile URL. The app is allowed these, and every one of them is somebody else's
+    usage policy and an attribution obligation. A third appearing in a diff should be a
+    conversation rather than a discovery.
+    """
+    allowed = set(EXTERNAL_SERVICES) | {
+        # Attribution and documentation links: text inside an anchor, or a URL in a
+        # comment. Never a request this app makes on a reader's behalf.
+        "www.openstreetmap.org",
+        "openfreemap.org",
+        "www.openmaptiles.org",
+        "osm.org",
+        "nextjs.org",
+    }
+    #: The API this app is the front of. Wherever it is, it is not somebody else's
+    #: service — the whole point of the tenant header is that it belongs to a process
+    #: the operator controls.
+    OURS = re.compile(r"^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])(:\d+)?$")
+
+    found: set[str] = set()
+    for text in sources(SHELL).values():
+        found.update(re.findall(r"https?://([A-Za-z0-9.\-\[\]:]+)", text))
+
+    unexpected = sorted(
+        host for host in found if host not in allowed and not OURS.match(host)
+    )
+    assert not unexpected, (
+        f"New external host(s) in the shell: {unexpected}. Add each to "
+        "EXTERNAL_SERVICES with the variable that switches it off, or to the "
+        "attribution-link allow-list if nothing is ever fetched from it."
+    )
+
+
+def test_the_front_page_is_the_picker_and_the_explainer_kept_its_home() -> None:
+    """The landing page changed; the writing it replaced was moved, not discarded."""
+    front = (APP / "page.tsx").read_text(encoding="utf-8")
+    assert "RoadPicker" in front, "the front page no longer mounts the road picker"
+
+    about = APP / "about" / "page.tsx"
+    assert about.is_file(), "the Mode A / Mode B explainer lost its page"
+    assert "Mode B" in about.read_text(encoding="utf-8")

@@ -302,6 +302,8 @@ export async function createCorridor(
   body: {
     name: string;
     ref: string | null;
+    /** The road's OSM `name`, for a road with no reference. At most one of the two. */
+    osm_name?: string | null;
     bbox: [number, number, number, number] | null;
     unit_length_m: number;
   },
@@ -361,6 +363,27 @@ export const listArtefacts = cache(
 export async function fetchArtefact(runId: string, kind: string): Promise<Response> {
   try {
     return await fetch(`${apiUrl()}/runs/${runId}/artefacts/${kind}`, {
+      headers: { "X-Tenant-Id": requireTenant() },
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw new ApiUnreachable(apiUrl(), describeCause(error));
+  }
+}
+
+/**
+ * The report for a run, built now from its payload.
+ *
+ * **Not an artefact, and deliberately a separate call.** A run assessed by this service
+ * writes no files — it is a payload, which is what lets one stored months ago re-render
+ * under a report page that has since been improved. So there is nothing on a disk to
+ * fetch, and `fetchArtefact` would 404 for every run this website has ever produced.
+ * Artefacts still exist and still come down that path; they arrive with runs imported
+ * from a machine that produced them.
+ */
+export async function fetchRenderedReport(runId: string): Promise<Response> {
+  try {
+    return await fetch(`${apiUrl()}/runs/${runId}/report.html`, {
       headers: { "X-Tenant-Id": requireTenant() },
       cache: "no-store",
     });

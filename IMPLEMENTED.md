@@ -5,7 +5,112 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-28 (latest) — Step 0.4: the checks that were discipline until now
+## 2026-08-28 (latest) — Step 5.3e: one road, one page
+
+**Delivered:** the front page is a map. Find a road, click it, attach a crash CSV, press
+the button. That is the whole flow, and three things had to be built in the backend
+before it could exist at all.
+
+```
+click E904  →  400 crashes uploaded  →  9.37 km, 19 units, 379 snapped (94.7%)
+            →  MODE A — FITTED FROM YOUR DATA · 3 factors · 379 crashes
+            →  report.html, 336 kB, downloaded
+```
+
+No reference typed, no bounding box, no project created by hand. Driven through the
+browser against live OpenStreetMap, not mocked.
+
+### The gap that mattered was not on the screen
+
+`api/runner.py` passed `crashes=None`, hard-coded. **Every real road assessed over HTTP
+could only ever be Mode B** — a ranking, never a fitted model — while `roadrisk corridor
+--crashes` has existed since Stage 2. Nothing said so anywhere: the runs succeeded, the
+reports rendered, and the banner honestly read *MODE B — PUBLISHED WEIGHTS*. The product's
+headline capability was unreachable through its own website and the failure was silent,
+which is the shape of defect this repository is otherwise arranged to prevent.
+
+Crashes now travel the way `panel` already did — written down in the schema, validated at
+submit, stored in `job.params`. A table that could never be snapped is a **422 naming the
+column**, and no job exists afterwards.
+
+### The trap that would have made it look like it worked
+
+`monthly_periods` invents `2024-01` onwards, and it lives in `geo/demo.py`. Point that at
+a 2019 police extract and every crash lands outside the panel, is counted under *period
+not in panel* — honestly, with a reason — and the run describes a road with no crashes on
+it. In Mode B. With total confidence.
+
+A supplied crash table now decides the calendar. The test that pins it asserts
+`n_snapped > 0`, because that is the assertion that fails when the two calendars drift
+apart.
+
+### What a map click can actually read, measured rather than assumed
+
+The basemap is vector tiles, so a click returns the road's own OSM tags. Written against
+the schema as documented, that would have been the end of it. Against the shipped tiles:
+
+| Zoom | What a road feature carries |
+|---|---|
+| 9 | `access, bicycle, brunnel, class, foot, horse, ramp` — **no `ref`, no `name`** |
+| 12 | first refs appear, in a second source layer |
+| 14 | `ref: "B13"`, `name: "Pouliou kai Kapota Avenue"`, `class: "primary"` |
+
+The identity is in `transportation_name`, which the style only starts drawing around zoom
+12; `transportation` has the geometry and nothing else. The first version of the picker
+would therefore have told a reader **"this road carries no reference"** for almost every
+click — a statement about the map, dressed as a statement about the road. Caught by
+clicking, not by reading.
+
+So it opens at zoom 13, searches for the label over a wider radius than the road itself,
+and keeps three outcomes apart: *no road here*, *not zoomed in far enough yet*, and
+*genuinely unnamed*. Only the last one is about the road.
+
+### A road with a name and no reference
+
+`fetch_corridor_by` takes a `Selector` of ref-or-name; `fetch_corridor` is untouched and
+still means a reference. What makes a name safe is a gate that already existed — two
+unrelated *High Street*s in one box are a fragmented collection, which
+`MIN_LONGEST_SHARE` refuses with a message that says why. A name is held to 0.8 where a
+reference is held to 0.6, because it has less claim to the benefit of the doubt.
+
+Tag values are escaped into the Overpass query now. A road named `Bill "Bojangles" Way`
+used to end the query string early and match something else; a `ref` is alphanumeric, so
+this could not arise before names were selectable.
+
+### Downloading a report that was never a file
+
+A run made by this service writes nothing to disk — it is a payload, which is exactly what
+lets one stored months ago re-render under a report page that has since been improved. So
+`GET /runs/{id}/report.html` builds the document on request through the same
+`render_report` the CLI uses, served as an attachment. No artefact root, no allow-list,
+because nothing opens a path that came out of a column.
+
+### What did not change
+
+The report component. The bundle rebuilt byte-identical, and the test asserting the
+shipped `report.html` contains neither MapLibre nor a tile URL still passes — the screen's
+map and the document's map are still not consolidated.
+
+Projects, corridors, the ten-field job form and the registry all still exist and still
+work, one click away under **Advanced**. The Mode A / Mode B explainer moved to **About**
+rather than being deleted. Deleting working software to make a landing page would have
+been the wrong trade.
+
+### The second external service
+
+Place search — Nominatim — is the first host this product has added since the basemap, and
+it was a deliberate cost: the road *reference* a reader would happily type is the one
+thing they usually do not know, because finding it is what this tool is for. Both services
+are switchable off by environment variable and both are proxied rather than called from
+the browser, because Nominatim's terms require a `User-Agent` a page cannot set and
+proxying keeps a viewer's address off somebody else's service. Two new tests list the
+allowed hosts and fail when a third arrives.
+
+**1003 passed, 3 skipped** against Postgres, before the shell work; 24 shell tests after.
+
+---
+
+## 2026-08-28 (earlier) — Step 0.4: the checks that were discipline until now
 
 **Delivered:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Two jobs, on every
 push and every pull request. Until this file existed, every guarantee in five stages of

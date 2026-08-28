@@ -1,4 +1,8 @@
-import { describeProblem, fetchArtefact } from "@/lib/api";
+import {
+  describeProblem,
+  fetchArtefact,
+  fetchRenderedReport,
+} from "@/lib/api";
 import type { ArtefactKind } from "@/lib/wire";
 
 /**
@@ -50,6 +54,17 @@ export async function GET(
   let upstream: Response;
   try {
     upstream = await fetchArtefact(params.runId, params.kind);
+
+    // **A run this service made wrote no files, so its report has to be built now.**
+    // Artefacts arrive with runs imported from the machine that produced them; a run
+    // assessed here is a payload and nothing else, which is exactly what lets it
+    // re-render months later under a report page that has since been improved. So a
+    // missing `report.html` is not a missing file — it is a report nobody has rendered
+    // yet, and the API renders it on request. Every other kind genuinely is a file, and
+    // a 404 for one of those is the honest answer rather than something to work around.
+    if (upstream.status === 404 && params.kind === "report.html") {
+      upstream = await fetchRenderedReport(params.runId);
+    }
   } catch (error) {
     return new Response(describeProblem(error), {
       status: 502,

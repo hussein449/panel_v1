@@ -1,73 +1,67 @@
 import Link from "next/link";
 
-import { attempt, listRuns, tenantId } from "@/lib/api";
+import RoadPicker from "@/components/RoadPicker";
+import { assessRoadAction } from "@/lib/actions";
+import { attempt, basemap, listRuns, tenantId } from "@/lib/api";
+import { geocoder } from "@/lib/geocode";
 import { when } from "@/lib/format";
 
 /**
- * Where somebody who has just opened this arrives.
+ * The front door: a map, a road, a crash file, a button.
  *
- * It answers three questions in order — what this is, what it will not do, and how to
- * see one — because the alternative is a dashboard of empty tables that teaches nothing
- * about a tool whose whole value is what it refuses to claim.
+ * **What this replaced, and why.** Assessing one road was five screens — create a
+ * project, create a corridor by typing a road reference and four decimal bounding-box
+ * numbers, fill a job form of ten fields, poll, then find the run. Every one of those
+ * objects is real and all of them still exist under *Advanced*. None of them is a
+ * question that somebody who has a road and wants it assessed can answer, and asking
+ * them in that order was most of what made this feel like paperwork rather than a tool.
+ *
+ * **Three inputs, and only one of them is typed.** The road comes from clicking the
+ * basemap, which is vector tiles carrying OSM's own tags — so a click yields the `ref`
+ * or the `name` the fetch will go looking for, rather than something this page invented.
+ * The search area is the map view. The crash table is a file, and it is optional in the
+ * sense that the run happens without it and honest about what that costs.
+ *
+ * **Everything the reader is not asked is a default that is stated.** 500 m segments,
+ * OSM adapters on, the engine choosing its own mode. The one thing no screen anywhere in
+ * this product offers is a way to overrule that last one.
  */
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: { error?: string };
+}) {
   const runs = tenantId() ? await attempt(listRuns()) : null;
-  const latest = runs?.ok ? runs.value.slice(0, 5) : [];
+  const latest = runs?.ok ? runs.value.slice(0, 4) : [];
+  const service = geocoder();
 
   return (
-    <div className="shell-page">
-      <h1>Corridor road-risk assessment</h1>
-      <p>
-        Two coordinates and a crash table in; a ranked corridor out, with every number
-        traceable to the source it came from and a page in every report saying what that
-        assessment cannot support. The engine decides how much can honestly be concluded
-        from the data it was given, and there is no setting that overrules it.
-      </p>
+    <div className="shell-page shell-page--wide">
+      <header className="shell-lede">
+        <h1>Assess a road</h1>
+        <p>
+          Pick a corridor on the map, add a crash table if you have one, and get a
+          ranked assessment with every number traceable to the source it came from.{" "}
+          <Link href="/about">What this can and cannot tell you</Link>.
+        </p>
+      </header>
 
-      <div className="shell-card">
-        <h2>Two modes, and the engine picks</h2>
-        <p>
-          <strong>Mode A</strong> fits a crash-count model and reports coefficients with
-          intervals. It needs crashes, and it needs road that had none — a model built
-          only on crash locations cannot estimate a rate, it can only redescribe the
-          crash table.
-        </p>
-        <p>
-          <strong>Mode B</strong> is the floor: a weighted index from cited weights,
-          ranked, with no counts and no prediction. It is a <em>ranking</em>, and every
-          screen that shows one says so.
-        </p>
-        <p className="shell-note">
-          Given the choice, people select Mode A on data that cannot support it and the
-          tool prints confident numbers that are fabricated. So there is no such choice:
-          the ladder descends on its own and names the check that made it descend.
-        </p>
-      </div>
-
-      <div className="shell-card">
-        <h2>See one without any data</h2>
-        <p>
-          A demonstration job assesses a synthetic 10 km corridor with an invented crash
-          table. It needs no network, no API key and no crash extract, and finishes in
-          seconds. <strong>The report it produces says on its own face that there is no
-          real road in it</strong> — that travels in the payload, so it cannot be lost
-          on the way to whoever you send it to.
-        </p>
-        <p>
-          Start at <Link href="/projects">projects</Link>: a project holds corridors and
-          jobs, and a job is one request to assess something.
-        </p>
-      </div>
+      <RoadPicker
+        basemap={basemap()}
+        searchEnabled={service !== null}
+        geocoderCredit={service?.credit ?? null}
+        action={assessRoadAction}
+        problem={searchParams.error ?? null}
+      />
 
       {latest.length > 0 ? (
         <div className="shell-card">
-          <h2>Latest runs</h2>
+          <h2>Recent assessments</h2>
           <table className="shell-table">
             <thead>
               <tr>
                 <th>Run</th>
                 <th>Mode</th>
-                <th>Rung</th>
                 <th>Assessed</th>
               </tr>
             </thead>
@@ -80,12 +74,15 @@ export default async function Home() {
                     </Link>
                   </td>
                   <td>{run.mode}</td>
-                  <td>{run.rung}</td>
                   <td>{when(run.created_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <p className="shell-note">
+            <Link href="/runs">Every run</Link> ·{" "}
+            <Link href="/projects">Projects and corridors</Link>
+          </p>
         </div>
       ) : null}
     </div>

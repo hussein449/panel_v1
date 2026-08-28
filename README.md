@@ -397,6 +397,48 @@ cd shell
 ROADRISK_API_URL=http://127.0.0.1:8000 ROADRISK_TENANT_ID=<the tenant> npm run dev
 ```
 
+**The front page is a map.** Find a road, click it, attach a crash CSV if you have one,
+and press the button — that is the whole flow, and it is the only screen most people
+need. Clicking works because the basemap is vector tiles carrying OSM's own tags, so the
+click yields the `ref` or the `name` the fetch will go looking for rather than something
+the page invented. The **search area is the map view**, which the page says outright
+because it is the input that decides how much road gets assessed.
+
+The crash file is optional and the page is blunt about what omitting it costs: without a
+crash table the engine has nothing to fit and the run can only be Mode B. With one, a
+real road goes from a click to a fitted model in about a minute:
+
+```
+MODE A — FITTED FROM YOUR DATA · 3 factors · 379 crashes
+E904 · 9.37 km · 19 units · 379 of 400 crashes snapped (94.7%)
+```
+
+Nothing else is asked. The corridor is cut into 500 m segments, OSM fills the panel, a
+project is found or made, and the engine picks its own mode as it always has — there is
+still no screen anywhere in this product that offers a way to overrule that.
+
+Everything the old front page did is still here, one click further away: **Advanced** in
+the nav is projects, corridors and the ten-field job form, for choosing rather than
+starting. `--demo` and the explainer moved to **About**.
+
+Two outside services, and each is switchable off:
+
+| Service | What for | Off |
+|---|---|---|
+| [OpenFreeMap](https://openfreemap.org) | the basemap, and the tags a click reads | `ROADRISK_MAP_STYLE=none` |
+| [Nominatim](https://nominatim.openstreetmap.org) | place search, so finding a road is not a long pan | `ROADRISK_GEOCODER_URL=none` |
+
+Both are proxied through this app rather than called from the browser: Nominatim's terms
+require an identifying `User-Agent`, which a page cannot set, and proxying keeps a
+viewer's address off somebody else's service for a search they typed here. A test lists
+both hosts and fails when a third appears.
+
+**Download the report from any run screen.** A run assessed by this service writes no
+files — it is a payload, which is what lets one stored months ago re-render under a
+report page that has since been improved — so `GET /runs/{id}/report.html` builds the
+document on request, with the same renderer the CLI uses. There is no artefact root to
+configure and nothing on a disk to go stale.
+
 Projects, corridors, jobs and runs, with the report itself as one of the screens — the
 same `<Report>` component the single-file bundle is built from, so what you read here and
 what arrives in somebody's inbox cannot drift apart. Printing the run page produces the

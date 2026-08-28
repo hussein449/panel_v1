@@ -46,6 +46,16 @@ export default async function RunLayout({
         <Link href={`/runs/${params.runId}`}>Report</Link>
         <Link href={`/runs/${params.runId}/map`}>Map</Link>
         <Link href={`/runs/${params.runId}/files`}>Files</Link>
+        {/* A plain anchor, because what comes back is a document rather than a screen.
+            It sits in the layout for the same reason the banner does: wanting the
+            report as a file is not particular to the tab that happens to be showing
+            it. */}
+        <a
+          className="shell-tabs__download"
+          href={`/downloads/${params.runId}/report.html`}
+        >
+          Download report
+        </a>
       </nav>
       {children}
     </>

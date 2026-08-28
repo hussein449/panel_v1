@@ -886,6 +886,7 @@ executes it.
 | `[x]` | **5.3b** Next.js shell | Routes, layout, and the mode banner as a *layout* element ✅ | Mode banner unmissable on every screen — no route can omit it ✅ |
 | `[x]` | **5.3c** MapLibre map | Corridor geometry ✅, units coloured by rank ✅, factor provenance on click ✅ | Tiles never enter the report path ✅; the document keeps its own SVG map ✅ |
 | `[x]` | **5.3d** Interactive layer | The hover and detail layer 4.4 deferred as screen-only ✅ | Native `<title>` still works with JavaScript off ✅ |
+| `[x]` | **5.3e** One road, one page | A landing flow: pick a road on a map, upload its crashes, download the report — and the three backend gaps that made it impossible ✅ | A real road goes click → **Mode A** → downloaded report, with no reference typed and no bounding box ✅ |
 | `[ ]` | **5.4a** Auth + RLS | Supabase auth, row-level policies | The *database* refuses a cross-tenant read, proven by querying as tenant B |
 | `[ ]` | **5.4b** Projects + history | Saved runs, re-open, re-render | Yesterday's run opens without a refit |
 | `[ ]` | **5.4c** Corridor comparison | Two corridors side by side with mode, factor coverage and validation outcome | Every number shows the context it was valid in |
@@ -1441,6 +1442,59 @@ a report be emailed. MapLibre needs a tile source, which is both a network depen
 a new attribution obligation. So MapLibre is the screen and the SVG stays the document;
 they are not consolidated. The screen's map is Web Mercator and pans; the document's is
 equirectangular and prints.
+
+### 5.3e — one road, one page *(done)*
+
+**The website worked and still made a client do the tool's job.** Assessing one road was
+five screens: create a project, create a corridor by typing a road reference *and four
+decimal bounding-box numbers*, fill a ten-field job form, poll, then hunt for the run.
+Every one of those objects is real and all of them still exist under *Advanced*. None is
+a question somebody arriving with a road in mind can answer.
+
+**Three things had to be built before the flow could exist at all**, and the first is the
+one that mattered:
+
+| Gap | What it meant |
+|---|---|
+| `api/runner.py` passed `crashes=None`, hard-coded | **Every road assessed over HTTP could only ever be Mode B.** The CLI has taken `--crashes` since Stage 2; the API could not, and nothing anywhere said so — the runs looked fine |
+| A run made by this service wrote no files | Nothing to download. Artefacts existed only for runs imported from a CLI machine |
+| `fetch_corridor` matched `ref` only | Every residential and urban street was unreachable |
+
+**The calendar trap, which would have made the feature look like it worked.**
+`monthly_periods` invents 2024-01 onwards. Point it at a 2019 crash extract and every
+crash falls outside the panel, is counted honestly under *period not in panel*, and the
+run reports a road with no crashes on it — confidently, in Mode B. A supplied crash table
+now decides the periods.
+
+**Why a name is allowed to select a road, given the rule it appears to weaken.**
+`ref='B9'` cannot return anything that is not the B9, and that guarantee is why routing
+was rejected in 2.2b. A name carries no such guarantee — but the fetch never relied on the
+guarantee. It relies on the fragmentation gate: two unrelated High Streets in one box
+produce a collection whose longest run carries about half the length, which
+`MIN_LONGEST_SHARE` already refuses with a message saying so. A name is simply held to a
+higher share. Tag values are escaped into the query now, too; a name carrying a quote used
+to end the string early and match something else, which a reference could never do.
+
+**What the map click actually reads, measured rather than assumed.** The basemap is
+vector tiles, so a click can return the road's own OSM tags — but at zoom 9 a road feature
+carries `access, bicycle, brunnel, class, foot, horse, ramp` and **no `ref` and no
+`name`**. Identity lives in a second source layer the style only draws from about zoom 12.
+Written against the schema as documented, the picker would have told a reader *this road
+carries no reference* for almost every click, which is a statement about the map dressed
+up as a statement about the road. It opens at zoom 13, looks for the label over a wider
+radius than the road, and distinguishes *no road here* from *not zoomed in far enough*
+from *genuinely unnamed*.
+
+**Proved end to end through the browser, on a real road**: click E904 near Limassol,
+attach 400 crashes, and the run comes back **`MODE A — FITTED FROM YOUR DATA · 3 factors ·
+379 crashes`** — 9.37 km, 19 units, 94.7% snapped — with the report downloading as a
+228–336 kB document. No reference typed, no bounding box, no project created by hand.
+
+**Place search is the second external service this product calls**, after the basemap, and
+it is a deliberate cost rather than a convenience: the road *reference* a reader would
+happily type is the one thing they usually do not know, because it is what this tool
+finds. Both services are switchable off by environment variable, both are proxied rather
+than called from the browser, and a test lists them and fails when a third appears.
 
 ---
 
