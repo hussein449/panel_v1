@@ -1391,6 +1391,34 @@ equirectangular and prints.
 
 ---
 
+## What is left, in one place
+
+Every unticked step above, gathered so that picking the next one does not mean reading
+the whole file. **None of it improves a number** — Stages 1 and 3 are the credibility
+path and they are closed. This is the work that makes the thing usable by somebody else.
+
+| | Step | In one line | Waits on |
+|---|---|---|---|
+| `[~]` | **3.1** NB GLMM | Bookkeeping only: the clustered standard errors shipped here and the random-intercept GLMM landed inside 3.3, which is closed | Nothing. It is a status box |
+| `[ ]` | **5.2b** Cost model + cap | Count what a run spends per source and refuse *before* the call that would breach the project's cap. A refusal is a receipt, and the partial run is still a run | Nothing, but nothing costs money until `mapillary_vision` exists — this is a guard rail for a cliff nobody is near |
+| `[ ]` | **5.2c** Secrets per tenant | Per-project API keys validated when they are entered rather than rediscovered per run, and an Overpass identity with a rate budget | 5.2b's accounting |
+| `[ ]` | **5.4a** Auth + RLS | Real identities, and row-level policies so the **database** refuses a cross-tenant read — proven by querying as tenant B | Nothing. The storage seam was built for it from the first migration |
+| `[ ]` | **5.4b** Projects + history | Saved runs, re-open, re-render with no refit; and a runs list bounded by the map view, which `GET /runs?bbox=` already answers | 5.4a |
+| `[ ]` | **5.4c** Corridor comparison | Two corridors side by side with mode, factor coverage and validation outcome — every number showing the context it was valid in | 5.4b |
+| `[ ]` | **6.1** Containers | Dockerfiles for api and worker, compose for local | Nothing |
+| `[ ]` | **6.2** Hosting | A public URL over TLS. Its object storage also makes the fetch cache shared, which is what the branch-level chord in 5.2a is waiting for | 6.1, 5.4a |
+
+**The order that makes sense**: 5.4a before anything else, because until identities exist
+this cannot be exposed to a second person. Then 6.1 and 6.2 to make it reachable. 5.4b and
+5.4c are features on top. 5.2b and 5.2c are guard rails that matter the day a paid source
+is wired up, and not before. 3.1 is a tick.
+
+**And none of the above is the most valuable thing available.** See *Requirements not
+covered by any stage*, at the end of this file: real crash data, a third region, and the
+flood/fire/storm/snow layers are all worth more than every row of this table.
+
+---
+
 ## Open decisions
 
 Things that need a human call, not a code change.
@@ -1558,3 +1586,41 @@ region-level comparisons:
 ### Maturity
 
 Activities are expected to achieve **TRL 6–7** by the end of the project.
+
+---
+
+## Requirements not covered by any stage
+
+Everything above builds one half of the call topic. This section records the other half,
+so that the gap is visible in the plan rather than discovered at submission. Nothing here
+has a stage, a step or a line of code today.
+
+> **Recovered 2026-08-28.** This section was written against the old working copy and
+> never reached the repository — 1,090 lines there against 1,560 here, and this was the
+> difference. It is the most honest page in the plan and it was the one outside version
+> control. The row about the GIS application is updated below; everything else stands as
+> written.
+
+| Gap | Which requirement | Nearest existing work | Cost to close |
+|---|---|---|---|
+| **Hazard layers** — flood, fire, storm, snow as adapters | Expected outcome 4; required action 3 | The adapter contract (2.6) and raster windowing (2.6) already fit these exactly | Free data: JRC river flood hazard maps (9 return periods, CC BY 4.0), EFFIS, ERA5/ERA5-Land via `cdsapi` |
+| **Exposure and vulnerability per segment** | Expected outcome 4 | Fusion and confidence model (2.7) | Developer time |
+| **Network criticality and detour analysis** — which segments, if lost, isolate a settlement | Expected outcome 4; required action 3 | The strategic-network graph is *already fetched* for the traffic proxy (2.8) | Free — NetworkX edge-removal over a graph we hold |
+| **Scenario runs** — "this network under a 100-year flood" | Required action 3 | — | Developer time |
+| **Authority-facing GIS application** | Expected outcome 4; TRL 6–7 | **Partly built.** 5.3b is a website and 5.3c is a map with per-segment provenance on click. What is missing is the *authority-facing* half: hazard layers to show, and accounts to show them to | 5.4a, 6.2, and the hazard row above |
+| **Real police crash data** | The whole crash-based half | Snapping (2.5) works; every run to date is synthetic | Free: French BAAC is open with coordinates and severity |
+| **≥3 regions, primary *and* secondary roads, region-level comparison** | Required actions preamble | Two corridors, both synthetic-crash | Region onboarding |
+| **Information-gap experiment** — rank displacement, predictive degradation, literature share per data condition | Required action 1 | The machinery exists: mode ladder descent (1.3) and literature share (3.3b). The *experiment* has never been run | Free, but only meaningful on real crashes |
+| **Implementation guidelines and policy measures** per stakeholder group | Expected outcome 3 | Report (Stage 4) is the input, not the output | Writing |
+| **Prevention / countermeasure selection** linked to risk output | Expected outcome 3 | Registry knows factor direction; nothing maps a deficit to a treatment | Needs a countermeasure table with cited effect sizes |
+| **Road-user behaviour, enforcement, multi-offenders, impairment, nudging, incentives** | Expected outcome 2; required action 2 | Nothing, and nothing planned | **Not buildable here — needs a partner** with enforcement, penalty and clinical data |
+| **Gender, disability, intersectional dimension** | Required action 2 | Isolation risk in the (unbuilt) resilience layer would carry part of it | Analysis, not code |
+| **Health-related risk factors; mobility of older and impaired road users** | Required action 2 | — | Partner |
+| **Road authority involvement** | Strongly recommended | None | Engagement |
+| **TRL 6–7** | Maturity | Currently TRL 3–4 | The whole of the above |
+
+**Reading this honestly.** Four of these are free data behind an adapter contract that
+already exists, and the flood/fire/storm/snow set is the cheapest quarter of a call topic
+available anywhere — it is the highest-value unbuilt work in this repository after real
+crash data. One of them (the behavioural strand) is not a build task at all and never
+will be; it is a partner. The rest is engineering and writing.
