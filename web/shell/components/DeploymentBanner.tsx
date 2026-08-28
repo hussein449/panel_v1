@@ -84,7 +84,16 @@ export default async function DeploymentBanner() {
       <>
         <strong>Jobs run inside the API process.</strong> Work in flight does not
         survive a restart — a job orphaned that way is reclaimed and run again, not
-        lost, but there is no queue and no second machine. Step 5.2a is the worker.
+        lost, but there is no queue and no second machine. Run this deployment with{" "}
+        <code>--queue</code> and a worker if that matters.
+      </>,
+    );
+  } else if (health.runner === "celery") {
+    facts.push(
+      <>
+        <strong>Jobs go on a queue that workers drain.</strong> Work in flight survives
+        a restart of this service, and more than one machine can do it — but nothing
+        finishes a job unless a worker is running against the same queue and database.
       </>,
     );
   } else {

@@ -5,7 +5,92 @@ What has actually been built, in the order it was built. Planned work lives in
 
 ---
 
-## 2026-08-27 (latest) — Step 2.9 finished: a run knows where it is
+## 2026-08-28 (latest) — Step 5.2a finished: jobs that outlive the process that took them
+
+**Delivered:** `roadrisk.worker` — a Celery queue, a `roadrisk worker` command that drains
+it, and `roadrisk serve --queue` to put jobs on it instead of running them in a thread
+inside the web process. Proven **across processes**, which is as close to *across machines*
+as one machine gets.
+
+```bash
+export ROADRISK_DATABASE_URL=postgresql:///roadrisk
+export ROADRISK_BROKER_URL=filesystem:///var/tmp/roadrisk-queue   # or redis://…
+roadrisk serve --queue &      # accepts jobs, runs none of them
+roadrisk worker               # takes them off the queue
+```
+
+### The decision the old note demanded, and it was neither of its two options
+
+The boxed note under 5.2a offered two shapes and said choosing between them was the first
+thing to do when this was picked up: fan out over **branches** — one task per adapter — or
+fan out over **fetches** through a shared cache. **The unit of distribution is a job.**
+
+The reason is a measurement already in this repository. The fetch cache is a directory on
+one machine, and it is the thing that turns **55.5 s into 1.2 s** for the next corridor in
+the same region. Spreading an assessment's branches across machines spreads its fetches
+across caches — so every worker pays the cold price, and the second corridor is never
+cheap. The branch chord is not merely bigger than it looks: **until the cache is shared it
+would be slower than the threads it replaces.** A shared cache is object storage, which is
+6.2, so it waits for 6.2 and the plan now says so.
+
+At job granularity the queue costs no serialisation at all. The note warned that a branch
+task "needs the segmentation and returns `FactorValues`… serialisation to write in both
+directions". A job task takes two strings; everything else is already a row. What it buys
+is exactly what the note said was missing — **work that survives a deploy, and more than
+one machine.**
+
+### The test that proves it, and what it refuses to accept as proof
+
+`tests/test_worker.py` submits through the API with the queue behind it, then asserts the
+job is **still `queued`** a second later — because a test that merely watched a job succeed
+would pass just as well against the thread pool this replaces. Only then does it start a
+real `roadrisk worker` as a separate operating-system process and watch the same row reach
+`succeeded`.
+
+Planted against by making `submit` a no-op: the test sits through its full two-minute
+deadline and fails. It cannot pass without a second process doing the work.
+
+The broker is kombu's filesystem transport — a directory two processes agree on. It polls,
+so it is not for production, but it needs no server, which is what makes this the rare
+distributed test that runs anywhere. Redis and AMQP are a URL away.
+
+### Four refusals, because a worker that starts and does nothing looks healthy
+
+| Refused | Why it is not a default |
+|---|---|
+| No `$ROADRISK_BROKER_URL` | A worker that quietly picked `redis://localhost` would connect to nothing and report itself fine while every job stayed queued |
+| No `$ROADRISK_DATABASE_URL` | **A queue across processes needs a store across processes.** `MemoryStore` is one process's own memory; a worker holding one would drain a queue of jobs it cannot see |
+| `filesystem://` with an ignored path | Kombu takes its folders from transport options and ignores the URL's path — two processes agreeing on a URL and disagreeing about where the queue is. The path is read and turned into the options the transport actually uses |
+| A result backend | The job row **is** the result. A second copy could disagree with it |
+
+### Recovery stayed one mechanism
+
+`acks_late` is off, so a dead worker's message is gone rather than redelivered. That looks
+like the wrong choice until you follow it: `execute` refuses to start anything that is not
+`queued`, and a dead worker leaves the row `running`, so a redelivered message would be
+refused and the job would sit there for ever.
+
+So the reclaim the API has run at startup since 5.1d now also runs on `worker_ready` —
+same store method, same `attempts` guard, same `$ROADRISK_RECLAIM_AFTER_SECONDS`. **Two
+recovery mechanisms that do not know about each other produce a job that neither will
+touch.**
+
+### Known, and deliberately left
+
+- **The branch-level chord is unbuilt on purpose**, with the reason and the thing that
+  would change it both written down. That is a different state from *not got to yet*.
+- **The reclaim assumes a worker is not racing a live one.** True for one worker, and
+  `$ROADRISK_RECLAIM_AFTER_SECONDS` is the blunt answer for a fleet. A heartbeat or a
+  lease owner is the proper one and belongs with 6.2.
+- **`filesystem://` polls.** Fine for a laptop and for the test; use Redis for anything
+  real.
+- **Single-flight in the cache is still per process.** Two workers on one machine still
+  duplicate a fetch — which is the same sentence 5.2a's first half ended on, and it is now
+  two processes rather than two threads.
+
+---
+
+## 2026-08-27 — Step 2.9 finished: a run knows where it is
 
 **Delivered:** the extent of the assessed road, lifted from its centreline into four
 indexed columns, and `GET /runs?bbox=south,west,north,east` to find runs by it. **Stage 2

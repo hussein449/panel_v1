@@ -992,6 +992,13 @@ def serve(
             help="Create a tenant in the in-memory store and print its id.",
         ),
     ] = False,
+    queue: Annotated[
+        bool,
+        typer.Option(
+            "--queue",
+            help="Put jobs on a Celery queue instead of running them in this process.",
+        ),
+    ] = False,
 ) -> None:
     """Serve the HTTP API. Needs `pip install "roadrisk-panel\\[api]"`.
 
@@ -1061,10 +1068,15 @@ def serve(
             f"[bold]Tenant:[/bold] {os.environ[MEMORY_TENANT_ENV]}  "
             "[dim](export ROADRISK_TENANT_ID to it, or send it as X-Tenant-Id)[/dim]"
         )
+    runner = "celery" if queue else os.environ.get(RUNNER_ENV, "in-process")
     console.print(
-        f"[dim]Storage: {storage}  ·  Runner: {os.environ.get(RUNNER_ENV, 'in-process')}"
-        "  ·  Auth: none until 5.4a[/dim]"
+        f"[dim]Storage: {storage}  ·  Runner: {runner}  ·  Auth: none until 5.4a[/dim]"
     )
+    if queue:
+        console.print(
+            "[dim]Jobs go on the queue. Nothing runs them until `roadrisk worker` "
+            "is running somewhere against the same broker and database.[/dim]"
+        )
     console.print(
         '[dim]Try it: POST /jobs with \\{"project_id": "…", "demo": true} — '
         "a synthetic corridor, no data and no network needed.[/dim]"
@@ -1072,12 +1084,73 @@ def serve(
     # The factory, by name, rather than an app object: with --reload uvicorn re-imports
     # the target in a fresh process, and an app built here would be built once in a
     # process that then stops serving it.
+    # The factory is named rather than built, and *which* factory is the whole of how a
+    # queued deployment differs from this one. `roadrisk.worker.web` is the same
+    # application with a Celery runner already decided — the API cannot compose that
+    # itself, because `worker` sits above it in the layer order.
     uvicorn.run(
-        "roadrisk.api.app:create_app",
+        "roadrisk.worker.web:create_app" if queue else "roadrisk.api.app:create_app",
         factory=True,
         host=host,
         port=port,
         reload=reload,
+    )
+
+
+@app.command()
+def worker(
+    concurrency: Annotated[
+        int,
+        typer.Option(
+            "--concurrency",
+            "-c",
+            min=1,
+            help="Jobs to run at once in this process.",
+        ),
+    ] = 1,
+    loglevel: Annotated[
+        str, typer.Option("--loglevel", help="Celery's log level.")
+    ] = "info",
+) -> None:
+    """Drain the job queue. Needs `pip install "roadrisk-panel\\[worker,store]"`.
+
+    **Step 5.2a.** `roadrisk serve --queue` puts jobs on a queue instead of running them
+    in a thread inside itself; this is a process that takes them off it. Work survives a
+    restart of either, and any number of these can share one queue.
+
+    Two things it insists on, because a worker without them looks healthy and does
+    nothing: $ROADRISK_BROKER_URL, which is the queue, and $ROADRISK_DATABASE_URL, which
+    is where the jobs actually live. A queue across processes needs a store across
+    processes — the in-memory store is one process's own memory, so a worker holding one
+    would drain a queue of jobs it cannot see.
+
+    One job at a time by default: a fit is CPU-bound, and the machine is yours to know.
+    """
+    try:
+        from roadrisk.worker import BROKER_URL_ENV, celery_app, configure
+        from roadrisk.worker.app import worker_store_provider
+    except ImportError as exc:
+        console.print(
+            "[red]The worker extra is not installed.[/red] "
+            'Run: pip install "roadrisk-panel\\[worker,store]"'
+        )
+        raise typer.Exit(EXIT_UNAVAILABLE) from exc
+
+    try:
+        configure()
+        worker_store_provider()
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(EXIT_UNAVAILABLE) from exc
+
+    import os
+
+    console.print(
+        f"[bold]Road Risk worker[/bold] {__version__}  ·  "
+        f"queue {os.environ[BROKER_URL_ENV]}  ·  {concurrency} job(s) at a time"
+    )
+    celery_app.worker_main(
+        ["worker", f"--loglevel={loglevel}", "--concurrency", str(concurrency)]
     )
 
 

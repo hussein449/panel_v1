@@ -33,7 +33,7 @@ log = logging.getLogger("roadrisk.api")
 
 #: How old a `running` job must be before a starting process reclaims it, in seconds.
 #: Unset means reclaim everything — correct for one process, wrong for several. See
-#: :func:`_reclaim_before`.
+#: :func:`reclaim_before`. Read by the worker too, so one policy has one home.
 RECLAIM_AFTER_ENV = "ROADRISK_RECLAIM_AFTER_SECONDS"
 
 #: Which runner this process gets: ``in-process`` (a bounded thread pool, the default),
@@ -70,10 +70,11 @@ report that comes back says on its own face that there is no real road in it.
 
 **Two things about this deployment, stated here rather than discovered.**
 
-* **Jobs run inside this process.** `POST /jobs` returns `202` and a bounded pool picks
-  the job up; work in flight does not survive a restart, and there is no retry. Step
-  5.2a moves execution onto workers. `GET /health` names the runner this process has,
-  and reports `null` if it has none — in which case a job stays `queued` for ever.
+* **`GET /health` names what executes jobs here, and the answer changes what you can
+  expect.** `in-process` is a bounded pool inside this process: work in flight does not
+  survive a restart. `celery` is a queue that separate workers drain, and it does.
+  `null` means nothing is listening at all, and a job posted here stays `queued` for
+  ever — worth being able to tell apart from *busy*.
 * **`X-Tenant-Id` is not authentication.** It scopes every read to one tenant, which is
   what keeps two clients' runs apart, but nothing verifies the claim. Step 5.4a
   replaces it with real identities and row-level policies in the database.
@@ -167,7 +168,7 @@ def _reclaim_orphans(provider: StoreProvider, runner: Runner) -> None:
     """
     try:
         with provider() as store:
-            reclaimed = store.reclaim_running_jobs(started_before=_reclaim_before())
+            reclaimed = store.reclaim_running_jobs(started_before=reclaim_before())
     except Exception:
         log.exception("Could not reclaim orphaned jobs at startup")
         return
@@ -186,7 +187,7 @@ def _reclaim_orphans(provider: StoreProvider, runner: Runner) -> None:
         )
 
 
-def _reclaim_before() -> datetime | None:
+def reclaim_before() -> datetime | None:
     """How old a `running` job must be before a starting process takes it back.
 
     `None` — reclaim everything still running — is the default and is correct for the

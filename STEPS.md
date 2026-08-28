@@ -24,11 +24,12 @@ every screen carries the two things about this deployment a client would otherwi
 discover by watching a job never finish — because the banner is a layout element and a
 route cannot opt out of its layout — and a map where clicking a segment says where each
 of its numbers came from, with no basemap and no request unless somebody configures one.
-What is still missing is throughput and durability:
-work in flight does not survive a restart, which is 5.2a. **5.2a is half done**: adapters
-now fan out and a failing one costs a factor rather than the corridor, but the fan-out is
-across threads in one process — Celery is not built, and the boxed note under 5.2a says
-what that costs and what picking it up would involve. The one thing no part of Stage 5
+**5.2a is done too**: adapters fan out and a
+failing one costs a factor rather than the corridor, and jobs now go on a Celery queue
+that separate worker processes drain — so work in flight survives a deploy, and more than
+one machine can do it. The unit of distribution is a *job* rather than an adapter branch,
+for a reason the note under 5.2a measures. What remains in Stage 5 is a spend cap, secrets
+per tenant, and identities. The one thing no part of Stage 5
 addresses is the critical
 path: this is still validated on two corridors with synthetic crashes, and one real
 police extract is worth more than any of what follows.
@@ -838,7 +839,7 @@ executes it.
 | `[x]` | **5.1b** Storage | Postgres schema — tenant, project, corridor, job, run — payload as JSONB, artefacts by reference, migrations | A run written by the CLI imports and re-renders from the database with no refit ✅ |
 | `[x]` | **5.1c** FastAPI | Project and corridor CRUD, `POST /jobs` → 202, `GET /jobs/{id}`, `GET /runs/{id}`, artefact download | OpenAPI generated ✅ · factors, tiers and licences read from `factors.yaml` ✅ |
 | `[x]` | **5.1d** In-process executor | A runner interface with a synchronous implementation behind it | A demo corridor goes submit → report with no broker running ✅ |
-| `[~]` | **5.2a** Celery chord | Fan-out adapters ✅, join ✅, fit ✅ — **across threads, not across machines. Celery is not built.** | An adapter failure fails its own branch — the factor is reported missing, the job is not failed ✅ |
+| `[x]` | **5.2a** Celery queue | Fan-out adapters ✅, join ✅, fit ✅ — and jobs on a Celery queue drained by separate worker processes ✅. **The unit of distribution is a job, not an adapter branch**; the note below has the measurement behind that | An adapter failure fails its own branch — the factor is reported missing, the job is not failed ✅ · a worker in another process finishes a job the API only queued ✅ |
 | `[ ]` | **5.2b** Cost model + cap | Per-source request accounting, a price table, a per-project cap enforced *before* the call | A job that would breach stops at the boundary, names the source, and the partial run is still a run |
 | `[ ]` | **5.2c** Secrets per tenant | Per-project keys, validated at entry, and an Overpass identity with a rate budget | A scope-less Mapillary token is refused when the key is entered, not rediscovered per run |
 | `[x]` | **5.3a** Report as a library | `web/src/` splits into `<Report run={run} />` and two thin entry points ✅ | The single-file bundle still opens from `file://` ✅ · the app renders the same component tree ✅ |
@@ -1096,7 +1097,7 @@ other way round: a job exists before its run does. Without it, every client woul
 same loop over `/runs?project_id=`. A job with no run yet is a 404 that names the status,
 because `queued` means wait and `failed` means never.
 
-### 5.2a — what is built, and the part that is not *(partly done)*
+### 5.2a — isolation, fan-out, and the queue *(done)*
 
 ```bash
 pytest tests/test_branches.py
@@ -1141,32 +1142,53 @@ reader how much of their assessment rests on stored data. And two concurrent mis
 key both fetched. All three fixed; single-flight is per process, and two processes still
 duplicate a fetch.
 
-> ### ⚠️ Not built: Celery, and it is the reason this row is `[~]`
->
-> **Jobs still run inside the web process.** Step 5.1d's pool is what executes them, and a
-> pool is not a queue: there is no retry, nothing survives a deploy, and throughput is
-> bounded by one machine. That is the whole point of this step's title and it is
-> outstanding.
->
-> **What stands in for it today.** A process that stops mid-job used to leave the row
-> `running` for ever — `execute` refuses to start anything that is not `queued`, so nothing
-> picked it up and the API went on answering *running, please wait* to somebody who would
-> wait for the rest of their life. Startup now reclaims those jobs and hands them back to
-> the runner, guarded by `job.attempts` so a job whose own execution kills the process is
-> failed rather than looped on. That closes the *silence*; it does not make the work
-> durable, and it assumes **one process** — `$ROADRISK_RECLAIM_AFTER_SECONDS` exists for
-> anyone who runs more than one, and a heartbeat or a lease owner is the proper answer.
->
-> **What Celery would actually need, beyond installing it.** The fan-out is over branches,
-> and a branch task needs the segmentation and returns `FactorValues`. Both are already
-> JSON-shaped — they are in `corridor.json` — so it is viable, but it is serialisation to
-> write in both directions. The alternative shape, fanning out over *fetches* and letting
-> the results flow through the cache, needs the cache to be shared across machines, which
-> is object storage at 6.2. **Neither is a small change, and the decision between them is
-> the first thing to make when this is picked up.**
->
-> **When it becomes urgent:** the day this runs on a server that gets deployed, or the day
-> one machine is not enough. Not before.
+**Built: the queue, and the decision this step was really about** *(2026-08-28)*.
+
+```bash
+export ROADRISK_DATABASE_URL=postgresql:///roadrisk
+export ROADRISK_BROKER_URL=filesystem:///var/tmp/roadrisk-queue   # or redis://…
+roadrisk serve --queue &      # accepts jobs, runs none of them
+roadrisk worker               # takes them off the queue
+```
+
+The old note offered two shapes and said the choice between them was the first thing to
+make when this was picked up: fan out over **branches**, or fan out over **fetches**
+through a shared cache. **It is neither. The unit of distribution is a job.**
+
+The reason is a measurement already in this file. The fetch cache is a directory on one
+machine, and it is what turns 55.5 s into 1.2 s for the next corridor in the same region.
+Spreading an assessment's *branches* across machines spreads its fetches across caches, so
+every worker pays the cold price and the second corridor is never cheap. The branch chord
+is not merely bigger than it looks — **until the cache is shared it would be slower than
+the threads it replaces**, and a shared cache is object storage at 6.2. So it waits for
+6.2, and the row in *What is left* says so.
+
+At job granularity the queue costs no serialisation at all: the message is two strings and
+everything else is already a row. What it buys is precisely what the old note said was
+missing — **work that survives a deploy, and more than one machine.**
+
+**Proven across processes, which is as close to *across machines* as one machine gets.**
+`tests/test_worker.py` submits through the API with the queue behind it, asserts the job is
+still `queued` a second later — because a test that merely watched a job succeed would pass
+against the thread pool this replaces — then starts a real `roadrisk worker` as a separate
+OS process and watches the same row finish. Planted against by making `submit` a no-op: it
+fails. The broker there is kombu's filesystem transport, a directory two processes agree
+on, which is what lets a distributed test run with nothing installed.
+
+**Four refusals, because a worker that starts and does nothing looks healthy.**
+`$ROADRISK_BROKER_URL` has no default, for the reason `$ROADRISK_ARTEFACT_ROOT` has none.
+A worker refuses to start without `$ROADRISK_DATABASE_URL`, because a queue across
+processes needs a store across processes and `MemoryStore` is one process's own memory.
+`filesystem://` URLs have their path read here, because kombu ignores it and would queue
+into the working directory instead. And there is **no result backend**: the job row is the
+result, and a second copy could disagree with it.
+
+**Recovery stayed one mechanism.** `acks_late` is off, so a dead worker's message is gone
+rather than redelivered — because `execute` refuses to start anything that is not `queued`
+and a dead worker leaves the row `running`, so redelivery would be refused and the job
+would sit there for ever. Instead the reclaim the API has run since 5.1d now also runs on
+`worker_ready`, guarded by `job.attempts`. Two recovery mechanisms that do not know about
+each other produce a job that neither will touch.
 
 ### 5.2 — the other trap
 
@@ -1400,13 +1422,14 @@ path and they are closed. This is the work that makes the thing usable by somebo
 | | Step | In one line | Waits on |
 |---|---|---|---|
 | `[~]` | **3.1** NB GLMM | Bookkeeping only: the clustered standard errors shipped here and the random-intercept GLMM landed inside 3.3, which is closed | Nothing. It is a status box |
+| — | *5.2a is done* | Jobs go on a queue that separate workers drain. What is **not** built, deliberately, is the branch-level chord: it would spread an assessment's fetches across caches and be slower than the threads it replaced | 6.2's object storage, which is the only thing that would make it worth having |
 | `[ ]` | **5.2b** Cost model + cap | Count what a run spends per source and refuse *before* the call that would breach the project's cap. A refusal is a receipt, and the partial run is still a run | Nothing, but nothing costs money until `mapillary_vision` exists — this is a guard rail for a cliff nobody is near |
 | `[ ]` | **5.2c** Secrets per tenant | Per-project API keys validated when they are entered rather than rediscovered per run, and an Overpass identity with a rate budget | 5.2b's accounting |
 | `[ ]` | **5.4a** Auth + RLS | Real identities, and row-level policies so the **database** refuses a cross-tenant read — proven by querying as tenant B | Nothing. The storage seam was built for it from the first migration |
 | `[ ]` | **5.4b** Projects + history | Saved runs, re-open, re-render with no refit; and a runs list bounded by the map view, which `GET /runs?bbox=` already answers | 5.4a |
 | `[ ]` | **5.4c** Corridor comparison | Two corridors side by side with mode, factor coverage and validation outcome — every number showing the context it was valid in | 5.4b |
 | `[ ]` | **6.1** Containers | Dockerfiles for api and worker, compose for local | Nothing |
-| `[ ]` | **6.2** Hosting | A public URL over TLS. Its object storage also makes the fetch cache shared, which is what the branch-level chord in 5.2a is waiting for | 6.1, 5.4a |
+| `[ ]` | **6.2** Hosting | A public URL over TLS. Its object storage also makes the fetch cache shared, which is the one thing that would make a branch-level chord worth building | 6.1, 5.4a |
 
 **The order that makes sense**: 5.4a before anything else, because until identities exist
 this cannot be exposed to a second person. Then 6.1 and 6.2 to make it reachable. 5.4b and

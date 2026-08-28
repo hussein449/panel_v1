@@ -317,13 +317,13 @@ With `$ROADRISK_DATABASE_URL` set, every request opens a Postgres store; without
 whole service runs in memory and forgets everything when it stops, which is a real way to
 try it. `GET /health` says which, and says two other things plainly:
 
-- **`runner`** — what executes jobs, by name. Jobs run in a bounded thread pool inside
-  this process. Work in flight does not survive a restart — but it is not *lost*: a job
-  left `running` by a stopped process is reclaimed the next time the service starts and
-  run again, and one that keeps stopping the process is failed with a message saying so
-  rather than looped on. Proper durability across machines is Celery, which is not built;
-  see the note under 5.2a in [`STEPS.md`](STEPS.md). `runner: null` means nothing is
-  listening at all, which is worth being able to tell apart from *busy*.
+- **`runner`** — what executes jobs, by name, and the answer changes what you can expect.
+  `in-process` is a bounded thread pool inside this process: work in flight does not
+  survive a restart, though it is not *lost* — a job left `running` by a stopped process
+  is reclaimed the next time the service starts, and one that keeps stopping the process
+  is failed with a message rather than looped on. `celery` is a queue that separate
+  workers drain, and there work does survive a restart. `runner: null` means nothing is
+  listening at all, which is worth telling apart from *busy*.
 - **`auth: null`** — `X-Tenant-Id` is required on every route that touches a row, and
   nothing verifies it. It scopes rows; it does not prove who you are. Step 5.4a replaces
   it with real identities and row-level policies in the database. `roadrisk serve` binds
@@ -337,6 +337,27 @@ writing a client:
 | Your panel breaks the input contract | `422`, the column named, and **no job is created** |
 | The engine descended to Mode B, dropped terms, refused an unsourced weight | `200` — those are findings the run carries |
 | Infrastructure broke | the job's status is `failed`, with a cause. Never a stack trace |
+
+**Jobs can outlive the process that took them.** By default they run in a pool inside the
+API, which is right for one machine. Point it at a queue instead and any number of workers
+can drain it:
+
+```bash
+pip install "roadrisk-panel[worker,store]"
+export ROADRISK_BROKER_URL=filesystem:///var/tmp/roadrisk-queue   # or redis://…
+roadrisk serve --queue        # accepts jobs, runs none of them
+roadrisk worker               # takes them off the queue
+```
+
+A worker insists on both a broker and a database, and says so if either is missing: a
+queue across processes needs a store across processes, and the in-memory store is one
+process's own memory. There is no result backend — the job row **is** the result, and a
+second copy of it could disagree.
+
+The unit of distribution is a **job**, not an adapter. Spreading one assessment's fetches
+across machines would spread them across caches, and the cache is what turns 55.5 s into
+1.2 s for the next corridor in the same region — so that waits for shared object storage,
+and [`STEPS.md`](STEPS.md) says so where you would look for it.
 
 **A run knows where it is.** Its bounding box is lifted from the centreline when it is
 stored, so a listing can be filtered by place without opening a payload:
@@ -588,8 +609,12 @@ src/roadrisk/
 │   ├── errors.py            the refusal contract — one envelope, three distinct outcomes
 │   ├── deps.py              a store per request; the tenant seam 5.4a replaces
 │   ├── schemas.py           what crosses the wire, and what is reused rather than redescribed
-│   ├── runner.py            the work, the interface, and the seam 5.2a replaces
+│   ├── runner.py            the work, the interface, and the seam the worker fills
 │   └── routes/              meta, registry, projects, corridors, jobs, runs
+├── worker/                  jobs that outlive the process that took them. Above `api`
+│   ├── app.py               the Celery app, and why the unit is a job and not a branch
+│   ├── tasks.py             the one task: two strings, and a row does the rest
+│   └── runner.py            the runner `create_app` has taken as an argument since 5.1d
 ├── demo.py                  synthetic panels for tests and demonstration
 ├── storecli.py              `roadrisk store` — kept apart so `assess` never needs psycopg
 └── cli.py                   mode banner, refusal receipt, descent receipt

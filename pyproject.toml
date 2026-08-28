@@ -57,6 +57,14 @@ api = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
 ]
+# Jobs that outlive the process which accepted them. Its own extra because the API is
+# usable without it — `roadrisk serve` runs jobs in a bounded pool inside itself, which
+# is right for one machine — and because a deployment that only serves stored runs
+# should not have to install a queue to do it. Celery needs a broker; this package
+# ships none and refuses to guess at one, so $ROADRISK_BROKER_URL has no default.
+worker = [
+    "celery>=5.4",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
