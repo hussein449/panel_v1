@@ -224,7 +224,7 @@ export interface JobOptions {
   use_spatial?: boolean;
   /** Factors to put a rung 3 spline on. Validated against `factors.yaml` at submit — a name no factor has is a typo, and finding it in a run log a quarter of an hour later helps nobody. */
   shape_factors?: string[];
-  adapters?: ("osm" | "rasters" | "traffic" | "mapillary")[];
+  adapters?: ("osm" | "rasters" | "traffic" | "mapillary" | "imagery")[];
   unit_length_m?: number | null;
   tolerance_m?: number;
   n_periods?: number;

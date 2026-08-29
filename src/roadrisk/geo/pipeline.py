@@ -49,6 +49,7 @@ from roadrisk.geo.adapters import (
 from roadrisk.geo.adapters.curvature import slots_for as curvature_slots
 from roadrisk.geo.adapters.grade import SLOTS as GRADE_SLOTS
 from roadrisk.geo.adapters.graph import SLOTS as GRAPH_SLOTS
+from roadrisk.geo.adapters.imagery import ImageryClient
 from roadrisk.geo.adapters.imagery import describe as imagery_notes
 from roadrisk.geo.adapters.landcover import SLOTS as LANDCOVER_SLOTS
 from roadrisk.geo.adapters.mapillary import SLOTS as MAPILLARY_SLOTS
@@ -313,6 +314,7 @@ def build_corridor_panel(
     network: RoadGraph | None = None,
     network_client: OverpassClient | None = None,
     mapillary_client: MapillaryClient | None = None,
+    imagery_client: ImageryClient | None = None,
     cache: Cache | None = None,
     latitude_column: str = "latitude",
     longitude_column: str = "longitude",
@@ -361,6 +363,11 @@ def build_corridor_panel(
         mapillary_client: Client for the Mapillary map-features API. Supplying it runs
             the roadside-object adapter; the default implementation needs a free access
             token in ``$MAPILLARY_ACCESS_TOKEN``.
+        imagery_client: Client for the Mapillary *images* API. Supplying it asks
+            whether anybody has driven this road and when, which fills no factor and
+            cannot fail the run. Same free token as mapillary_client, and
+            deliberately a separate argument: one counts poles beside the road, this
+            one asks whether a vehicle has been on it.
         cache: Where to remember remote answers between runs. Every network client is
             wrapped in it, the strategic-network request is rounded to a grid so a second
             corridor in the same region reuses the first one's fetch, and every hit is
@@ -442,6 +449,7 @@ def build_corridor_panel(
         network=network,
         network_client=network_client,
         mapillary_client=mapillary_client,
+        imagery_client=imagery_client,
         client_values=client_values,
         client_source=client_source,
     )
@@ -491,6 +499,7 @@ def _branches(
     network: RoadGraph | None,
     network_client: OverpassClient | None,
     mapillary_client: MapillaryClient | None,
+    imagery_client: ImageryClient | None,
     client_values: pd.DataFrame | None,
     client_source: str | None,
 ) -> list[Branch]:
@@ -578,6 +587,18 @@ def _branches(
             )
         )
 
+    if imagery_client is not None:
+        branches.append(
+            Branch(
+                # No slots: this fills no factor. It answers one question about the
+                # corridor and the answer is a sentence in the report.
+                name="The street-level imagery check",
+                slots=(),
+                run=lambda: _imagery_branch(corridor),
+                needs_network=True,
+            )
+        )
+
     if client_values is not None:
         branches.append(
             Branch(
@@ -659,20 +680,29 @@ def _mapillary_branch(
     registry: Registry,
     client: MapillaryClient,
 ) -> list[AdapterResult]:
-    # Whether anybody has driven this road, asked while a Mapillary token is in hand.
-    # It contributes no factor and cannot fail this branch: `imagery.describe` turns
-    # every failure into the note it would have written anyway, because a corroborating
-    # opinion on one question must not cost a corridor its assessment.
-    notes = list(imagery_notes(corridor))
-
-    features, fetch_notes = _fetch_features(corridor, client)
-    notes.extend(fetch_notes)
+    features, notes = _fetch_features(corridor, client)
     if features is None:
-        return [AdapterResult(name="mapillary", notes=notes)]
+        return [AdapterResult(name="mapillary", notes=list(notes))]
 
     result = compute_object_density(segmentation, features, registry=registry)
     result.notes.extend(notes)
     return [result]
+
+
+def _imagery_branch(corridor: Corridor) -> list[AdapterResult]:
+    """Has anybody driven this road — a branch that fills no slot.
+
+    **Separate from the Mapillary factor branch even though they share a token.** They
+    answer different questions: one counts poles beside the road and produces a column,
+    this one asks whether a vehicle has been *on* it and produces a sentence. Coupling
+    them would mean a reader who wanted the second had to accept the first, and a toggle
+    whose label described only half of what it did.
+
+    `slots=()` because there is no factor here to report missing when it fails —
+    `imagery.describe` has already turned any failure into the note it would have
+    written, so this branch cannot fail at all.
+    """
+    return [AdapterResult(name="imagery", notes=list(imagery_notes(corridor)))]
 
 
 def _fetch_extract(

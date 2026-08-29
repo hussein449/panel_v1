@@ -350,7 +350,30 @@ export default function RoadPicker({
 
         <section className="shell-step">
           <h2>
-            <span className="shell-step__n">4</span> Crashes
+            <span className="shell-step__n">4</span> Is this road open?
+            <span className="shell-step__optional">optional</span>
+          </h2>
+          <label className="shell-check">
+            <input type="checkbox" name="check_imagery" />
+            <span>Check whether anybody has driven this road</span>
+          </label>
+          <p className="shell-note">
+            Looks for street-level photographs along the corridor. A recent one is
+            direct evidence a vehicle was here and the road was passable; finding none
+            is <strong>weak</strong> evidence of anything, because photo coverage is
+            absent across whole regions, and the report says so either way. Adds one
+            network request and needs a free Mapillary token where this is deployed.
+          </p>
+          <p className="shell-note">
+            The road is already refused outright if OpenStreetMap tags it as under
+            construction or abandoned. This is the second opinion on that tag, not a
+            replacement for it.
+          </p>
+        </section>
+
+        <section className="shell-step">
+          <h2>
+            <span className="shell-step__n">5</span> Crashes
             <span className="shell-step__optional">optional</span>
           </h2>
           <label>

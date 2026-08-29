@@ -177,7 +177,12 @@ export async function assessRoadAction(form: FormData): Promise<void> {
         // nearly empty. The job form under Advanced leaves every adapter off because
         // that screen is for someone choosing; this one is for someone who wants their
         // road assessed.
-        adapters: ["osm"],
+        //
+        // `imagery` is off unless asked for: it is a second network round trip and it
+        // needs a Mapillary token the deployment may not have. It fills no factor —
+        // it answers whether anybody has driven this road, which is the question the
+        // A10 raised and nothing could answer.
+        adapters: form.get("check_imagery") !== null ? ["osm", "imagery"] : ["osm"],
 
         // **The context the weights are selected against, and its omission was
         // expensive.** This action used to send adapters and nothing else, so all three

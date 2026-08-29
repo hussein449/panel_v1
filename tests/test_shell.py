@@ -619,6 +619,31 @@ def test_the_corridor_length_is_measured_when_the_map_has_finished_drawing() -> 
     )
 
 
+def test_the_imagery_toggle_reaches_the_job() -> None:
+    """A control the page offers and the action never sends is worse than no control.
+
+    This is the gap it is guarding: the imagery check was built, tested and wired into
+    the pipeline, and the assess page still sent `adapters: ["osm"]` — so the one screen
+    anybody uses could not reach it at all. The chain has four links and each is checked
+    here, because breaking any one of them fails silently and looks like a feature that
+    simply never finds anything.
+    """
+    picker = (SHELL / "components" / "RoadPicker.tsx").read_text(encoding="utf-8")
+    actions = (SHELL / "lib" / "actions.ts").read_text(encoding="utf-8")
+    schemas = (REPO / "src" / "roadrisk" / "api" / "schemas.py").read_text(
+        encoding="utf-8"
+    )
+    runner = (REPO / "src" / "roadrisk" / "api" / "runner.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'name="check_imagery"' in picker, "the page stopped offering the toggle"
+    assert '"check_imagery"' in actions, "the action stopped reading the toggle"
+    assert '"imagery"' in actions, "the action no longer asks for the imagery adapter"
+    assert '"imagery"' in schemas, "the API would refuse the value the page sends"
+    assert "imagery_client" in runner, "nothing builds a client for it"
+
+
 def test_a_pick_that_resolves_no_road_clears_the_extent() -> None:
     """A stale length under a road nobody chose is worse than no length at all."""
     canvas = (SHELL / "components" / "RoadPickerCanvas.tsx").read_text(encoding="utf-8")

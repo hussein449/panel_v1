@@ -215,9 +215,16 @@ class JobOptions(Body):
 
     #: Which fetches the pipeline is allowed to make. Named rather than four booleans
     #: so that a fifth source is an added value and not a changed shape.
-    adapters: list[Literal["osm", "rasters", "traffic", "mapillary"]] = Field(
-        default_factory=list
-    )
+    #:
+    #: `imagery` is that fifth value arriving exactly as the line above intended. It uses
+    #: the same free Mapillary token as `mapillary` and is deliberately not folded into
+    #: it: `mapillary` counts poles beside the road and fills a factor column, while
+    #: `imagery` asks whether a vehicle has ever been *on* the road and produces a
+    #: sentence. One control for both would make a reader who wanted the second pay for
+    #: the first, and would carry a label describing half of what it did.
+    adapters: list[
+        Literal["osm", "rasters", "traffic", "mapillary", "imagery"]
+    ] = Field(default_factory=list)
 
     unit_length_m: float | None = Field(default=None, gt=0.0, le=100_000.0)
     tolerance_m: float = Field(default=30.0, gt=0.0, le=1000.0)

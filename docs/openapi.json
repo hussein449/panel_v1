@@ -692,7 +692,8 @@
                 "osm",
                 "rasters",
                 "traffic",
-                "mapillary"
+                "mapillary",
+                "imagery"
               ],
               "type": "string"
             },

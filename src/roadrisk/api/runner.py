@@ -400,6 +400,7 @@ def _clients(options: JobOptions) -> dict[str, Any]:
     client built during a request that is then executed minutes later in a pool thread
     is a connection nobody owns.
     """
+    from roadrisk.geo.adapters.imagery import HttpImageryClient
     from roadrisk.geo.adapters.mapillary import HttpMapillaryClient
     from roadrisk.geo.osm import HttpOverpassClient
 
@@ -411,6 +412,8 @@ def _clients(options: JobOptions) -> dict[str, Any]:
         clients["network_client"] = HttpOverpassClient(timeout_s=240.0)
     if "mapillary" in wanted:
         clients["mapillary_client"] = HttpMapillaryClient()
+    if "imagery" in wanted:
+        clients["imagery_client"] = HttpImageryClient()
     if "rasters" in wanted:
         from roadrisk.geo.adapters.rasters import elevation_sampler, landcover_sampler
 
