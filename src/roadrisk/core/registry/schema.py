@@ -176,6 +176,23 @@ class FacilityType(StrEnum):
     RURAL_TWO_LANE = "rural_two_lane"
     RURAL_MULTILANE = "rural_multilane"
     URBAN_ARTERIAL = "urban_arterial"
+    #: A grade-separated dual carriageway with no at-grade junctions — an
+    #: *Αυτοκινητόδρομος*, an autoroute, an Interstate.
+    #:
+    #: **It exists so that a motorway can stop being declared as something else.** No
+    #: weight in the registry is scoped to it today, so declaring it admits exactly the
+    #: unrestricted weights and nothing more — the same evidence ``ANY`` gets. That is
+    #: the point rather than a shortcoming: the option a reader reaches for instead is
+    #: ``RURAL_TWO_LANE``, which is not a near miss but a different road, and it quietly
+    #: admits the HSM's two-lane-two-way weights. ``access_density`` is HSM Eq. 10-17,
+    #: *"rural two-lane two-way segments"* — and a motorway has no driveways at all, so
+    #: the number would be admitted on a premise that is false rather than approximate.
+    #: Found on the Cyprus A10, declared ``rural_two_lane`` because nothing better was
+    #: offered.
+    #:
+    #: So this buys an honest and smaller answer. A motorway-scoped weight entering the
+    #: registry later makes it buy more, with nothing here changing.
+    MOTORWAY = "motorway"
     ANY = "any"
 
 

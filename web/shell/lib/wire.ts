@@ -141,7 +141,7 @@ export type Estimator = "nb2" | "bayes";
  * run means the corridor type was not declared, in which case only unrestricted
  * weights are admissible — the engine will not guess.
  */
-export type FacilityType = "rural_two_lane" | "rural_multilane" | "urban_arterial" | "any";
+export type FacilityType = "rural_two_lane" | "rural_multilane" | "urban_arterial" | "motorway" | "any";
 
 /** A declared model term, exactly as `factors.yaml` declares it. */
 export interface FactorOut {

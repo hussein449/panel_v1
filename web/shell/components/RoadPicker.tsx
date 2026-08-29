@@ -305,7 +305,14 @@ export default function RoadPicker({
               <option value="rural_two_lane">Rural two-lane</option>
               <option value="rural_multilane">Rural multilane</option>
               <option value="urban_arterial">Urban arterial</option>
+              <option value="motorway">Motorway</option>
             </select>
+            <span className="shell-hint">
+              Declaring <strong>motorway</strong> admits fewer weights than the others,
+              not more — no published weight in the registry is scoped to one yet. It is
+              here so a motorway need not be declared as a rural two-lane road, which
+              would admit driveway-density evidence for a road that has no driveways.
+            </span>
           </label>
 
           <label>

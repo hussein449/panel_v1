@@ -53,6 +53,39 @@ OVERPASS_ENDPOINTS: tuple[str, ...] = (
 
 USER_AGENT = "roadrisk-panel (road safety assessment; contact via repository)"
 
+#: `highway` values that are not a road anybody drives on.
+#:
+#: **A road that does not exist cannot have a crash record, and must not be assessed.**
+#: Found the expensive way: the Cyprus **A10** — Αυτοκινητόδρομος Λευκωσίας-Παλαιχωρίου
+#: — is tagged `highway=construction` on all 22 of its ways, and the pipeline assessed it
+#: end to end and produced a nine-page report ranking the segments of a motorway nobody
+#: has driven on. Every downstream symptom traced back here: the tag adapters found
+#: almost nothing to attribute because a construction way is not a road way, so **zero of
+#: six tag factors cleared the coverage floor**; `ramp_density` and `poi_density` matched
+#: nothing anywhere; and the geometry carried a 93.7 m median vertex spacing with hops up
+#: to a kilometre, which made the curvature — the largest weight in the model — read
+#: tighter than the real road.
+#:
+#: The report said all of those things, correctly and separately. **What it never said
+#: was the one sentence that explains them: the road is not built.** So this is checked
+#: at the fetch, where the tag is, rather than being left to be re-derived from six
+#: symptoms further down.
+#:
+#: `proposed` and `planned` are roads that may never be built. `abandoned`, `disused`,
+#: `razed` and `demolished` are roads that were and no longer are. Neither kind carries
+#: traffic, and both are ordinary OSM tagging rather than an error.
+NOT_OPEN_HIGHWAY_VALUES: frozenset[str] = frozenset(
+    {
+        "construction",
+        "proposed",
+        "planned",
+        "abandoned",
+        "disused",
+        "razed",
+        "demolished",
+    }
+)
+
 #: Fragments whose ends fall within this distance are treated as continuous. OSM
 #: geometry is not perfectly noded — a way can end a few metres from its neighbour,
 #: usually where an editor split it. Larger than this is a genuine gap, not noise.
@@ -380,6 +413,8 @@ def fetch_corridor_by(
             )
         )
 
+    ways, not_open = _drop_ways_that_are_not_a_road(ways, selector)
+
     lines = [
         LineString([(node["lon"], node["lat"]) for node in way["geometry"]])
         for way in ways
@@ -427,6 +462,21 @@ def fetch_corridor_by(
             )
         )
 
+    if not_open:
+        states = sorted(
+            {
+                str(way.get("tags", {}).get("highway", "")).strip().lower()
+                for way in not_open
+            }
+        )
+        warnings.append(
+            f"{len(not_open)} OSM way(s) carrying {selector} are tagged "
+            f"{', '.join(f'highway={state}' for state in states)} and were EXCLUDED — "
+            "they are not open road. The corridor assessed here is the built part only, "
+            "so its chainage does not run the length of the road as it is planned, and "
+            "a crash table covering the whole route will have rows that land nowhere."
+        )
+
     excluded_km = sum(piece.length for piece in leftovers) / 1000.0
     if divided:
         warnings.append(
@@ -470,6 +520,52 @@ def _oneway_count(ways: list[dict[str, Any]]) -> int:
     return sum(
         1 for way in ways if str(way.get("tags", {}).get("oneway", "")).lower() == "yes"
     )
+
+
+def _drop_ways_that_are_not_a_road(
+    ways: list[dict[str, Any]], selector: Selector
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Separate the road from what is only planned, being built, or gone.
+
+    **Refuses outright when nothing is left.** That is the A10 case in
+    :data:`NOT_OPEN_HIGHWAY_VALUES`: every way under construction, no open carriageway
+    anywhere, and a corridor that cannot have had a crash on it. Assessing it is not a
+    degraded answer, it is an answer about a road that does not exist — so this is one
+    of the few places that raises rather than warning and continuing.
+
+    **Excludes and reports when only part is.** A motorway being extended is ordinary,
+    and the built part is a real corridor worth assessing. Dropping the unbuilt part can
+    leave a gap the remaining pieces cannot bridge; that is not decided here, it is left
+    to the fragmentation gate, which already exists to say when what came back is not a
+    corridor.
+    """
+    open_ways, closed = [], []
+    for way in ways:
+        value = str(way.get("tags", {}).get("highway", "")).strip().lower()
+        (closed if value in NOT_OPEN_HIGHWAY_VALUES else open_ways).append(way)
+
+    if not closed:
+        return ways, []
+
+    states = sorted(
+        {
+            str(way.get("tags", {}).get("highway", "")).strip().lower()
+            for way in closed
+        }
+    )
+    described = ", ".join(f"highway={state}" for state in states)
+
+    if not open_ways:
+        raise CorridorError(
+            f"{selector} is not a road that is open: all {len(closed)} OSM way(s) "
+            f"carrying it are tagged {described}. A road that has not been built — or "
+            "is no longer there — cannot have a crash record, and every factor measured "
+            "along it would describe a construction site rather than traffic. "
+            "Assessing it would produce a confident-looking report about a road nobody "
+            "has driven on. Pick a road that is open, or wait until this one is."
+        )
+
+    return open_ways, closed
 
 
 def _is_divided(ways: list[dict[str, Any]]) -> bool:

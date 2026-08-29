@@ -324,6 +324,62 @@ class TestGates:
             fetch_corridor("B9", BBOX, client=client_returning(*scattered))
 
 
+class TestARoadThatIsNotOpen:
+    """The Cyprus A10, and the report it should never have produced.
+
+    Every one of the A10's 22 OSM ways is `highway=construction`. The pipeline assessed
+    it end to end anyway: 8.53 km, 17 segments, a ranked table and a blackspot list for
+    a motorway nobody has driven on. Each symptom was reported correctly and separately
+    — 30% centreline coverage, zero of six tag factors clearing their floor, no ramps
+    and no POIs anywhere, and a 95 m vertex spacing that made curvature untrustworthy —
+    and the one sentence explaining all of them was never said.
+    """
+
+    def test_a_road_under_construction_is_refused(self) -> None:
+        pieces = [way(straight(0, 3000), highway="construction")]
+        with pytest.raises(CorridorError, match="not a road that is open"):
+            fetch_corridor("A10", BBOX, client=client_returning(*pieces))
+
+    def test_the_refusal_names_the_tag_it_found(self) -> None:
+        """Not "this road is unsuitable". The tag, so it can be checked in OSM."""
+        pieces = [way(straight(0, 3000), highway="construction")]
+        with pytest.raises(CorridorError, match="highway=construction"):
+            fetch_corridor("A10", BBOX, client=client_returning(*pieces))
+
+    @pytest.mark.parametrize(
+        "state", ["construction", "proposed", "abandoned", "razed", "disused"]
+    )
+    def test_every_not_open_state_is_refused(self, state: str) -> None:
+        """Planned, being built and gone are different facts, and none is a road."""
+        pieces = [way(straight(0, 3000), highway=state)]
+        with pytest.raises(CorridorError, match="not a road that is open"):
+            fetch_corridor("A10", BBOX, client=client_returning(*pieces))
+
+    def test_a_partly_built_road_keeps_the_built_part_and_says_so(self) -> None:
+        """A motorway being extended is ordinary. The open carriageway is real road."""
+        result = fetch_corridor(
+            "A10",
+            BBOX,
+            client=client_returning(
+                way(straight(0, 4000)),
+                way(straight(4000, 5000), highway="construction"),
+            ),
+        )
+        assert result.points, "the built section should still produce a corridor"
+        assert any("EXCLUDED" in warning for warning in result.warnings), (
+            "excluding unbuilt road silently would leave the chainage short of the "
+            "route with nothing on the report to explain it"
+        )
+        assert any("highway=construction" in warning for warning in result.warnings)
+
+    def test_an_ordinary_road_is_untouched(self) -> None:
+        """The gate must cost nothing on every road that is open."""
+        result = fetch_corridor(
+            "B9", BBOX, client=client_returning(way(straight(0, 4000)))
+        )
+        assert not any("EXCLUDED" in warning for warning in result.warnings)
+
+
 class TestTrimming:
     def test_trims_to_the_requested_extent(self) -> None:
         client = client_returning(way(straight(0, 4000)))

@@ -423,6 +423,7 @@
           "rural_two_lane",
           "rural_multilane",
           "urban_arterial",
+          "motorway",
           "any"
         ],
         "title": "FacilityType",
