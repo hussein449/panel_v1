@@ -49,6 +49,7 @@ from roadrisk.geo.adapters import (
 from roadrisk.geo.adapters.curvature import slots_for as curvature_slots
 from roadrisk.geo.adapters.grade import SLOTS as GRADE_SLOTS
 from roadrisk.geo.adapters.graph import SLOTS as GRAPH_SLOTS
+from roadrisk.geo.adapters.imagery import describe as imagery_notes
 from roadrisk.geo.adapters.landcover import SLOTS as LANDCOVER_SLOTS
 from roadrisk.geo.adapters.mapillary import SLOTS as MAPILLARY_SLOTS
 from roadrisk.geo.adapters.osm_density import SLOTS as OSM_DENSITY_SLOTS
@@ -658,9 +659,16 @@ def _mapillary_branch(
     registry: Registry,
     client: MapillaryClient,
 ) -> list[AdapterResult]:
-    features, notes = _fetch_features(corridor, client)
+    # Whether anybody has driven this road, asked while a Mapillary token is in hand.
+    # It contributes no factor and cannot fail this branch: `imagery.describe` turns
+    # every failure into the note it would have written anyway, because a corroborating
+    # opinion on one question must not cost a corridor its assessment.
+    notes = list(imagery_notes(corridor))
+
+    features, fetch_notes = _fetch_features(corridor, client)
+    notes.extend(fetch_notes)
     if features is None:
-        return [AdapterResult(name="mapillary", notes=list(notes))]
+        return [AdapterResult(name="mapillary", notes=notes)]
 
     result = compute_object_density(segmentation, features, registry=registry)
     result.notes.extend(notes)
