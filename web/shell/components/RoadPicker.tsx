@@ -5,6 +5,7 @@ import { useRef, useState, useTransition } from "react";
 
 import type { Basemap } from "@/lib/api";
 import type { Place } from "@/lib/geocode";
+import { type Extent, describeLength } from "@/lib/measure";
 import type { PickedRoad, PickOutcome } from "./RoadPickerCanvas";
 
 /**
@@ -54,6 +55,7 @@ export default function RoadPicker({
   problem: string | null;
 }) {
   const [picked, setPicked] = useState<PickedRoad | null>(null);
+  const [extent, setExtent] = useState<Extent | null>(null);
   const [missed, setMissed] = useState<PickOutcome | null>(null);
   const [bbox, setBbox] = useState<[number, number, number, number] | null>(null);
   const [centre, setCentre] = useState<[number, number, number, number] | null>(null);
@@ -74,6 +76,7 @@ export default function RoadPicker({
       return;
     }
     setPicked(null);
+    setExtent(null);
     setMissed(outcome);
   }
 
@@ -117,6 +120,7 @@ export default function RoadPicker({
         picked={picked}
         onPick={onPick}
         onViewport={(viewport) => setBbox(viewport.bbox)}
+        onExtent={setExtent}
         onFailure={setMapProblem}
       />
 
@@ -196,10 +200,54 @@ export default function RoadPicker({
                   of this name, the fetch is refused rather than welding them together.
                 </p>
               ) : null}
+
+              {/* The number the first real run of this page needed and did not have. It
+                  assessed 1.83 km of a 2.95 km road, produced four segments, and the
+                  collinearity check returned infinity — all decided by a zoom level,
+                  before the button was pressed, with nothing on screen saying so. */}
+              {extent ? (
+                <div className={`shell-extent shell-extent--${extent.verdict}`}>
+                  <p className="shell-extent__figure">
+                    ≈ {describeLength(extent.metres)} in view ·{" "}
+                    <strong>
+                      about {extent.segments} segment
+                      {extent.segments === 1 ? "" : "s"}
+                    </strong>
+                  </p>
+                  {extent.verdict === "too-short" ? (
+                    <p className="shell-extent__verdict">
+                      <strong>Too short to assess well.</strong> Below about ten
+                      segments there are more factors than observations: the
+                      collinearity check returns infinity, most factors stop varying,
+                      and the ranking spreads across a fraction of its own scale.{" "}
+                      <strong>Zoom out</strong> to take in more of the road.
+                    </p>
+                  ) : extent.verdict === "thin" ? (
+                    <p className="shell-extent__verdict">
+                      Workable, but thin. Twenty segments or more is where the ranking
+                      separates properly — zoom out if there is more of this road.
+                    </p>
+                  ) : (
+                    <p className="shell-extent__verdict">
+                      Enough road for the ranking to separate and the checks to mean
+                      something.
+                    </p>
+                  )}
+                  <p className="shell-note">
+                    Estimated from the map’s own geometry, which is simplified as you
+                    zoom out — the real fetch decides the length. Read it as the
+                    difference between four segments and forty, not as a measurement.
+                  </p>
+                </div>
+              ) : null}
+
               <button
                 type="button"
                 className="shell-button shell-button--quiet"
-                onClick={() => setPicked(null)}
+                onClick={() => {
+                  setPicked(null);
+                  setExtent(null);
+                }}
               >
                 Choose a different road
               </button>
@@ -239,7 +287,63 @@ export default function RoadPicker({
 
         <section className="shell-step">
           <h2>
-            <span className="shell-step__n">3</span> Crashes
+            <span className="shell-step__n">3</span> What kind of road
+            <span className="shell-step__optional">recommended</span>
+          </h2>
+          <p className="shell-note">
+            <strong>This decides how much published evidence is admissible.</strong> A
+            weight is a number plus the context it is valid in, and one whose scope does
+            not match this corridor is inadmissible rather than approximate. Left
+            undeclared, only weights that state no scope at all can be used — on a real
+            run that meant <strong>eleven factors measured and one scored</strong>.
+          </p>
+
+          <label>
+            Road type
+            <select name="facility_type" defaultValue="any">
+              <option value="any">Not declared — unrestricted weights only</option>
+              <option value="rural_two_lane">Rural two-lane</option>
+              <option value="rural_multilane">Rural multilane</option>
+              <option value="urban_arterial">Urban arterial</option>
+            </select>
+          </label>
+
+          <label>
+            Region
+            <span className="shell-hint">
+              A mismatch is reported, never refused — most published weights are North
+              American and refusing them would leave nothing usable elsewhere.
+            </span>
+            <select name="region" defaultValue="global">
+              <option value="global">Not declared</option>
+              <option value="north_america">North America</option>
+              <option value="europe">Europe</option>
+              <option value="australasia">Australasia</option>
+              <option value="asia">Asia</option>
+              <option value="africa">Africa</option>
+              <option value="middle_east">Middle East</option>
+              <option value="latin_america">Latin America</option>
+            </select>
+          </label>
+
+          <label>
+            Which crashes were counted
+            <span className="shell-hint">
+              Match this to your crash file. A fatal-crash weight never scores an
+              injury panel.
+            </span>
+            <select name="severity" defaultValue="all">
+              <option value="all">All crashes</option>
+              <option value="injury">Injury</option>
+              <option value="fsi">Fatal and serious injury</option>
+              <option value="fatal">Fatal only</option>
+            </select>
+          </label>
+        </section>
+
+        <section className="shell-step">
+          <h2>
+            <span className="shell-step__n">4</span> Crashes
             <span className="shell-step__optional">optional</span>
           </h2>
           <label>

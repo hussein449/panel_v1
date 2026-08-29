@@ -178,6 +178,18 @@ export async function assessRoadAction(form: FormData): Promise<void> {
         // that screen is for someone choosing; this one is for someone who wants their
         // road assessed.
         adapters: ["osm"],
+
+        // **The context the weights are selected against, and its omission was
+        // expensive.** This action used to send adapters and nothing else, so all three
+        // fell back to `any` / `global` / `all` — under which only weights declaring no
+        // scope at all are admissible. A real corridor came back with eleven factors
+        // measured at full coverage and exactly one of them scored, and nothing on the
+        // screen connected those two facts, because the screen never asked. Passed
+        // through as sent: these are enums the API validates, and a bad one should be
+        // its 422 naming the field rather than a default quietly chosen here.
+        facility_type: text(form, "facility_type") || "any",
+        region: text(form, "region") || "global",
+        severity: text(form, "severity") || "all",
       } as JobOptions,
     };
 

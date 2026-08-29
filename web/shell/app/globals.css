@@ -614,6 +614,59 @@ body {
   font-weight: 600;
 }
 
+/* How much road is in the frame.
+ *
+ * Colour-coded, and never *only* colour-coded: the verdict is a sentence under the
+ * figure, so the warning survives a monochrome screen and a reader who cannot separate
+ * the three tints. The palette is the report's own, which is why a corridor that is too
+ * short reads in the same red a failed check does inside the document. */
+.shell-extent {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 3px;
+  border: 1px solid var(--rule);
+  background: var(--page);
+}
+
+.shell-extent__figure {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.95rem;
+}
+
+.shell-extent__verdict {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.shell-extent--too-short {
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--rule));
+  background: color-mix(in srgb, var(--bad) 7%, var(--page));
+}
+
+.shell-extent--too-short .shell-extent__verdict {
+  color: var(--bad);
+}
+
+.shell-extent--thin {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--rule));
+  background: color-mix(in srgb, var(--warn) 8%, var(--page));
+}
+
+.shell-extent--thin .shell-extent__verdict {
+  color: var(--warn);
+}
+
+.shell-extent--good {
+  border-color: color-mix(in srgb, var(--good) 40%, var(--rule));
+  background: color-mix(in srgb, var(--good) 6%, var(--page));
+}
+
+.shell-extent--good .shell-extent__verdict {
+  color: var(--good);
+}
+
 .shell-places {
   list-style: none;
   margin: 0.4rem 0 0;

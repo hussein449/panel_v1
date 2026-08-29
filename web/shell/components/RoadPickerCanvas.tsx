@@ -10,6 +10,7 @@ import {
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import type { Basemap } from "@/lib/api";
+import { type Extent, extentOf, totalLength } from "@/lib/measure";
 
 /**
  * The map you pick a road on, and the second file in this app that knows MapLibre exists.
@@ -113,6 +114,7 @@ export default function RoadPickerCanvas({
   picked,
   onPick,
   onViewport,
+  onExtent,
   onFailure,
 }: {
   basemap: Basemap | null;
@@ -121,6 +123,8 @@ export default function RoadPickerCanvas({
   picked: PickedRoad | null;
   onPick: (outcome: PickOutcome) => void;
   onViewport: (viewport: Viewport) => void;
+  /** How much of the picked road is in frame. Null when nothing is picked. */
+  onExtent: (extent: Extent | null) => void;
   onFailure: (reason: string) => void;
 }) {
   const container = useRef<HTMLDivElement | null>(null);
@@ -135,8 +139,17 @@ export default function RoadPickerCanvas({
   pick.current = onPick;
   const viewport = useRef(onViewport);
   viewport.current = onViewport;
+  const extent = useRef(onExtent);
+  extent.current = onExtent;
   const fail = useRef(onFailure);
   fail.current = onFailure;
+
+  // What is picked, readable from listeners registered once at construction. The
+  // measurement has to be redone on every pan and zoom, and `moveend` fires long after
+  // the render that set this. Named for the ref rather than `chosen`, which is a local
+  // inside the click handler and would shadow it exactly where both are in scope.
+  const pickedRef = useRef<PickedRoad | null>(picked);
+  pickedRef.current = picked;
 
   useEffect(() => {
     if (!container.current || map.current) return;
@@ -208,6 +221,17 @@ export default function RoadPickerCanvas({
 
     instance.on("moveend", () => viewport.current({ bbox: boundsOf(instance) }));
 
+    // **Measured on `idle`, not on `moveend`.** The box is the viewport, so zooming out
+    // after picking is exactly how a reader lengthens their corridor and the figure has
+    // to follow it. But `moveend` fires when the *camera* stops, which is before the
+    // tiles that move revealed have arrived — measuring there reads whatever happened to
+    // be rendered already and reports it as the answer: too low, in the one direction
+    // that matters, and never corrected, because no further event is coming. `idle` is
+    // the map saying it has finished drawing everything it is going to.
+    instance.on("idle", () =>
+      remeasure(instance, pickedRef.current, extent.current),
+    );
+
     instance.on("click", (event) => {
       // A generous box rather than the exact pixel: a road is a few pixels wide and a
       // finger is not a mouse. The same reason `RunMapCanvas` carries a wide hit layer.
@@ -230,6 +254,7 @@ export default function RoadPickerCanvas({
       if (under.length === 0) {
         pick.current({ kind: "nothing" });
         highlight(instance, []);
+        extent.current(null);
         return;
       }
 
@@ -252,6 +277,7 @@ export default function RoadPickerCanvas({
           zoomedEnough: instance.getZoom() >= LABELS_APPEAR_AT,
         });
         highlight(instance, under.slice(0, 1));
+        extent.current(null);
         return;
       }
 
@@ -265,6 +291,7 @@ export default function RoadPickerCanvas({
           return other?.key === chosen.key && other?.value === chosen.value;
         }),
       );
+      remeasure(instance, chosen, extent.current);
     });
 
     // The cursor is the only affordance saying the map is clickable at all.
@@ -360,6 +387,45 @@ function text(value: unknown): string | null {
   // the reader meant, so a multi-valued ref is treated as no ref and the name is used.
   if (!trimmed || trimmed.includes(";")) return null;
   return trimmed;
+}
+
+/**
+ * How much of the picked road is in the frame, reported to the panel.
+ *
+ * **The query takes no geometry argument**, unlike the two in the click handler. Those
+ * ask *what is under the cursor*; this asks *what is on screen*, because the box the API
+ * will be sent is the viewport and the answer has to be about the same area. Passing a
+ * box here would measure the road near where somebody happened to click, which is a
+ * different question with a plausible-looking answer.
+ *
+ * Failure is silent by design: this is a hint beside a button, and a basemap whose schema
+ * does not match the one assumed here should cost the reader that hint and nothing else.
+ * The pick itself has already succeeded by the time this runs.
+ */
+function remeasure(
+  instance: MapLibreMap,
+  road: PickedRoad | null,
+  report: (extent: Extent | null) => void,
+): void {
+  if (road === null) {
+    report(null);
+    return;
+  }
+  try {
+    const mine = instance
+      .queryRenderedFeatures()
+      .filter(
+        (feature) => String(feature.sourceLayer ?? "") === ROAD_LABEL_LAYER,
+      )
+      .filter((feature) => {
+        const other = selectorOf(feature);
+        return other?.key === road.key && other?.value === road.value;
+      });
+    const metres = totalLength(mine);
+    report(metres > 0 ? extentOf(metres) : null);
+  } catch {
+    report(null);
+  }
 }
 
 function highlight(

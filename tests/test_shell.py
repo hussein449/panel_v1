@@ -571,3 +571,58 @@ def test_the_front_page_is_the_picker_and_the_explainer_kept_its_home() -> None:
     about = APP / "about" / "page.tsx"
     assert about.is_file(), "the Mode A / Mode B explainer lost its page"
     assert "Mode B" in about.read_text(encoding="utf-8")
+
+
+# -- what the front page must actually send -------------------------------------
+#
+# There is no JavaScript test runner in this repository, and adding one to assert three
+# strings would be a toolchain nobody asked for. These read the source the way every
+# other test in this file does. They are narrow on purpose: each one is a bug that
+# already happened once, on a real corridor, and left a report to prove it.
+
+
+def test_the_assess_action_declares_the_weight_context() -> None:
+    """The omission that scored one factor out of eleven.
+
+    `assessAction` sent `adapters` and nothing else, so `facility_type`, `region` and
+    `severity` fell back to `any` / `global` / `all` — under which only weights that
+    declare no scope at all are admissible. A real run measured eleven Tier A factors at
+    full coverage and scored on exactly one of them, and no screen connected those two
+    facts because no screen asked the question.
+    """
+    actions = (SHELL / "lib" / "actions.ts").read_text(encoding="utf-8")
+    picker = (SHELL / "components" / "RoadPicker.tsx").read_text(encoding="utf-8")
+
+    for field in ("facility_type", "region", "severity"):
+        assert f'text(form, "{field}")' in actions, (
+            f"assessAction no longer sends {field}; the job will fall back to the "
+            "unrestricted default and most published weights become inadmissible."
+        )
+        assert f'name="{field}"' in picker, (
+            f"the front page stopped asking for {field}, so the action can only send "
+            "its default."
+        )
+
+
+def test_the_corridor_length_is_measured_when_the_map_has_finished_drawing() -> None:
+    """`moveend` is the camera stopping, not the tiles arriving.
+
+    Measuring there reads whatever was rendered before the tiles the move revealed had
+    loaded, and reports it as the answer — low, and never corrected, because no further
+    event follows. The estimate exists to separate four segments from forty; one that
+    reads low after a zoom-out is wrong in exactly the direction that matters.
+    """
+    canvas = (SHELL / "components" / "RoadPickerCanvas.tsx").read_text(encoding="utf-8")
+    assert 'instance.on("idle"' in canvas, (
+        "the extent is no longer measured on `idle`, so it can report a figure taken "
+        "before the tiles finished loading."
+    )
+
+
+def test_a_pick_that_resolves_no_road_clears_the_extent() -> None:
+    """A stale length under a road nobody chose is worse than no length at all."""
+    canvas = (SHELL / "components" / "RoadPickerCanvas.tsx").read_text(encoding="utf-8")
+    assert canvas.count("extent.current(null)") >= 2, (
+        "both failing pick outcomes — 'nothing there' and 'no reference or name' — "
+        "must clear the previous road's length."
+    )
