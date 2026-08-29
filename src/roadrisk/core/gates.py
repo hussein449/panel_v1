@@ -206,23 +206,50 @@ def check_temporal_resolution(contract: ContractReport) -> CheckResult:
     )
 
 
-def check_snap_rate(snap: SnapReport | None) -> CheckResult:
+def check_snap_rate(
+    snap: SnapReport | None, *, total_crashes: int | None = None
+) -> CheckResult:
     """Check 6 — did the crash table actually land on this corridor?
 
-    Skipped, never assumed, when the panel was supplied directly rather than built by
-    the geospatial pipeline. Degrade loudly.
+    Skipped, never assumed, when snapping was not this engine's to do. Degrade loudly.
+
+    **There are two ways to arrive here without a snap report, and they are not the
+    same fact.** Saying so mattered enough to be worth the argument: a report whose
+    entire claim is that it describes what actually happened cannot afford a sentence
+    that describes something else, however plausible it reads.
+
+    * *No crash table was supplied.* The panel was built from geography by this engine
+      and every row is a structural zero. There was nothing to snap, and nothing about
+      snap quality is unknown — the question did not arise.
+    * *The panel arrived pre-built,* carrying crash counts somebody else assigned to
+      units. Snapping happened elsewhere, under rules this engine cannot see, and its
+      quality genuinely is unknown.
+
+    ``total_crashes`` tells them apart. It is optional so that callers which cannot
+    know — and the tests written before this distinction existed — keep the older,
+    weaker wording rather than being made to assert something they have no basis for.
     """
     if snap is None:
+        nothing_to_snap = total_crashes == 0
         return CheckResult(
             number=6,
             name="Crash snap rate",
             status=CheckStatus.SKIPPED,
             failure_type=FailureType.SOFT,
             threshold=f"{MIN_SNAP_RATE:.0%} of crashes land on the corridor",
-            observed="not measured",
+            observed="no crashes supplied" if nothing_to_snap else "not measured",
             message=(
-                "The panel was supplied pre-built, so snapping was not performed by "
-                "this engine. Snap quality is unknown and is not assumed to be good."
+                (
+                    "No crash table was supplied, so there was nothing to snap. Every "
+                    "row in this panel is a structural zero built from geography by "
+                    "this engine, and no crash was placed on the corridor by anyone."
+                )
+                if nothing_to_snap
+                else (
+                    "The panel was supplied pre-built, so snapping was not performed "
+                    "by this engine. Snap quality is unknown and is not assumed to be "
+                    "good."
+                )
             ),
         )
 
@@ -280,18 +307,47 @@ def check_vif(vif: VIFReport) -> CheckResult:
 
 
 def check_dispersion(dispersion: DispersionReport) -> CheckResult:
-    """Check 8 — sets the family, not the mode."""
+    """Check 8 — sets the family, not the mode.
+
+    **An empty panel has no dispersion, and saying it does is worse than saying
+    nothing.** :func:`~roadrisk.core.diagnostics.compute_dispersion` reports
+    ``ratio = inf`` when the mean is zero, because zero divided by zero has to become
+    something and ``inf`` at least refuses to look like a real ratio. Printed
+    unconditionally as *passed*, though, it became a line reading
+    ``Mean 0.000, variance 0.000, ratio inf — fitting as negative binomial`` above a
+    green PASSED tick: a check that cannot fail, announcing a family choice made from
+    no observations at all.
+
+    So a crash-free panel skips this the way check 6 skips snapping. The family still
+    comes out negative binomial and nothing downstream changes — Mode A is already
+    refused long before family matters, on check 4. What changes is that the report
+    stops claiming a measurement it did not make.
+    """
+    nothing_to_measure = dispersion.mean <= 0.0
     return CheckResult(
         number=8,
         name="Variance-to-mean (count family)",
-        status=CheckStatus.PASSED,
+        status=CheckStatus.SKIPPED if nothing_to_measure else CheckStatus.PASSED,
         failure_type=FailureType.INFO,
         threshold="ratio > 1.2 indicates negative binomial",
-        observed=f"variance/mean = {dispersion.ratio:.2f}",
+        observed=(
+            "no crashes to measure"
+            if nothing_to_measure
+            else f"variance/mean = {dispersion.ratio:.2f}"
+        ),
         message=(
-            f"Mean {dispersion.mean:.3f}, variance {dispersion.variance:.3f}, "
-            f"ratio {dispersion.ratio:.2f} — fitting as "
-            f"{dispersion.family.value.replace('_', ' ')}."
+            (
+                "Every count in this panel is zero, so there is no variance-to-mean "
+                "ratio to take — the mean is zero and the ratio is undefined rather "
+                "than large. No family was chosen from this data. A count model needs "
+                "counts, and check 4 has already said so."
+            )
+            if nothing_to_measure
+            else (
+                f"Mean {dispersion.mean:.3f}, variance {dispersion.variance:.3f}, "
+                f"ratio {dispersion.ratio:.2f} — fitting as "
+                f"{dispersion.family.value.replace('_', ' ')}."
+            )
         ),
     )
 
@@ -332,7 +388,7 @@ def run_pre_fit_gates(
             check_exposure_positive(contract),
             check_crashes_per_parameter(contract.total_crashes, n_parameters),
             check_temporal_resolution(contract),
-            check_snap_rate(snap),
+            check_snap_rate(snap, total_crashes=contract.total_crashes),
             check_vif(vif),
             check_dispersion(dispersion),
         ]

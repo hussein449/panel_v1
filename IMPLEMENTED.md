@@ -4985,8 +4985,31 @@ fabricates data belongs in the assessment path.
 
 ## Bugs found while building
 
-Both were caught by guards written earlier the same day, which is the argument for
-writing the guards first.
+The first two were caught by guards written earlier the same day, which is the argument
+for writing the guards first. **The next two were not caught by anything** — they were
+read off a finished PDF of a real corridor, which is the argument for reading the output.
+
+**3 · Check 6 described the wrong thing entirely.** Ελαιώνων (U274), assessed from the
+map with no crash file, reported *"The panel was supplied pre-built, so snapping was not
+performed by this engine. Snap quality is unknown."* Every clause of that was false: this
+engine built the panel from geography, and snap quality was not unknown — there was
+nothing to snap. `check_snap_rate` had one branch for `snap is None` and there are two
+ways to get there, which `contract.total_crashes` tells apart. A no-crash run now says so;
+a genuinely pre-built panel still gets the original warning, and a test holds both.
+
+**4 · Check 8 passed on `0 / 0`.** The same report printed *"Mean 0.000, variance 0.000,
+ratio inf — fitting as negative binomial"* under a green **PASSED**. `compute_dispersion`
+returns `inf` when the mean is zero because the division must produce something, and
+`check_dispersion` printed it unconditionally — announcing a family chosen from no
+observations, in a check that could not fail. It is SKIPPED on an empty panel now. Nothing
+downstream moves: check 8 sets the family, not the mode, and Mode A was already refused at
+check 4.
+
+Both are the same class of defect and it is the expensive one for this product
+specifically: **not a wrong number, a wrong sentence** — fluent, plausible, and in the one
+document whose entire claim is that it describes what actually happened. Neither would
+ever have failed a test, because no test asserted what the report *said* in these cases.
+They were found by generating a report and reading it.
 
 **1 · Duplicate panel cells in the synthetic generator.** Period labels were built as
 `2024-{month % 12 + 1}`, so a 24-month panel repeated every label and

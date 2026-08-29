@@ -19,6 +19,7 @@ from roadrisk.core.gates import (
     SnapReport,
     check_convergence,
     check_crashes_per_parameter,
+    check_dispersion,
     check_snap_rate,
     check_vif,
     check_zero_crash_rows,
@@ -68,6 +69,31 @@ class TestCheckSix:
         assert check_snap_rate(snap).status is CheckStatus.PASSED
         assert snap.n_dropped == 150
 
+    def test_no_crash_table_is_not_described_as_a_pre_built_panel(self) -> None:
+        """Two ways to have no snap report, and they are not the same fact.
+
+        Found in a real report: a corridor assessed from geography with no crash file
+        printed *"the panel was supplied pre-built"*, which was simply untrue — this
+        engine built that panel. The sentence reads plausibly, which is exactly what
+        makes it expensive in a document whose whole claim is that it says what
+        actually happened.
+        """
+        result = check_snap_rate(None, total_crashes=0)
+
+        assert result.status is CheckStatus.SKIPPED
+        assert not result.forces_descent
+        assert "nothing to snap" in result.message
+        assert "pre-built" not in result.message
+        assert "unknown" not in result.message
+
+    def test_a_pre_built_panel_still_says_so(self) -> None:
+        """The other branch, which was right all along and must not be lost."""
+        result = check_snap_rate(None, total_crashes=2_412)
+
+        assert result.status is CheckStatus.SKIPPED
+        assert "pre-built" in result.message
+        assert "not assumed to be good" in result.message
+
 
 class TestCheckSeven:
     def test_flags_collinear_design(self) -> None:
@@ -90,6 +116,42 @@ class TestCheckSeven:
     def test_single_column_has_no_collinearity(self) -> None:
         design = pd.DataFrame({"a": [1.0, 2.0, 3.0]})
         assert compute_vif(design).max_vif == pytest.approx(1.0)
+
+
+class TestCheckEight:
+    """The family check, and the empty panel it used to answer confidently."""
+
+    def test_an_empty_panel_measures_no_dispersion(self) -> None:
+        """`0 / 0` is not a large ratio, and a green tick over it is a false claim.
+
+        Found in a real report: *"Mean 0.000, variance 0.000, ratio inf — fitting as
+        negative binomial"*, marked PASSED. `compute_dispersion` returns `inf` when the
+        mean is zero because the division has to produce something; printing that as a
+        passed check turned an impossibility into a measurement.
+        """
+        result = check_dispersion(compute_dispersion(pd.Series([0, 0, 0, 0])))
+
+        assert result.status is CheckStatus.SKIPPED
+        assert "undefined rather than large" in result.message
+        assert "negative binomial" not in result.message
+        assert "inf" not in result.observed
+
+    def test_a_panel_with_counts_still_reports_its_family(self) -> None:
+        """The ordinary path, unchanged — this must not have gone quiet."""
+        counts = pd.Series([0, 1, 0, 4, 2, 0, 9, 1, 0, 3])
+        result = check_dispersion(compute_dispersion(counts))
+
+        assert result.status is CheckStatus.PASSED
+        assert "Mean" in result.message
+        assert "fitting as" in result.message
+
+    def test_it_never_blocks_or_descends_either_way(self) -> None:
+        """Check 8 sets the family, not the mode. Skipping it changes no outcome."""
+        for counts in (pd.Series([0, 0, 0]), pd.Series([1, 5, 0, 2])):
+            result = check_dispersion(compute_dispersion(counts))
+            assert result.failure_type is FailureType.INFO
+            assert not result.blocks_mode_a
+            assert not result.forces_descent
 
 
 class TestOtherChecks:
