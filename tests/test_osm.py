@@ -324,6 +324,38 @@ class TestGates:
             fetch_corridor("B9", BBOX, client=client_returning(*scattered))
 
 
+class TestTheGapAcrossAJunction:
+    """A roundabout is not a break in the road, and 25 m said it was.
+
+    A British A-road runs into a roundabout and out the other side; the roundabout is a
+    separate way carrying no `ref`, so the road's own ways stop and restart across it.
+    At the old 25 m tolerance every such junction cut the chain, and the A82, A470 and
+    A66 were all refused as "fragmented collections" while being continuous on the
+    ground.
+    """
+
+    def test_a_roundabout_sized_gap_is_bridged(self) -> None:
+        pieces = [way(straight(0, 3000)), way(straight(3045, 6000))]
+        result = fetch_corridor("A82", BBOX, client=client_returning(*pieces))
+
+        assert result.n_pieces_after_merge >= 1
+        assert result.points, "a 45 m junction gap should not break the corridor"
+
+    def test_a_real_gap_is_still_a_gap(self) -> None:
+        """Widening what counts as noded must not weld two separate roads."""
+        pieces = [way(straight(0, 3000)), way(straight(9000, 12000))]
+        with pytest.raises(CorridorError, match="fragmented collection"):
+            fetch_corridor("A82", BBOX, client=client_returning(*pieces))
+
+    def test_the_caller_can_still_choose(self) -> None:
+        """The default moved; the argument did not go away."""
+        pieces = [way(straight(0, 3000)), way(straight(3045, 6000))]
+        with pytest.raises(CorridorError, match="fragmented collection"):
+            fetch_corridor(
+                "A82", BBOX, client=client_returning(*pieces), max_gap_m=10.0
+            )
+
+
 class TestARoadThatIsNotOpen:
     """The Cyprus A10, and the report it should never have produced.
 

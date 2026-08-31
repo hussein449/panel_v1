@@ -89,7 +89,34 @@ NOT_OPEN_HIGHWAY_VALUES: frozenset[str] = frozenset(
 #: Fragments whose ends fall within this distance are treated as continuous. OSM
 #: geometry is not perfectly noded — a way can end a few metres from its neighbour,
 #: usually where an editor split it. Larger than this is a genuine gap, not noise.
-DEFAULT_MAX_GAP_M = 25.0
+#:
+#: **Raised from 25 m to 60 m on 2026-08-31, and the reason is roundabouts.** 25 m was
+#: tuned on Cyprus B-roads, where junctions are simple and a break really is an editing
+#: artefact. A British A-road runs *into* a roundabout and out the other side, and the
+#: roundabout is its own way carrying no `ref` — so the road's ways stop and restart with
+#: a gap the width of the junction. At 25 m every roundabout broke the chain, the longest
+#: run fell below :data:`MIN_LONGEST_SHARE`, and the fetch was refused for roads that are
+#: perfectly continuous on the ground.
+#:
+#: Measured across four British A-roads, 25 m against 60 m:
+#:
+#: ==========  ====================  ==============================
+#: Road        at 25 m               at 60 m
+#: ==========  ====================  ==============================
+#: A82         **refused** (50%)     94.1 km, 0.6 km excluded
+#: A470        **refused** (57%)     needed 120 m
+#: A66         **refused** (24%)     28.4 km
+#: A6          48.0 km, 26.9 lost    57.2 km, 18.0 lost
+#: ==========  ====================  ==============================
+#:
+#: On the A6 that is 150 crashes placed against 185 — the same road, a quarter more
+#: evidence, because a corridor that had been cut at every roundabout was rejoined.
+#:
+#: The safeguards are unchanged and still do the work: only *ends* are bridged, only
+#: between ways already carrying the same selector, and :data:`MIN_LONGEST_SHARE` still
+#: refuses a collection that does not assemble into one road. This widens what counts as
+#: noded, not what counts as the same road.
+DEFAULT_MAX_GAP_M = 60.0
 
 #: The longest continuous piece must carry at least this share of everything returned.
 #: Below it, the fetch produced a fragmented mess rather than a corridor, and the

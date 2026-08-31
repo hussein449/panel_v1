@@ -13,7 +13,72 @@ test the machinery. These test the product.
 | 1 | Ελαιώνων (U274), Cyprus | 2026-08-28 | B | none | First real road through the new front page |
 | 2 | A10, Cyprus | 2026-08-29 | B | none | Found: the road is not built |
 | 3 | F929, Cyprus | 2026-08-30 | B | none | Confirmed the length and context fixes |
-| 4 | **A6 Derby–Buxton, England** | **2026-08-31** | **A** | **284 real** | **First fitted model** |
+| 4 | **A6 Derby–Buxton, England** | **2026-08-31** | **A** | 284 real | **First fitted model** — curvature significant |
+| 5 | **A82 Lomond–Glen Coe, Scotland** | **2026-08-31** | **A** | 162 real | **Same method, opposite answer** |
+
+---
+
+## 5 · A82 Loch Lomond to Glen Coe — the same method, the opposite answer
+
+**113.9 km · 228 segments · 162 crashes supplied, 120 placed · Mode A, A-minimal**
+
+Run after the gap fix below, on a notorious Scottish single-carriageway mountain road.
+Every check passed, including the one that matters most here:
+
+```
+CHECK 6  PASSED  100.0% (120 of 120 near the corridor)
+```
+
+**Every crash near the corridor landed on it.** Dispersion 1.001, converged, AIC 1350.4.
+
+### And curvature explained nothing
+
+| | A6 Derby–Buxton | A82 Lomond–Glen Coe |
+|---|---|---|
+| `curve_radius_min` | −0.4872, **p = 4.7 × 10⁻⁷** | −0.0872, p = 0.478 |
+| `curve_density` | −0.0475, p = 0.849 | −0.2046, p = 0.288 |
+
+Same factor, same model, same country, same crash source, opposite result. Two
+explanations were tested and **both were wrong**, which is worth recording because the
+obvious answers were plausible.
+
+**Tested: signal dilution.** The A82 carried 0.53 crashes per unit against the A6's 1.56,
+and 139 of its 228 units had never had a crash. So the corridor was re-run unchanged
+except `unit_length_m: 500 → 1500`, giving 76 units at 1.58 crashes each — the A6's
+density exactly. Result: still nothing (`curve_density` p = 0.64), and `curve_radius_min`
+left the specification altogether.
+
+**Tested: no variation to explain.** A factor that is constant cannot explain anything, and
+Glen Coe is bends end to end. Measured from the geometry, the A82 varies **more** than the
+A6, not less:
+
+| | A6 @ 500 m | A82 @ 500 m |
+|---|---|---|
+| `curve_radius_min` median | 154 m | 305 m |
+| range | 6 – 1,394 m | 10 – 5,000 m |
+| **spread (sd/mean)** | **0.97** | **1.67** |
+
+### Interpretation
+
+**On this road, with this data, bend severity does not predict crashes.** That is the
+finding, and neither convenient explanation survives contact with the numbers.
+
+Plausible reasons, none of them tested here and none claimed: drivers slow for bends they
+can see are severe, so geometry stops discriminating on a road that is severe throughout;
+A82 crashes may be driven by overtaking, unfamiliar tourist traffic or weather rather than
+alignment; and 120 crashes is still a thin table, so a modest real effect could sit inside
+the confidence interval unseen — it spans −0.33 to +0.15.
+
+**Why this matters more than the A6 result.** Mode B, on both roads, would have applied
+iRAP's curvature weight and announced that bends drive the risk. Mode A fitted the same
+factor to two real crash histories and found it true on one road and absent on the other.
+**That difference is the entire argument for having Mode A**, and it is the first time
+this project has been able to demonstrate it.
+
+The honest next step on the A82 is more crashes — the full road holds 365 — not more
+modelling of these 120.
+
+---
 
 ---
 
@@ -205,6 +270,72 @@ is a real limit on corridor length in dense areas.
 
 ---
 
+## The audit: was the A6 corridor the right road?
+
+Run after the A6 result, because a fitted coefficient is only worth what the crash
+assignment behind it is worth.
+
+### The crashes that landed are placed well
+
+```
+distance from the centreline, of the 150 placed crashes
+  median   2.9 m
+  p95      9.2 m
+  max     15.3 m
+```
+
+Every placed crash is within 16 m of the road. 62 of 96 units carry at least one, the
+median used unit has 2, the busiest has 8, and they spread evenly from chainage 142 m to
+46,960 m of a 48,000 m corridor. **There is no pile-up and no obvious misassignment.**
+
+### But the corridor was only two thirds of the road
+
+```
+75 piece(s) totalling 26.88 km carry the same road reference but do not
+connect to the main line within 25 m. They are excluded.
+```
+
+Of roughly 75 km of A6 in the box, **26.9 km was discarded** and 48.0 km kept. That is
+where the 129 `not_on_this_corridor` crashes were: not on other roads at all, but on real
+A6 that the stitcher had dropped. The snap-rate fix stopped blaming the crash table, which
+was right — but the deeper problem was that the corridor was incomplete.
+
+### The cause: roundabouts, and a 25 m gap tolerance
+
+A British A-road runs *into* a roundabout and out the other side. The roundabout is its
+own OSM way and usually carries no `ref`, so the road's own ways stop and restart across
+it — a gap the width of the junction, tens of metres. At `max_gap_m = 25` every roundabout
+broke the chain.
+
+Measured on four British A-roads:
+
+| Road | at 25 m | at 60 m | at 120 m |
+|---|---|---|---|
+| **A82** | **refused** — longest run 50% | 94.1 km, **0.6 km lost** | 94.3 km |
+| **A470** | **refused** — 57% | **refused** — 57% | 58.1 km |
+| **A66** | **refused** — 24% | 28.4 km | 28.4 km |
+| **A6** | 48.0 km, 26.9 lost, **150 placed** | 57.2 km, 18.0 lost, **185 placed** | 61.0 km, 14.7 lost, **208 placed** |
+
+On the same A6, same crash table: **150 crashes placed at 25 m, 208 at 120 m.** A quarter
+more evidence, from rejoining a corridor that had been cut at every junction.
+
+**Fixed.** `DEFAULT_MAX_GAP_M` raised from 25 m to 60 m — the width of a roundabout. The
+25 m figure was tuned on Cyprus B-roads, where junctions are simple and a break really is
+an editing artefact. Every safeguard is unchanged: only *ends* are bridged, only between
+ways already carrying the same selector, and `MIN_LONGEST_SHARE` still refuses a
+collection that will not assemble into one road. A test plants a 45 m junction gap and a
+6 km real gap and asserts the first is bridged and the second still refused.
+
+### One issue left open
+
+**The A6 centreline crosses itself**, and the run said so at caveat severity. Linear
+referencing is ambiguous near a crossing: a crash there can snap to either branch and
+receives whichever chainage is marginally closer. It affects a small number of crashes and
+the fix is to split the corridor at the crossing, which the report already advises. Not
+fixed, recorded.
+
+---
+
 ## The snap-rate fix this test produced
 
 The A6 run initially **failed check 6 at 52.8%**, reporting *"the panel is not a faithful
@@ -278,3 +409,26 @@ history. That is worth more than any number of additional Mode B corridors.
 **The next thing worth doing is more crashes, not more roads.** A stretch supporting 400+
 placed crashes reaches A-reduced and fits more factors; 700+ reaches A-full. The
 constraint is OSM fragmentation in towns, not crash-data availability.
+
+**And two roads already disagree.** Curvature is significant at p < 10⁻⁶ on the A6 and
+absent on the A82. A borrowed weight would have said the same thing about both. That
+disagreement is the product working, not a problem to reconcile.
+
+---
+
+## Choosing a corridor — what these five runs taught
+
+In order of how much each one cost to learn:
+
+1. **The road must be open.** `highway=construction` is refused now, but check what you
+   are pointing at. (A10)
+2. **Enough units for the checks to mean anything.** Under about ten, VIF returns
+   infinity and the ranking spreads across a fraction of its scale. (U274)
+3. **Enough crashes per unit, not just enough units.** 1.5 per unit worked; 0.5 did not.
+   Corridor length and crash count have to be chosen together, and `unit_length_m` is the
+   lever when the road is fixed. (A82)
+4. **Dense centreline geometry.** Vertex spacing coarser than the 30 m curvature interval
+   makes curvature untrustworthy, and the report says so. Check it before trusting any
+   alignment factor. (A10, F929)
+5. **Watch the excluded kilometres.** A corridor that quietly drops a third of the road
+   produces a snap rate that looks like bad crash data. (A6)
