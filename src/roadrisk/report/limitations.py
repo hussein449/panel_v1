@@ -456,23 +456,52 @@ def _geography(corridor: Mapping[str, Any]) -> list[Limitation]:
 
     snap = corridor.get("snap")
     if snap and snap.get("n_supplied"):
-        rate = float(snap.get("snap_rate") or 0.0)
-        if rate < LOW_SNAP_RATE:
+        dropped_reasons = snap.get("dropped_reasons") or {}
+        # The same split check 6 makes, and for the same reason: a crash on a different
+        # road is not a failure of this crash table. Without it this page reported
+        # "only 53% could be placed" beside a check 6 that had just passed at 96.8%,
+        # and a reader had no way to tell which of the two to believe.
+        elsewhere = int(dropped_reasons.get("not_on_this_corridor", 0))
+        supplied = int(snap.get("n_supplied") or 0)
+        near = supplied - elsewhere
+        snapped = int(snap.get("n_snapped") or 0)
+        rate = (snapped / near) if near > 0 else 0.0
+
+        if rate < LOW_SNAP_RATE or elsewhere:
             reasons = ", ".join(
                 f"{reason.replace('_', ' ')} ({n})"
-                for reason, n in (snap.get("dropped_reasons") or {}).items()
+                for reason, n in dropped_reasons.items()
             )
+            poor = rate < LOW_SNAP_RATE
             found.append(
                 Limitation(
                     code="crashes_dropped",
                     severity=MATERIAL if rate < 0.8 else CAVEAT,
                     title=(
-                        f"{snap.get('n_dropped')} of {snap.get('n_supplied')} crashes "
-                        "did not land on this corridor"
-                    ),
+                        f"{near - snapped} of {near} crashes near this corridor did not "
+                        "land on it"
+                        if poor
+                        else f"{elsewhere} of {supplied} supplied crashes are on other road"
+                    )
+                    + ("" if poor else "s"),
                     detail=(
-                        f"Only {rate:.0%} of the supplied crashes could be placed on the "
-                        f"road. Dropped for: {reasons}. Every count below is of the "
+                        (
+                            f"Only {rate:.0%} of the crashes near this road could be "
+                            "placed on it. "
+                            if poor
+                            else f"{rate:.0%} of the crashes near this road were placed "
+                            "on it, which is sound. "
+                        )
+                        + (
+                            f"A further {elsewhere} were more than 500 m away and belong "
+                            "to a different road, or to a stretch of this one that was "
+                            "not assessed — normally a crash table covering more road "
+                            "than the corridor. That is not a fault in either, and those "
+                            "crashes are excluded rather than counted as failures. "
+                            if elsewhere
+                            else ""
+                        )
+                        + f"Dropped for: {reasons}. Every count in this report is of the "
                         "crashes that were placed, not of the crashes that happened."
                     ),
                 )

@@ -253,26 +253,56 @@ def check_snap_rate(
             ),
         )
 
-    passed = snap.snap_rate >= MIN_SNAP_RATE
     reasons = (
         "; ".join(f"{k}: {v:,}" for k, v in sorted(snap.dropped_reasons.items()))
         or "no reasons recorded"
     )
+
+    # **Crashes on another road are not a fault in the crash table.** Handing a national
+    # extract to one corridor is the ordinary way to use this, and most of that extract
+    # is somewhere else by construction. Counting those against the snap rate produced a
+    # failed check reading "the panel is not a faithful record", when the panel was a
+    # perfectly faithful record of the corridor and the *table* was simply wider.
+    #
+    # Measured on the A6: 284 crashes in, 150 on the corridor, 129 of them kilometres
+    # away on stretches the fetch had not returned. The check failed at 52.8% and the
+    # advice it implied — widen the tolerance — recovered two crashes out of 134.
+    #
+    # So the rate that decides this check is taken over the crashes that were plausibly
+    # on this road at all, and the ones that were not are reported separately, because
+    # they are still worth knowing about.
+    elsewhere = snap.dropped_reasons.get("not_on_this_corridor", 0)
+    considered = snap.n_supplied - elsewhere
+    rate = (snap.n_snapped / considered) if considered > 0 else 0.0
+    passed = rate >= MIN_SNAP_RATE
+
+    nearby = (
+        ""
+        if not elsewhere
+        else (
+            f" A further {elsewhere:,} crash(es) were more than 500 m away and are not "
+            "on this corridor at all — normally a crash table covering more road than "
+            "was assessed, which is not a fault in either. They are excluded from this "
+            "rate rather than counted against it."
+        )
+    )
+
     return CheckResult(
         number=6,
         name="Crash snap rate",
         status=CheckStatus.PASSED if passed else CheckStatus.FAILED,
         failure_type=FailureType.SOFT,
-        threshold=f"{MIN_SNAP_RATE:.0%} of crashes land on the corridor",
-        observed=f"{snap.snap_rate:.1%} ({snap.n_snapped:,} of {snap.n_supplied:,})",
+        threshold=f"{MIN_SNAP_RATE:.0%} of crashes near this corridor land on it",
+        observed=f"{rate:.1%} ({snap.n_snapped:,} of {considered:,} near the corridor)",
         message=(
-            f"{snap.n_snapped:,} of {snap.n_supplied:,} crashes snapped "
-            f"({snap.snap_rate:.1%}). Dropped — {reasons}."
+            f"{snap.n_snapped:,} of {considered:,} crashes near this corridor snapped "
+            f"({rate:.1%}).{nearby} Dropped — {reasons}."
             if passed
             else (
-                f"Only {snap.snap_rate:.1%} of crashes snapped to the corridor "
-                f"({snap.n_dropped:,} dropped). Below {MIN_SNAP_RATE:.0%} the panel is "
-                f"not a faithful record of what happened on this road. Dropped — {reasons}."
+                f"Only {rate:.1%} of the crashes near this corridor snapped to it "
+                f"({considered - snap.n_snapped:,} dropped within 500 m). Below "
+                f"{MIN_SNAP_RATE:.0%} the panel is not a faithful record of what "
+                f"happened on this road.{nearby} Dropped — {reasons}."
             )
         ),
     )

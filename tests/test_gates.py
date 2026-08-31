@@ -69,6 +69,41 @@ class TestCheckSix:
         assert check_snap_rate(snap).status is CheckStatus.PASSED
         assert snap.n_dropped == 150
 
+    def test_crashes_on_another_road_do_not_count_against_the_rate(self) -> None:
+        """The A6 case: a national extract handed to one 48 km corridor.
+
+        284 crashes in, 150 on the road, 129 of them kilometres away on stretches the
+        fetch never returned. Counting those as failures produced *"the panel is not a
+        faithful record of what happened on this road"* — about a panel that was an
+        entirely faithful record of the corridor. The table was wider than the corridor,
+        which is the ordinary way to use this, not a fault in either.
+        """
+        snap = SnapReport(
+            n_supplied=284,
+            n_snapped=150,
+            dropped_reasons={"beyond_tolerance": 5, "not_on_this_corridor": 129},
+        )
+        result = check_snap_rate(snap)
+
+        # 150 of the 155 that were anywhere near the road — not 150 of 284.
+        assert result.status is CheckStatus.PASSED
+        assert "150" in result.observed and "155" in result.observed
+        assert "not on this corridor at all" in result.message
+        assert "not a faithful record" not in result.message
+
+    def test_genuinely_bad_geocoding_still_fails(self) -> None:
+        """The other half. Excluding distant crashes must not excuse near-misses."""
+        snap = SnapReport(
+            n_supplied=200,
+            n_snapped=100,
+            dropped_reasons={"beyond_tolerance": 90, "not_on_this_corridor": 10},
+        )
+        result = check_snap_rate(snap)
+
+        assert result.status is CheckStatus.FAILED
+        assert result.forces_descent
+        assert "not a faithful record" in result.message
+
     def test_no_crash_table_is_not_described_as_a_pre_built_panel(self) -> None:
         """Two ways to have no snap report, and they are not the same fact.
 

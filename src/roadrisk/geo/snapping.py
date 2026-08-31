@@ -32,8 +32,27 @@ from roadrisk.geo.segmentation import Segmentation
 #: to a parallel street.
 DEFAULT_TOLERANCE_M = 30.0
 
+#: Past this, a crash is not a near miss — it is somewhere else.
+#:
+#: **The two are different facts and were reported as one.** On the A6 test, 134 of 284
+#: crashes were dropped as `beyond_tolerance`, which reads as poor geocoding and provoked
+#: exactly the wrong response: raise the tolerance. Measured, the distances were bimodal —
+#: a median of **9 m**, and a 75th percentile of **9.2 km**. Half the table was sitting on
+#: the carriageway, and 129 crashes were kilometres away, on stretches of the same road
+#: that the fetch had not returned. Widening the tolerance from 30 m to 150 m recovered
+#: **two** of them.
+#:
+#: 500 m because nothing legitimate reaches it. Ordinary GPS error is metres; a dual
+#: carriageway separates by tens; a parallel service road by less than a hundred. A crash
+#: half a kilometre off the line is on a different road, or on a different part of this
+#: one, and no tolerance that admitted it would be placing it correctly.
+FAR_FROM_CORRIDOR_M = 500.0
+
 REASON_MISSING_COORDINATES = "missing_coordinates"
 REASON_BEYOND_TOLERANCE = "beyond_tolerance"
+#: Not a quality problem with the crash table — a mismatch between what was supplied and
+#: what was assessed. Usually a national extract handed to one corridor.
+REASON_OFF_CORRIDOR = "not_on_this_corridor"
 REASON_MISSING_PERIOD = "missing_period"
 REASON_UNKNOWN_PERIOD = "period_not_in_panel"
 REASON_UNKNOWN_TIME_SLOT = "time_slot_not_in_panel"
@@ -120,7 +139,9 @@ def snap_crashes(
             distance = corridor.distance_to(x, y)
             chainage = corridor.chainage_of(x, y)
 
-            if distance > tolerance_m:
+            if distance > FAR_FROM_CORRIDOR_M:
+                reason = REASON_OFF_CORRIDOR
+            elif distance > tolerance_m:
                 reason = REASON_BEYOND_TOLERANCE
             elif pd.isna(period):
                 reason = REASON_MISSING_PERIOD
@@ -253,9 +274,11 @@ def _warnings(
 
 __all__ = [
     "DEFAULT_TOLERANCE_M",
+    "FAR_FROM_CORRIDOR_M",
     "REASON_BEYOND_TOLERANCE",
     "REASON_MISSING_COORDINATES",
     "REASON_MISSING_PERIOD",
+    "REASON_OFF_CORRIDOR",
     "REASON_UNKNOWN_PERIOD",
     "REASON_UNKNOWN_TIME_SLOT",
     "SnapOutcome",

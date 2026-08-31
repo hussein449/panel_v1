@@ -335,6 +335,50 @@ class TestSnapping:
         assert "missing_coordinates" in outcome.report.dropped_reasons
         assert "period_not_in_panel" in outcome.report.dropped_reasons
 
+    def test_a_crash_on_another_road_is_not_called_a_near_miss(
+        self, corridor: Corridor, periods: list[str]
+    ) -> None:
+        """Two different facts that used to share one drop reason.
+
+        `beyond_tolerance` says "close, but outside the tolerance", and the response it
+        invites is to widen the tolerance. On the A6 that reasoning was applied to 134
+        crashes whose 75th-percentile distance was 9.2 km — widening 30 m to 150 m
+        recovered two of them. A crash half a kilometre off the line is not a near miss.
+        """
+        start_lat, start_lon = corridor.projector.point_to_wgs84(
+            *corridor.geometry.coords[0]
+        )
+        crashes = pd.DataFrame(
+            [
+                # Squarely on the line.
+                {"latitude": start_lat, "longitude": start_lon, "period": periods[0]},
+                # Roughly 60 m off: a real near miss, which a wider tolerance would take.
+                {
+                    "latitude": start_lat + 0.00054,
+                    "longitude": start_lon,
+                    "period": periods[0],
+                },
+                # Roughly 11 km off: another road entirely, and no tolerance should take it.
+                {
+                    "latitude": start_lat + 0.1,
+                    "longitude": start_lon,
+                    "period": periods[0],
+                },
+            ]
+        )
+        outcome = snap_crashes(
+            segment(corridor, target_length_m=500.0),
+            crashes,
+            periods=periods,
+            time_slots=["all"],
+            tolerance_m=30.0,
+        )
+        reasons = outcome.report.dropped_reasons
+
+        assert outcome.report.n_snapped == 1
+        assert reasons.get("beyond_tolerance") == 1, "the 60 m one is a near miss"
+        assert reasons.get("not_on_this_corridor") == 1, "the 11 km one is not"
+
     def test_tolerance_controls_what_lands(
         self, corridor: Corridor, centreline, periods: list[str]
     ) -> None:
