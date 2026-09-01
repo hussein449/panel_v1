@@ -491,6 +491,29 @@ factors:
           Motorcyclist factors are ~10% higher than the vehicle-occupant values used
           here, so a corridor with a large motorcycle share is under-weighted. Scope is
           run-off and head-on, not total crashes.
+      - value: -0.5132
+        family: elvik
+        facility_type: any
+        region: global
+        severity: all
+        scope: total
+        source: >
+          Trafikksikkerhetshandboken (TOI) 1.13 Vegers linjefoering, Tabell 1.13.1,
+          revised 2023 by Hoeye and Elvik, reporting Elvik (2023) - a literature study
+          pooling 47 empirical studies. A curve of 50 m radius carries 3.58 times the
+          accidents of a 600 m reference curve; exact on ln(radius) from those two
+          points. The free Norwegian edition of Elvik's Handbook of Road Safety
+          Measures, at tshandbok.no.
+        caveat: >
+          Declared `global` and NOT `europe`, although the handbook and its author are
+          Norwegian: region records where a weight was estimated, and the page says the
+          figure comes from a literature study over 47 international studies. A
+          Norwegian handbook reporting an international meta-analysis is not European
+          data. TSH names a genuinely Norwegian study alongside it (Elvik and Haugvik,
+          2023, on two-lane rural roads) which found a STRONGER radius effect, so a
+          European corridor is more likely under-weighted by this term than
+          over-weighted; that study's coefficients are not in the table and nothing
+          here is derived from it.
     missing_behaviour: Curve severity is lost; curve_density still carries frequency.
     notes: >
       UNITS: minimum radius in METRES. The HSM equation is in feet; the conversion is

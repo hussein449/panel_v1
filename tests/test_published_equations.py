@@ -160,6 +160,11 @@ class TestDerivedValuesAreStable:
         ("grade_pct", "irap", "all"): 0.4863,
         ("curve_radius_min", "hsm", "all"): -0.1855,
         ("curve_radius_min", "irap", "all"): -0.7232,
+        # Trafikksikkerhetshandboken 1.13, reporting Elvik (2023) over 47 studies.
+        # Exact on two points: ln(3.58) / (ln 50 - ln 600). It lands between the HSM and
+        # iRAP figures, which is mild corroboration of both rather than anything to lean
+        # on — all three are meta-analytic averages over overlapping literature.
+        ("curve_radius_min", "elvik", "all"): -0.5132,
         ("access_density", "hsm", "all"): 0.1658,
         ("surface_paved", "irap", "all"): -1.0986,
         ("speed_limit", "elvik", "injury"): 1.6,

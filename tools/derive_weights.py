@@ -543,6 +543,76 @@ def _power_model(factor: str, severity: str, caveat: str | None) -> Derivation:
     )
 
 
+#: Trafikksikkerhetshåndboken — the free, continuously revised Norwegian edition of
+#: Elvik's *Handbook of Road Safety Measures*, published by TØI at tshandbok.no. Same
+#: institute and same author as the Power Model weights above.
+TSH_ALIGNMENT = (
+    "Trafikksikkerhetshandboken (TOI) 1.13 Vegers linjefoering, Tabell 1.13.1, "
+    "revised 2023 by Hoeye and Elvik, reporting Elvik (2023) - a literature study "
+    "pooling 47 empirical studies"
+)
+
+
+def tsh_curve_radius() -> Derivation:
+    """Curve radius against relative accident count, from TSH's alignment table.
+
+    The table states one pair: a curve of **50 m** radius carries **3.58 times** the
+    accidents of the **600 m** reference. Two points on a log-log line is an exact
+    solution rather than a fit, so there is no R-squared to report::
+
+        ln(3.58) = b * (ln 50 - ln 600)   =>   b = -0.5132
+
+    **Why this is `region: global` and not `europe`, which was the whole reason for
+    looking it up.** The handbook is Norwegian and so is its author, and the tempting
+    move is to call the number European evidence — the registry holds none, and this was
+    the search for some. But `region` records where a weight was *estimated*, not who
+    published it, and the page is explicit: the figure comes from *"en omfattende
+    litteraturstudie av Elvik (2023)"* over *"47 empiriske studier"*, which are
+    international. A Norwegian handbook reporting an international meta-analysis is not
+    European data, and declaring it so would attach a false context to a true number —
+    precisely what the context fields exist to prevent.
+
+    TSH does name a genuinely Norwegian study alongside it, Elvik and Haugvik (2023) on
+    curves on Norwegian two-lane rural roads, which it says found a *stronger*
+    relationship. Its coefficients are not in the table, so nothing is derived from it.
+
+    **What is deliberately not taken from the same table.** `grade_pct` is given there as
+    0% to 7% = 1.30, and the prose immediately disowns the shape of it: *"Baade formen paa
+    sammenhengen og relativ ulykkesrisiko paa bratte stigninger er imidlertid usikre"*,
+    with different methods reaching different conclusions. A number its own source calls
+    uncertain does not become certain by being derived carefully.
+    """
+    reference_m, adverse_m, multiplier = 600.0, 50.0, 3.58
+    coefficient = math.log(multiplier) / (math.log(adverse_m) - math.log(reference_m))
+    return Derivation(
+        factor="curve_radius_min",
+        transform="ln",
+        value=coefficient,
+        family="elvik",
+        facility_type="any",
+        region="global",
+        severity="all",
+        scope="total",
+        source=(
+            f"{TSH_ALIGNMENT}. A curve of {adverse_m:.0f} m radius carries "
+            f"{multiplier} times the accidents of a {reference_m:.0f} m reference "
+            "curve; exact on ln(radius) from those two points."
+        ),
+        assumptions=(
+            "Column must be minimum radius in METRES, like the other two curvature "
+            "weights. 'Antall ulykker' is unqualified in the table, so severity is "
+            "declared `all` rather than narrowed on an assumption."
+        ),
+        caveat=(
+            "A meta-analysis over 47 studies with differing severity definitions and "
+            "road types, so the spread behind this average is wide. TSH notes that a "
+            "Norwegian study (Elvik and Haugvik, 2023) on two-lane rural roads found a "
+            "STRONGER radius effect than this, so a European corridor is more likely "
+            "under-weighted by this term than over-weighted."
+        ),
+    )
+
+
 def speed_limit_injury() -> Derivation:
     return _power_model("speed_limit", "injury", _POSTED_CAVEAT)
 
@@ -569,6 +639,7 @@ DERIVATIONS = (
     irap_curve_radius,
     irap_surface_paved,
     irap_lighting,
+    tsh_curve_radius,
     speed_limit_injury,
     speed_limit_fatal,
     operating_speed_injury,
