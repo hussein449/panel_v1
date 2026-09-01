@@ -644,6 +644,35 @@ def test_the_imagery_toggle_reaches_the_job() -> None:
     assert "imagery_client" in runner, "nothing builds a client for it"
 
 
+def test_every_working_source_is_reachable_from_the_front_page() -> None:
+    """A fetch that is built, tested and unreachable is a fetch nobody has.
+
+    `rasters`, `traffic` and `mapillary` were all implemented and all switched on only
+    from the Advanced job form, so the page everybody uses sent `["osm"]` and every run
+    made there reported `grade_pct` absent — one of the eight factors in the whole
+    registry that carries a cited weight, produced by an adapter that was working the
+    entire time.
+    """
+    picker = (SHELL / "components" / "RoadPicker.tsx").read_text(encoding="utf-8")
+    actions = (SHELL / "lib" / "actions.ts").read_text(encoding="utf-8")
+    runner = (REPO / "src" / "roadrisk" / "api" / "runner.py").read_text(
+        encoding="utf-8"
+    )
+
+    for field, adapter in (
+        ("fetch_rasters", "rasters"),
+        ("fetch_traffic", "traffic"),
+        ("fetch_mapillary", "mapillary"),
+        ("check_imagery", "imagery"),
+    ):
+        assert f'name="{field}"' in picker, f"the page offers no control for {adapter}"
+        assert f'"{field}"' in actions, f"the action never reads {field}"
+        assert f'"{adapter}"' in actions, f"the action never asks for {adapter}"
+        assert f'if "{adapter}" in wanted' in runner, (
+            f"the runner builds no client for {adapter}"
+        )
+
+
 def test_a_pick_that_resolves_no_road_clears_the_extent() -> None:
     """A stale length under a road nobody chose is worse than no length at all."""
     canvas = (SHELL / "components" / "RoadPickerCanvas.tsx").read_text(encoding="utf-8")

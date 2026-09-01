@@ -350,9 +350,50 @@ export default function RoadPicker({
 
         <section className="shell-step">
           <h2>
-            <span className="shell-step__n">4</span> Is this road open?
+            <span className="shell-step__n">4</span> What else to measure
             <span className="shell-step__optional">optional</span>
           </h2>
+          <p className="shell-note">
+            OpenStreetMap is always fetched — it is one request and it carries most of
+            the road. These are the other sources, each its own fetch, each off until
+            asked for. <strong>Every one of them adds factors the assessment would
+            otherwise report as absent.</strong>
+          </p>
+
+          <label className="shell-check">
+            <input type="checkbox" name="fetch_rasters" />
+            <span>Hills and land use</span>
+          </label>
+          <p className="shell-note">
+            Gradient from the Copernicus 30 m elevation model and built-up share from ESA
+            WorldCover, both read as windows over the corridor rather than downloaded
+            whole. Gradient is one of only eight factors in the registry that carries a
+            cited weight, so leaving this off costs a scored factor rather than a
+            decorative one. Adds about a minute.
+          </p>
+
+          <label className="shell-check">
+            <input type="checkbox" name="fetch_traffic" />
+            <span>Traffic proxy</span>
+          </label>
+          <p className="shell-note">
+            Betweenness centrality over the surrounding road network — how much through
+            traffic the shape of the network sends down this road. <strong>It is never
+            called AADT and carries no volume units.</strong> It is withheld entirely if
+            it turns out to be measuring the analysis window rather than the road. The
+            slowest option here: a wide network fetch, several minutes.
+          </p>
+
+          <label className="shell-check">
+            <input type="checkbox" name="fetch_mapillary" />
+            <span>Roadside objects</span>
+          </label>
+          <p className="shell-note">
+            Poles, sign supports and bollards counted from Mapillary&rsquo;s published
+            detections. Carries no cited weight yet, so it appears in the provenance
+            table and not in the score.
+          </p>
+
           <label className="shell-check">
             <input type="checkbox" name="check_imagery" />
             <span>Check whether anybody has driven this road</span>
@@ -361,13 +402,17 @@ export default function RoadPicker({
             Looks for street-level photographs along the corridor. A recent one is
             direct evidence a vehicle was here and the road was passable; finding none
             is <strong>weak</strong> evidence of anything, because photo coverage is
-            absent across whole regions, and the report says so either way. Adds one
-            network request and needs a free Mapillary token where this is deployed.
+            absent across whole regions, and the report says so either way. The road is
+            already refused outright if OpenStreetMap tags it as under construction —
+            this is a second opinion on that tag, not a replacement for it.
           </p>
+
           <p className="shell-note">
-            The road is already refused outright if OpenStreetMap tags it as under
-            construction or abandoned. This is the second opinion on that tag, not a
-            replacement for it.
+            Each of these can be unavailable where this is deployed — the last two need a
+            free Mapillary token, and hills and land use need the <code>raster</code>
+            extra, which carries GDAL. When one is missing it is skipped with a note
+            saying so, the other factors are unaffected, and nothing about the run is
+            silently different.
           </p>
         </section>
 

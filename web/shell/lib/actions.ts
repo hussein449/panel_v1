@@ -178,11 +178,18 @@ export async function assessRoadAction(form: FormData): Promise<void> {
         // that screen is for someone choosing; this one is for someone who wants their
         // road assessed.
         //
-        // `imagery` is off unless asked for: it is a second network round trip and it
-        // needs a Mapillary token the deployment may not have. It fills no factor —
-        // it answers whether anybody has driven this road, which is the question the
-        // A10 raised and nothing could answer.
-        adapters: form.get("check_imagery") !== null ? ["osm", "imagery"] : ["osm"],
+        // **The rest are off until asked for, and each is its own fetch.** They were
+        // unreachable from this page for longer than they should have been: the action
+        // sent `["osm"]` and nothing else, so `grade_pct` — one of only eight factors
+        // in the registry carrying a cited weight — was reported absent on every run
+        // made here, while the adapter that produces it sat implemented and working.
+        adapters: [
+          "osm",
+          ...(form.get("fetch_rasters") !== null ? ["rasters"] : []),
+          ...(form.get("fetch_traffic") !== null ? ["traffic"] : []),
+          ...(form.get("fetch_mapillary") !== null ? ["mapillary"] : []),
+          ...(form.get("check_imagery") !== null ? ["imagery"] : []),
+        ] as JobOptions["adapters"],
 
         // **The context the weights are selected against, and its omission was
         // expensive.** This action used to send adapters and nothing else, so all three
