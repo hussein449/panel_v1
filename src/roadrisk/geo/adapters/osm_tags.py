@@ -59,6 +59,7 @@ from roadrisk.geo.adapters.base import (
     resolve,
 )
 from roadrisk.geo.adapters.osmdata import OsmExtract, OsmWay
+from roadrisk.geo.osm import canonical_ref
 from roadrisk.geo.segmentation import Segmentation
 
 #: Spacing at which the centreline is sampled before tags are attributed. Fine enough
@@ -450,10 +451,20 @@ def carrier_candidates(extract: OsmExtract, ref: str | None) -> tuple[OsmWay, ..
     Narrowed to the road reference whenever one is known and anything carries it.
     Without that narrowing a frontage road 15 m away can win a sample on distance
     alone and lend the corridor its 30 km/h limit.
+
+    **The comparison is canonical, not literal, and it has to agree with the fetch.**
+    `canonical_ref` folds case and drops separators, so `A 86` as OSM spells it and `A86`
+    as a caller typed it are the same road here exactly as they are in `build_query`. A
+    literal test would have fetched a French corridor successfully and then attributed no
+    tags to it — the A10's failure shape, arriving by a different route.
     """
     candidates = extract.carriers
     if ref:
-        on_ref = tuple(way for way in candidates if ref in way.refs)
+        wanted = canonical_ref(ref)
+        on_ref = tuple(
+            way for way in candidates
+            if any(canonical_ref(r) == wanted for r in way.refs)
+        )
         if on_ref:
             return on_ref
     return candidates

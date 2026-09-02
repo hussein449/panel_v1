@@ -618,6 +618,32 @@ class TestTagReading:
 
         assert "lanes" not in [value.factor for value in result.resolved]
 
+    def test_carrier_ways_are_narrowed_across_a_spelling_difference(
+        self, corridor: Corridor, shipped_registry: Registry
+    ) -> None:
+        """The other half of the French fix, and the half that fails quietly.
+
+        `build_query` now finds `A 86` when asked for `A86`, so the corridor resolves.
+        If this comparison stayed literal, the tag adapter would then narrow to nothing,
+        fall back to every carrier way in the box, and let a frontage road lend the
+        corridor its speed limit — or clear no coverage floor at all, which is exactly
+        how the A10 presented.
+        """
+        from roadrisk.geo.adapters.osm_tags import carrier_candidates
+
+        extract = extract_from(
+            corridor,
+            way(run(0.0, CORRIDOR_M), ref="A 86", maxspeed="110"),
+            way(run(0.0, CORRIDOR_M, 18.0), ref="D 12", maxspeed="50"),
+        )
+
+        narrowed = carrier_candidates(extract, "A86")
+        everything = carrier_candidates(extract, None)
+
+        assert len(everything) == 2, "both ways are plausible carriers on distance"
+        assert len(narrowed) == 1, "only the A 86 is the corridor"
+        assert "A 86" in narrowed[0].refs
+
     def test_lane_width_prefers_the_per_lane_tag(
         self, corridor: Corridor, units, shipped_registry: Registry
     ) -> None:

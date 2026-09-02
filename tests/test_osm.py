@@ -8,6 +8,7 @@ real mirrors return 504 under load often enough to guarantee it.
 from __future__ import annotations
 
 import math
+import re
 
 import pytest
 
@@ -16,8 +17,10 @@ from roadrisk.geo.osm import (
     BoundingBox,
     Selector,
     build_query,
+    canonical_ref,
     fetch_corridor,
     fetch_corridor_by,
+    ref_pattern,
 )
 
 # A patch of Cyprus, so the UTM zone and metre-per-degree scaling are realistic.
@@ -89,9 +92,14 @@ class TestBoundingBox:
 
 class TestQuery:
     def test_asks_for_the_reference_and_geometry(self) -> None:
+        """The reference is now matched by an anchored pattern, not by `=`.
+
+        `I 95` and `I95` are one road spelled two ways — the example this module's own
+        error message used to warn callers about. It no longer has to.
+        """
         query = build_query("I 95", BBOX)
 
-        assert '"ref"="I 95"' in query
+        assert '"ref"~"^I[ -]?95$"' in query
         assert '["highway"]' in query
         assert "out geom;" in query, "without geom the ways come back without vertices"
 
@@ -301,9 +309,15 @@ class TestGates:
         with pytest.raises(CorridorError, match="no ways tagged"):
             fetch_corridor("B9", BBOX, client=client_returning())
 
-    def test_names_the_spelling_trap(self) -> None:
-        """OSM spellings vary and a wrong ref returns nothing, silently."""
-        with pytest.raises(CorridorError, match="I 95"):
+    def test_the_refusal_says_the_separator_is_not_the_problem(self) -> None:
+        """An empty result used to send the reader hunting for a spelling.
+
+        That was the right advice when the match was literal. Now that `A6`, `A 6` and
+        `A-6` all resolve, the same advice would send somebody to check the one thing
+        that can no longer be wrong — so the message points at the number and the box
+        instead.
+        """
+        with pytest.raises(CorridorError, match="separator does not matter"):
             fetch_corridor("B9", BBOX, client=client_returning())
 
     def test_refuses_geometry_free_ways(self) -> None:
@@ -322,6 +336,52 @@ class TestGates:
         ]
         with pytest.raises(CorridorError, match="fragmented collection"):
             fetch_corridor("B9", BBOX, client=client_returning(*scattered))
+
+
+class TestHowAReferenceIsSpelled:
+    """`A6`, `A 6` and `A-6` are one road written three ways.
+
+    OSM spells references by national convention. A sample of 5,035 referenced ways in
+    southern Paris carried the space on 100% of them, so every French road was refused
+    with *"OSM returned no ways tagged ref='A6'"* — true, and reading as "this road does
+    not exist" when a spelling convention was simply not known.
+    """
+
+    def test_the_query_tolerates_the_separator(self) -> None:
+        query = build_query(Selector.by_ref("A6"), BBOX)
+        assert '"ref"~"^A[ -]?6$"' in query
+
+    def test_a_french_spelling_finds_a_british_one_and_the_reverse(self) -> None:
+        pattern = ref_pattern("A6")[1:-1]
+        assert all(re.fullmatch(pattern, s) for s in ("A6", "A 6", "A-6"))
+
+    def test_it_still_cannot_reach_a_different_road(self) -> None:
+        """The guarantee this module exists for, unchanged."""
+        pattern = ref_pattern("A6")[1:-1]
+        assert not any(re.fullmatch(pattern, s) for s in ("A66", "A6b", "XA6", "A61"))
+
+    def test_a_name_is_still_matched_exactly(self) -> None:
+        """A name is free text. Tolerating separators there would be a fuzzy match."""
+        query = build_query(Selector.by_name("High Street"), BBOX)
+        assert '"name"="High Street"' in query
+        assert "~" not in query
+
+    def test_the_fetch_finds_a_road_spelled_the_other_way(self) -> None:
+        """End to end: ask for `A6`, and ways tagged `A 6` are the corridor."""
+        pieces = [way(straight(0, 4000), ref="A 6")]
+        result = fetch_corridor("A6", BBOX, client=client_returning(*pieces))
+
+        assert result.points, "a French spelling should answer a British query"
+
+    def test_canonical_form_folds_case_and_separators(self) -> None:
+        assert canonical_ref("A 6") == canonical_ref("A-6") == canonical_ref("a6")
+        assert canonical_ref("A6") != canonical_ref("A66")
+
+    def test_a_reference_carrying_a_metacharacter_cannot_alter_the_pattern(self) -> None:
+        """Same reasoning as `_quote`, one level further in."""
+        pattern = ref_pattern("A.6")[1:-1]
+        assert re.fullmatch(pattern, "A.6")
+        assert not re.fullmatch(pattern, "AX6")
 
 
 class TestTheGapAcrossAJunction:

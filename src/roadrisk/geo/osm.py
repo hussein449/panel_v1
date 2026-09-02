@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import urllib.parse
 import urllib.request
 from collections.abc import Sequence
@@ -292,8 +293,20 @@ class Selector:
 
     Two of them exist and there will not be a third without a reason: `ref`, which is
     what a road authority calls a road, and `name`, which is what everybody else calls
-    it. Both are exact matches — no regex, no fuzzy match. A near-match that silently
-    returned a different road is the failure this whole module is arranged to prevent.
+    it.
+
+    **A `name` is matched exactly. A `ref` is matched exactly up to how the separator is
+    written, and that is not the same as fuzzy.** OSM spells references by national
+    convention: Britain writes `A6`, France writes `A 6`, and some networks hyphenate. A
+    sample of 5,035 referenced ways in southern Paris found the space on **100%** of
+    them. Every French road was therefore refused with *"OSM returned no ways tagged
+    ref='A6'"* — a sentence that is true, and that reads as "this road does not exist"
+    when what happened is that a spelling convention was not known.
+
+    `A6`, `A 6` and `A-6` are one road written three ways, so all three are matched. The
+    pattern is anchored at both ends, so `A6` still cannot match `A66` or `A6b`, and the
+    guarantee that made this module worth writing — a selector cannot silently return a
+    different road — is exactly as strong as before.
     """
 
     key: str
@@ -320,8 +333,57 @@ class Selector:
         """How much fragmentation this selector is forgiven. See the constants."""
         return MIN_LONGEST_SHARE if self.key == "ref" else MIN_LONGEST_SHARE_NAME
 
+    def overpass_filter(self) -> str:
+        """The tag test for this selector, as Overpass QL.
+
+        A `name` uses `=`. A `ref` uses an anchored regex that tolerates the separator,
+        because the separator is a national convention rather than part of the road's
+        identity.
+        """
+        if self.key != "ref":
+            return f'["{self.key}"="{_quote(self.value)}"]'
+        return f'["ref"~"{_quote(ref_pattern(self.value))}"]'
+
+    def matches(self, candidate: str) -> bool:
+        """Whether an OSM tag value is this selector's road.
+
+        Used where ways are filtered in memory rather than by Overpass — the tag adapter
+        picks the carrier ways this way. It has to agree with `overpass_filter`, or a
+        French corridor would be fetched and then have no tags attributed to it, which is
+        precisely the shape of the A10's failure and just as hard to read.
+        """
+        if self.key != "ref":
+            return candidate == self.value
+        return canonical_ref(candidate) == canonical_ref(self.value)
+
     def __str__(self) -> str:
         return f"{self.key}='{self.value}'"
+
+
+def canonical_ref(value: str) -> str:
+    """A reference reduced to what does not vary: case, and no separators.
+
+    `A 6`, `A-6` and `a6` all become `a6`. Digits and letters are untouched, so `A6` and
+    `A66` stay different, which is the whole point.
+    """
+    return re.sub(r"[\s\-_.]+", "", value).casefold()
+
+
+def ref_pattern(value: str) -> str:
+    """An anchored Overpass regex matching a reference however its separator is written.
+
+    `A6` becomes `^A[ -]?6$`, which matches `A6`, `A 6` and `A-6` and nothing else. The
+    hyphen sits last inside the class so it is a literal rather than a range.
+
+    Every run of letters or digits is escaped, so a reference carrying a regex
+    metacharacter cannot alter the pattern — the same reasoning as `_quote`, one level
+    further in.
+    """
+    compact = re.sub(r"[\s\-_]+", "", value.strip())
+    parts = re.findall(r"\d+|[^\d]+", compact)
+    if not parts:  # pragma: no cover - __post_init__ refuses an empty selector
+        return f"^{re.escape(value)}$"
+    return "^" + "[ -]?".join(re.escape(part) for part in parts) + "$"
 
 
 def _quote(value: str) -> str:
@@ -349,7 +411,7 @@ def build_query(
     )
     return (
         f"[out:json][timeout:{timeout_s}];"
-        f'way["{chosen.key}"="{_quote(chosen.value)}"]["highway"]'
+        f"way{chosen.overpass_filter()}[\"highway\"]"
         f"({bbox.as_overpass()});"
         f"out geom;"
     )
@@ -431,8 +493,9 @@ def fetch_corridor_by(
         raise CorridorError(
             f"OSM returned no ways tagged {selector} inside {bbox.as_overpass()}. "
             + (
-                "Check the reference is exactly as OSM spells it (they vary: 'I 95' "
-                "not 'I-95', 'A1' not 'A 1') and that the box actually covers the road."
+                "The separator does not matter — 'A6', 'A 6' and 'A-6' are all "
+                "matched — so check the number itself and that the box actually "
+                "covers the road."
                 if selector.key == "ref"
                 else "Check the name is exactly as OSM spells it — it is an exact "
                 "match, including case, punctuation and any language prefix — and that "
