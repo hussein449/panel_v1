@@ -375,6 +375,41 @@ factors:
         tier: A
         licence: ODbL
 
+  - name: lane_width
+    label: Lane width (m)
+    column: lane_width
+    transform: ln
+    expected_sign: "-"
+    drop_priority: 68
+    missing_behaviour: >
+      Cross-section quality is lost. lanes still carries the count, which is a different
+      thing: a four-lane road of narrow lanes and a two-lane road of wide ones are not
+      distinguished without this.
+    notes: >
+      UNITS: width of ONE lane in metres, never the carriageway. Where OSM gives only a
+      carriageway `width`, the adapter divides by `lanes` and reports nothing when
+      `lanes` is absent.
+      Added 2026-09-02 because the European literature discusses width more than any
+      other attribute — PRACT's inventory raises lane or carriageway width on 41 of its
+      238 pages, more than curvature, gradient or roadside — and this registry had no
+      column for it at all.
+      UNCITED, deliberately. The two figures that survive in reachable form are a German
+      RAL surcharge of 1.20 for lane width under 3.25 m against a 3.50 m standard, and a
+      German finding that accident rates fall about 60% from 5 m to 8 m of road width.
+      Neither is traceable to a named study from the documents that quote them — PRACT
+      attributes the first to "pertinent literature" — and this registry refuses a
+      weight whose reference a client cannot follow. The factor is still worth carrying:
+      Mode A fits every available column from the corridor's own crashes and never
+      consults a weight, so this is usable there the day it is measured, and a sourced
+      weight can be dropped in later without touching the adapter.
+    adapters:
+      - name: client_inventory
+        tier: D
+        licence: client
+      - name: osm_width
+        tier: A
+        licence: ODbL
+
   - name: poi_density
     label: Roadside POI density (per km)
     column: poi_density

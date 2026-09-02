@@ -92,6 +92,10 @@ MIN_CARRIER_MATCH = 0.9
 
 _MPH_TO_KMH = 1.609344
 
+#: For OSM widths tagged in feet. The wiki's default unit is metres, so this is only
+#: reached on an explicit `ft` or `'` suffix.
+FEET_PER_METRE = 3.280839895
+
 #: ``maxspeed`` values that are legal tags but carry no number.
 _UNPOSTED = frozenset({"none", "walk", "signals", "variable", "unposted", "no"})
 
@@ -185,6 +189,62 @@ def _lanes(tags: Mapping[str, str]) -> float | None:
     return value if 1.0 <= value <= 12.0 else None
 
 
+def _metres(raw: str) -> float | None:
+    """One OSM width value in metres, or None if it is not one.
+
+    OSM widths are metres unless suffixed. `ft` and `'` are the only other units seen
+    often enough to convert; anything else is refused rather than guessed at.
+    """
+    text = raw.strip().lower()
+    if not text:
+        return None
+    factor = 1.0
+    if text.endswith("'") or text.endswith("ft"):
+        text = text.rstrip("'").removesuffix("ft").strip()
+        factor = 1.0 / FEET_PER_METRE
+    elif text.endswith("m"):
+        text = text[:-1].strip()
+    try:
+        value = float(text) * factor
+    except ValueError:
+        return None
+    return value if 0.0 < value <= 60.0 else None
+
+
+def _lane_width_m(tags: Mapping[str, str]) -> float | None:
+    """Width of ONE lane in metres.
+
+    **Two tags that mean different things.** `width` is the whole carriageway;
+    `width:lanes` is a per-lane list like ``3.5|3.5|2.75`` and is already what is wanted,
+    so it wins where present and is averaged over the lanes it lists.
+
+    Falling back to `width`, the carriageway has to be divided by `lanes` — and where
+    `lanes` is absent this returns nothing rather than assuming two. Assuming would
+    invent the very quantity the column exists to measure, and would do it silently on
+    exactly the badly-tagged roads this product is built for.
+
+    The 1.5-6.0 m band is what a *lane* can be. A 12 m value is a carriageway tagged
+    `width` with no `lanes` to divide it, or an error; either way it is not a lane width,
+    and admitting it would put a carriageway-sized number in a column the model reads as
+    one lane.
+    """
+    per_lane = str(tags.get("width:lanes", "")).strip()
+    if per_lane:
+        widths = [w for w in (_metres(p) for p in per_lane.split("|")) if w is not None]
+        if widths:
+            mean = sum(widths) / len(widths)
+            return mean if 1.5 <= mean <= 6.0 else None
+
+    total = _metres(str(tags.get("width", "")))
+    if total is None:
+        return None
+    lanes = _lanes(tags)
+    if lanes is None:
+        return None
+    width = total / lanes
+    return width if 1.5 <= width <= 6.0 else None
+
+
 def _lit(tags: Mapping[str, str]) -> float | None:
     raw = str(tags.get("lit", "")).strip().lower()
     if raw in _LIT_YES:
@@ -272,6 +332,28 @@ _SPECS: tuple[_TagSpec, ...] = (
             "On a divided road OSM tags `lanes` per carriageway, and the corridor is "
             "one carriageway, so the count is per direction. That matches the factor's "
             "definition and does not match a total-lanes inventory.",
+        ),
+    ),
+    _TagSpec(
+        factor="lane_width",
+        adapter="osm_width",
+        read=_lane_width_m,
+        source=(
+            "OpenStreetMap `width:lanes` where present, otherwise `width` divided by "
+            f"`lanes`, sampled every {SAMPLE_INTERVAL_M:.0f} m and averaged over the "
+            "tagged part of each unit. Metres unless the tag says feet."
+        ),
+        notes=(
+            "Width is the most-discussed attribute in the European literature and the "
+            "worst-tagged in OSM — expect this factor to be absent or thin on most "
+            "corridors, and to clear its coverage floor mainly on motorways and trunk "
+            "roads that somebody has surveyed.",
+            "Where only `width` is tagged and `lanes` is not, the unit reports nothing "
+            "rather than assuming two lanes. Assuming would invent the quantity this "
+            "column exists to measure, on exactly the roads that are worst mapped.",
+            "UNCITED, so it carries no Mode B weight and cannot move the index. Mode A "
+            "fits it from the corridor's own crashes like any other column, which is "
+            "the point of adding it before a weight exists.",
         ),
     ),
     _TagSpec(

@@ -618,6 +618,67 @@ class TestTagReading:
 
         assert "lanes" not in [value.factor for value in result.resolved]
 
+    def test_lane_width_prefers_the_per_lane_tag(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        """`width:lanes` is already per lane; `width` is the whole carriageway."""
+        extract = extract_from(
+            corridor,
+            way(run(0.0, CORRIDOR_M), **{"width:lanes": "3.5|3.0", "width": "20"}),
+        )
+        values = values_of(
+            read_tags(extract, units, registry=shipped_registry), "lane_width"
+        )
+
+        assert values.round(2).eq(3.25).all(), "averages 3.5 and 3.0, never uses the 20"
+
+    def test_lane_width_divides_the_carriageway_by_the_lane_count(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        extract = extract_from(corridor, way(run(0.0, CORRIDOR_M), width="7", lanes="2"))
+        values = values_of(
+            read_tags(extract, units, registry=shipped_registry), "lane_width"
+        )
+
+        assert values.round(2).eq(3.5).all()
+
+    def test_a_carriageway_width_with_no_lane_count_is_refused(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        """The failure this factor exists to avoid.
+
+        A 7 m `width` with no `lanes` is a carriageway. Assuming two lanes would invent
+        the quantity the column measures, silently, on exactly the badly tagged roads
+        this product is built for — putting a carriageway-sized number in a column the
+        model reads as one lane.
+        """
+        extract = extract_from(corridor, way(run(0.0, CORRIDOR_M), width="7"))
+        result = read_tags(extract, units, registry=shipped_registry)
+
+        assert "lane_width" not in [value.factor for value in result.resolved]
+
+    def test_a_carriageway_sized_lane_is_not_believed(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        extract = extract_from(
+            corridor, way(run(0.0, CORRIDOR_M), width="12", lanes="1")
+        )
+        result = read_tags(extract, units, registry=shipped_registry)
+
+        assert "lane_width" not in [value.factor for value in result.resolved]
+
+    def test_lane_width_in_feet_is_converted(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        extract = extract_from(
+            corridor, way(run(0.0, CORRIDOR_M), **{"width:lanes": "12'|12'"})
+        )
+        values = values_of(
+            read_tags(extract, units, registry=shipped_registry), "lane_width"
+        )
+
+        assert values.round(2).eq(3.66).all(), "12 ft is 3.66 m"
+
     def test_a_corridor_with_no_road_beside_it_resolves_nothing(
         self, corridor: Corridor, units, shipped_registry: Registry
     ) -> None:
