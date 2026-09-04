@@ -358,6 +358,7 @@ export interface FactorSummary {
   missing: MissingFactor[];
   constant: string[];
   dropped_for_collinearity: string[];
+  demoted_for_no_variation: string[];
   in_model: string[];
 }
 

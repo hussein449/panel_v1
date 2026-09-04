@@ -12,6 +12,7 @@ The engine walks **down** the rungs and takes the highest one that passes every 
 Descent rules, all enforced here:
 
 * Terms are dropped in the registry's declared priority order, never at random.
+* A term that barely varies **on this corridor** goes to the back of that order first.
 * The highest-VIF term is dropped first when collinearity is the trigger.
 * The exposure offset is never dropped — it is structural, not a term.
 * Every descent records which rung was attempted, which check failed, and what was shed.
@@ -39,6 +40,23 @@ from roadrisk.core.registry import Factor, Registry
 from roadrisk.core.runlog import RunLog
 
 STAGE = "mode_selection"
+
+#: Share of units allowed to sit on a factor's single most common value before the
+#: factor is treated as barely varying **here** and sent to the back of the keep order.
+#:
+#: A rung fits a fixed number of terms, chosen until now by the registry's declared
+#: priority alone — an ordering decided in advance, for roads in general. On the A3
+#: through Paris that spent a slot on ``poi_density``, which is zero on 84% of the
+#: corridor and correlates with crashes at 0.05, while ``landuse_urban`` — varying on
+#: every segment, correlating at 0.46, the second strongest term available — never
+#: entered the model at all.
+#:
+#: **The threshold sits at 0.8 because 0.7 would have been wrong.** On the same corridor
+#: ``access_density`` is concentrated on one value across 76% of units and is still the
+#: strongest term in the fit, at p = 1e-4. Concentration is a reason to prefer another
+#: factor, never on its own a reason to believe a factor is uninformative, so the bar is
+#: set where a term separates fewer than one unit in five.
+MAX_MODAL_SHARE = 0.8
 
 
 class Mode(StrEnum):
@@ -99,6 +117,7 @@ class LadderResult:
     fit_checks: list[CheckResult] = field(default_factory=list)
     descent: list[DescentEvent] = field(default_factory=list)
     dropped_for_collinearity: list[str] = field(default_factory=list)
+    demoted_for_no_variation: list[str] = field(default_factory=list)
     refusal: str | None = None
 
     @property
@@ -138,6 +157,7 @@ def walk_ladder(
     """
     descent: list[DescentEvent] = []
     fit_checks: list[CheckResult] = []
+    keep_order, demoted = _screen_for_variation(design, factors, log)
 
     if not factors:
         return _fall_to_mode_b(
@@ -171,7 +191,7 @@ def walk_ladder(
             )
             continue
 
-        selected = Registry.in_keep_order(factors)[: spec.max_factors]
+        selected = keep_order[: spec.max_factors]
         selected, shed_for_vif = _resolve_collinearity(design, selected, log, spec.rung)
 
         n_parameters = len(selected) + 1 + (
@@ -255,6 +275,7 @@ def walk_ladder(
             fit_checks=fit_checks,
             descent=descent,
             dropped_for_collinearity=shed_for_vif,
+            demoted_for_no_variation=demoted,
         )
 
     return _fall_to_mode_b(
@@ -266,6 +287,67 @@ def walk_ladder(
             "result is Mode B."
         ),
     )
+
+
+def _modal_share(column: pd.Series) -> float:
+    """Share of rows sitting on the column's single most common value.
+
+    Chosen over "share of zeros" because the degenerate case is concentration, not
+    zeroness: a factor that reads 1.0 on 95% of the corridor tells a model just as
+    little as one that reads 0.0 there, and a balanced flag reading 0 on 35% of units
+    is perfectly informative. One measure covers all three.
+    """
+    values = column.dropna()
+    if values.empty:
+        return 1.0
+    return float(values.value_counts(normalize=True).iloc[0])
+
+
+def _screen_for_variation(
+    design: pd.DataFrame,
+    factors: list[Factor],
+    log: RunLog,
+    *,
+    max_modal_share: float = MAX_MODAL_SHARE,
+) -> tuple[list[Factor], list[str]]:
+    """Keep order, with the factors that barely vary here moved to the back.
+
+    **Demoted, never dropped.** A rung fits up to a fixed number of terms; removing a
+    factor outright would sometimes hand it back fewer terms than it can support, which
+    is a worse model than one carrying a weak term. Sending the factor to the back of
+    the order costs nothing when better factors exist and changes nothing when they do
+    not — the ordering only ever decides which terms lose their seat to the cap.
+
+    Returns:
+        The keep order to slice each rung from, and the names demoted, worst first.
+    """
+    ranked = Registry.in_keep_order(factors)
+    shares = {
+        f.name: _modal_share(design[f.name]) for f in ranked if f.name in design.columns
+    }
+    degenerate = [f for f in ranked if shares.get(f.name, 0.0) >= max_modal_share]
+    if not degenerate:
+        return ranked, []
+
+    informative = [f for f in ranked if f not in degenerate]
+    degenerate.sort(key=lambda f: shares[f.name], reverse=True)
+    demoted = [f.name for f in degenerate]
+
+    for factor in degenerate:
+        log.warning(
+            "factors",
+            "low_variation",
+            (
+                f"'{factor.name}' holds one value on {shares[factor.name]:.0%} of this "
+                f"corridor, above the {max_modal_share:.0%} at which a term separates "
+                "too little of the road to earn a place the registry would otherwise "
+                "give it. Moved behind every factor that does vary here; it is still "
+                "fitted if the rung has room."
+            ),
+            factor=factor.name,
+            modal_share=round(shares[factor.name], 4),
+        )
+    return [*informative, *degenerate], demoted
 
 
 def _resolve_collinearity(

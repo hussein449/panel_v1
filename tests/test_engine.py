@@ -7,7 +7,16 @@ import pytest
 
 from roadrisk.core.engine import assess
 from roadrisk.core.errors import ContractViolation
-from roadrisk.core.ladder import Mode, Rung
+from roadrisk.core.ladder import Mode, Rung, _screen_for_variation
+from roadrisk.core.registry import (
+    Adapter,
+    Factor,
+    Licence,
+    Sign,
+    Tier,
+    Transform,
+)
+from roadrisk.core.runlog import RunLog
 from roadrisk.demo import TRUE_EFFECTS, synthetic_panel
 
 
@@ -75,11 +84,14 @@ class TestDescent:
         self, sparse_panel: pd.DataFrame
     ) -> None:
         result = assess(sparse_panel)
-        kept = {f.drop_priority for f in result.ladder.factors}
+        # Among factors that vary here. A factor demoted for holding one value along
+        # most of the corridor is ordered by that, not by its registry priority.
+        demoted = set(result.ladder.demoted_for_no_variation)
+        kept = {f.drop_priority for f in result.ladder.factors if f.name not in demoted}
         dropped = {
             f.drop_priority
             for f in result.available_factors
-            if f.name not in result.ladder.factor_names
+            if f.name not in result.ladder.factor_names and f.name not in demoted
         }
         assert min(kept) > max(dropped)
 
@@ -87,6 +99,97 @@ class TestDescent:
         result = assess(sparse_panel)
         descents = [e for e in result.log if e.level.value == "descent"]
         assert len(descents) == len(result.ladder.descent)
+
+
+class TestVariationScreen:
+    """A rung's seats should not go to a factor that is flat on this corridor.
+
+    The A3 through Paris spent one on `poi_density`, zero across 84% of the road and
+    correlating with crashes at 0.05, while `landuse_urban` — varying on every segment,
+    correlating at 0.46 — never entered the model.
+    """
+
+    def factor(self, name: str, priority: int) -> Factor:
+        return Factor(
+            name=name,
+            label=name,
+            column=name,
+            transform=Transform.IDENTITY,
+            expected_sign=Sign.POSITIVE,
+            drop_priority=priority,
+            missing_behaviour="lost",
+            adapters=[Adapter(name="osm", tier=Tier.A, licence=Licence.ODBL)],
+        )
+
+    def test_a_flat_factor_loses_its_seat_to_one_that_varies(self) -> None:
+        """Higher registry priority no longer beats having something to say."""
+        flat = self.factor("flat", priority=90)
+        varied = self.factor("varied", priority=10)
+        design = pd.DataFrame(
+            {"flat": [0.0] * 17 + [1.0, 2.0, 3.0], "varied": list(range(20))}
+        )
+
+        order, demoted = _screen_for_variation(design, [flat, varied], RunLog())
+
+        assert [f.name for f in order] == ["varied", "flat"]
+        assert demoted == ["flat"]
+
+    def test_a_factor_that_varies_keeps_its_registry_place(self) -> None:
+        high = self.factor("high", priority=90)
+        low = self.factor("low", priority=10)
+        design = pd.DataFrame({"high": list(range(20)), "low": list(range(20))})
+
+        order, demoted = _screen_for_variation(design, [high, low], RunLog())
+
+        assert [f.name for f in order] == ["high", "low"]
+        assert demoted == []
+
+    def test_a_concentrated_factor_is_not_dropped_only_moved(self) -> None:
+        """Demotion must never shrink a model that had room for the term."""
+        flat = self.factor("flat", priority=90)
+        design = pd.DataFrame({"flat": [0.0] * 19 + [1.0]})
+
+        order, demoted = _screen_for_variation(design, [flat], RunLog())
+
+        assert [f.name for f in order] == ["flat"], "still available to fit"
+        assert demoted == ["flat"]
+
+    def test_the_threshold_sits_above_the_strongest_term_the_a3_had(self) -> None:
+        """`access_density` held one value on 76% of the A3 and was still its best term.
+
+        A threshold at or below that would have thrown away the finding the corridor
+        exists to demonstrate, so concentration alone can never be disqualifying.
+        """
+        best = self.factor("access_density", priority=90)
+        design = pd.DataFrame({"access_density": [0.0] * 28 + [1.0] * 9})
+
+        _, demoted = _screen_for_variation(design, [best], RunLog())
+
+        assert demoted == [], "76% concentration must survive the screen"
+
+    def test_a_balanced_flag_is_never_demoted(self) -> None:
+        lit = self.factor("lit", priority=45)
+        design = pd.DataFrame({"lit": [0.0] * 13 + [1.0] * 24})
+
+        _, demoted = _screen_for_variation(design, [lit], RunLog())
+
+        assert demoted == []
+
+    def test_the_demotion_is_logged_with_the_share(self) -> None:
+        flat = self.factor("flat", priority=90)
+        design = pd.DataFrame({"flat": [0.0] * 19 + [1.0]})
+        log = RunLog()
+
+        _screen_for_variation(design, [flat], log)
+
+        event = next(e for e in log if e.code == "low_variation")
+        assert "95%" in event.message
+        assert "still fitted if the rung has room" in event.message
+
+    def test_it_reaches_the_payload(self, rich_panel: pd.DataFrame) -> None:
+        payload = assess(rich_panel).as_dict()
+
+        assert "demoted_for_no_variation" in payload["factors"]
 
 
 class TestRefusal:

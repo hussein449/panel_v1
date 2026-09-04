@@ -198,6 +198,7 @@ class Assessment:
                 ],
                 "constant": self.constant_factors,
                 "dropped_for_collinearity": self.ladder.dropped_for_collinearity,
+                "demoted_for_no_variation": self.ladder.demoted_for_no_variation,
                 "in_model": self.factor_names,
             },
             "fit": _fit_as_dict(self.fit),

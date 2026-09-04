@@ -94,6 +94,9 @@ class FactorSummary(Payload):
     missing: list[MissingFactor]
     constant: list[str]
     dropped_for_collinearity: list[str]
+    #: Factors sent to the back of the keep order because they hold one value across
+    #: most of this corridor. Demoted, not removed — they still fit if the rung has room.
+    demoted_for_no_variation: list[str]
     in_model: list[str]
 
 

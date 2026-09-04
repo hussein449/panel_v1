@@ -245,6 +245,26 @@ def _factors(assessment: Mapping[str, Any]) -> list[Limitation]:
             )
         )
 
+    demoted = factors.get("demoted_for_no_variation") or []
+    in_model = set(factors.get("in_model") or [])
+    unseated = [name for name in demoted if name not in in_model]
+    if unseated:
+        found.append(
+            Limitation(
+                code="factors_low_variation",
+                severity=CONTEXT,
+                title="Some factors hold one value along most of this road",
+                detail=(
+                    f"{', '.join(unseated)} sat on a single value across most of the "
+                    "corridor, so each could only distinguish a handful of segments. "
+                    "The model fits a fixed number of terms, and these lost their place "
+                    "to factors that vary here. That is a property of this road, not "
+                    "evidence they do not matter — on a corridor where they vary they "
+                    "would be fitted ahead of what replaced them."
+                ),
+            )
+        )
+
     constant = factors.get("constant") or []
     if constant:
         found.append(

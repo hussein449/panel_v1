@@ -224,11 +224,10 @@ flips its sign 8 times in 25. It is not contradicting the literature. It is unid
 
 **Three fixes, in order of value:**
 
-1. **Screen for variation before the factor cap.** A-full keeps the 7 highest
-   `drop_priority`, never looking at the corridor. On the A3 that spent a slot on
-   `poi_density` (84% zeros, r = +0.047) while dropping `landuse_urban` (0% zeros,
-   **r = +0.458**, the second-strongest predictor in the whole set). Enabling
-   `traffic_proxy` fixed this by accident; a variation screen would fix it on purpose.
+1. **Screen for variation before the factor cap.** *(Built — see below.)* A-full keeps
+   the 7 highest `drop_priority`, never looking at the corridor. On the A3 that spent a
+   slot on `poi_density`, which holds one value across 84% of the road and correlates
+   with crashes at 0.05.
 2. **Enter near-binary densities as presence flags.** Above roughly 60% zeros,
    `ln1p(count/km)` is a spike-and-slab. `has_junction` is the honest term, and would end
    the CURE drift.
@@ -237,6 +236,56 @@ flips its sign 8 times in 25. It is not contradicting the literature. It is unid
 
 None of these are defects. They are specification choices the engine currently makes in
 advance instead of from the corridor in front of it.
+
+### The variation screen, and the prediction it did not meet
+
+Built as `MAX_MODAL_SHARE = 0.8` in `ladder.py`: before a rung slices its factors from
+the keep order, any factor holding one value across 80% or more of the units is moved to
+the **back** of that order. Demoted, never dropped — a rung fits *up to* N terms, and
+removing a factor outright would sometimes return a smaller model than the data supports.
+
+The threshold sits at 0.8 because 0.7 would have been wrong: `access_density` is
+concentrated on one value across 76% of this corridor and is still its strongest term.
+Concentration is a reason to prefer another factor, never on its own a reason to disbelieve
+one. There is a test pinning that.
+
+**Measured by rebuilding the A3 panel from the run record and assessing it twice, once
+with the screen and once without.** Same 2,664 rows, same 1,231 crashes, one difference:
+
+| | screen off | screen on |
+|---|---|---|
+| 7th seat | `poi_density` (84% one value, p = 0.64) | **`curve_radius_min`** |
+| Spatial validation ratio | 1.135 | **1.004** |
+| CURE drift | `junction_density`, `access_density`, **`poi_density`** | `junction_density`, `access_density` |
+| Sign contradictions | 2 | **1** |
+| AIC | 4660.6 | 4658.8 |
+| `access_density` | +0.4400, p = 2.8e-8 | +0.4430, **p = 5.0e-9** |
+| Optimism | 0.0102 | 0.0220 |
+
+Better calibration, one fewer false contradiction, one fewer drifting factor. Modest and
+real.
+
+**But the seat went to `curve_radius_min`, not `landuse_urban`, and predicting otherwise
+was wrong.** Keep order is `drop_priority` descending, so demoting `poi_density` (65)
+promotes `curve_radius_min` (55) — not `landuse_urban`, which sits at 33, near the bottom
+of the registry.
+
+**That is the screen working as designed, not failing.** It removes factors that cannot
+inform *anything*, which is a property of a column's own distribution. Promoting
+`landuse_urban` on the grounds that it correlates with crashes at 0.46 would be selecting
+terms by their relationship to the outcome — the garden of forking paths, and it would
+inflate every p-value that survived it. The registry's ordering is a judgement made once,
+in advance, for all roads, which is exactly where a judgement like that belongs.
+
+**So `landuse_urban` entering the model is a registry question, not an engine one.** If
+roadside development deserves to outrank curvature and lighting, that is an edit to
+`drop_priority` in `factors.yaml`, argued from the literature rather than from this
+corridor's correlations.
+
+**With `traffic_proxy` enabled the screen changes nothing at all** — `poi_density` is
+demoted, but `traffic_proxy` (priority 100) had already taken the seat it would have lost.
+Identical coefficients, identical AIC. Worth recording: the screen is a no-op exactly when
+something better is already doing its job.
 
 ### One thing this run did right without being asked
 
