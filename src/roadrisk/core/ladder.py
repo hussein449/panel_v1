@@ -31,6 +31,7 @@ from roadrisk.core.gates import (
     CheckResult,
     check_convergence,
     check_crashes_per_parameter,
+    check_vif,
 )
 from roadrisk.core.models import FitResult, fit_poisson
 from roadrisk.core.models.glm import fit_negative_binomial_panel
@@ -194,6 +195,10 @@ def walk_ladder(
             continue
 
         subset = design[[f.name for f in selected]]
+        # Check 7 again, on the design that is about to be fitted. The pre-fit gate saw
+        # every available factor; this rung fits at most `spec.max_factors` of them, so
+        # the two can disagree — and it is this one that describes the result.
+        fit_checks.append(check_vif(compute_vif(subset), fitted=True))
         poisson = fit_poisson(counts, subset, log_exposure)
         shipped, note = _fit_shipped(
             counts, subset, log_exposure, poisson, dispersion, unit_ids

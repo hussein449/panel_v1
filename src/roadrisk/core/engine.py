@@ -37,7 +37,12 @@ from roadrisk.core.diagnostics import (
 from roadrisk.core.errors import WeightNotSourced
 from roadrisk.core.evidence import EvidenceReport, compare
 from roadrisk.core.gam import DEFAULT_RESAMPLES, ShapeDiagnostic, hunt_shape
-from roadrisk.core.gates import GateReport, SnapReport, run_pre_fit_gates
+from roadrisk.core.gates import (
+    CheckResult,
+    GateReport,
+    SnapReport,
+    run_pre_fit_gates,
+)
 from roadrisk.core.ladder import LadderResult, Mode, Rung, walk_ladder
 from roadrisk.core.models import (
     Estimator,
@@ -157,6 +162,9 @@ class Assessment:
                 "declared": self.context.is_declared,
                 "crash_mix": self.context.crash_mix.as_dict(),
                 "crash_mix_is_default": self.context.uses_default_crash_mix,
+                "crash_mix_facility_mismatch": (
+                    self.context.crash_mix_facility_mismatch
+                ),
                 "segment_length_km": self.context.segment_length_km,
                 "reference_aadt": self.context.reference_aadt,
             },
@@ -180,7 +188,7 @@ class Assessment:
                     "observed": c.observed,
                     "message": c.message,
                 }
-                for c in [*self.gates.checks, *self.ladder.fit_checks]
+                for c in _shipped_checks(self.gates.checks, self.ladder.fit_checks)
             ],
             "factors": {
                 "available": [f.name for f in self.available_factors],
@@ -1060,6 +1068,24 @@ def _descent_receipt(ladder: LadderResult, available: list[Factor]) -> str | Non
     else:
         parts.append("No Mode A rung passed its gates. The result is Mode B — ranking only.")
     return " ".join(parts)
+
+
+def _shipped_checks(
+    gate_checks: Sequence[CheckResult], fit_checks: Sequence[CheckResult]
+) -> list[CheckResult]:
+    """The checks a reader should judge the result by.
+
+    Check 7 is run twice: once before the ladder, across every available factor, and
+    again inside it on the design actually fitted. A rung caps how many factors it
+    fits, so the first can fail while the second passes — which is exactly what the A3
+    run did, reporting a failed collinearity check against a specification the engine
+    had already discarded. Where both exist, **the fitted one is the answer** and the
+    candidate one is dropped, because a report that says a result failed a check it
+    passed is worse than one that says nothing.
+    """
+    superseded = {c.number for c in fit_checks if c.number == 7}
+    kept = [c for c in gate_checks if c.number not in superseded]
+    return [*kept, *fit_checks]
 
 
 def _fit_as_dict(fit: FitResult | None) -> dict[str, Any] | None:

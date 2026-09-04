@@ -308,15 +308,25 @@ def check_snap_rate(
     )
 
 
-def check_vif(vif: VIFReport) -> CheckResult:
+def check_vif(vif: VIFReport, *, fitted: bool = False) -> CheckResult:
     """Check 7 — collinearity across the active factors.
 
     This is the check that would have caught the geometry/roadside confounding on M51
     before it reached a result.
+
+    Args:
+        vif: The report to judge.
+        fitted: True when ``vif`` was measured on the design the model was actually
+            fitted on, rather than on the candidate factors the ladder then trims.
+            **The distinction is the whole point.** A rung caps how many factors it
+            fits, so the candidate set can be collinear while the shipped model is not;
+            reporting the candidate figure as the result's own made the A3 run announce
+            a failed collinearity check against a specification it had discarded.
     """
     offenders = vif.above(MAX_VIF)
     passed = not offenders
     detail = ", ".join(f"{name} = {vif.values[name]:.1f}" for name in offenders[:5])
+    subject = "the fitted model" if fitted else "the candidate factors"
     return CheckResult(
         number=7,
         name="Collinearity (VIF)",
@@ -325,12 +335,14 @@ def check_vif(vif: VIFReport) -> CheckResult:
         threshold=f"max VIF < {MAX_VIF:.0f}",
         observed=f"max {vif.max_vif:.1f}" + (f" ({vif.worst})" if vif.worst else ""),
         message=(
-            f"No collinearity above threshold; highest VIF is {vif.max_vif:.1f}."
+            f"No collinearity above threshold across {subject}; highest VIF is "
+            f"{vif.max_vif:.1f}."
             if passed
             else (
-                f"{len(offenders)} term(s) exceed VIF {MAX_VIF:.0f} — {detail}. "
-                "Coefficients on collinear terms are not separately interpretable; "
-                "the worst offender is dropped before refitting."
+                f"{len(offenders)} term(s) among {subject} exceed VIF "
+                f"{MAX_VIF:.0f} — {detail}. Coefficients on collinear terms are not "
+                "separately interpretable; the worst offender is dropped before "
+                "refitting."
             )
         ),
     )

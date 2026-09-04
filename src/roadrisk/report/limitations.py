@@ -339,7 +339,29 @@ def _evidence(assessment: Mapping[str, Any]) -> list[Limitation]:
     found: list[Limitation] = []
 
     context = assessment.get("context") or {}
-    if context.get("crash_mix_is_default"):
+    # The crash split only does anything in the weighted index — it is what divides the
+    # score by crash type. A fitted model never consults it, so a run without an index
+    # must not carry a caveat about an assumption it did not make.
+    crash_mix_was_used = assessment.get("index") is not None
+    if crash_mix_was_used and context.get("crash_mix_facility_mismatch"):
+        found.append(
+            Limitation(
+                code="crash_mix_facility_mismatch",
+                severity=MATERIAL,
+                title="The split of crashes by type is for a different kind of road",
+                detail=(
+                    "This corridor was declared "
+                    f"{str(context.get('facility_type', 'unknown')).replace('_', ' ')}, "
+                    "and the only split of crashes by type available was measured on "
+                    "another kind of road entirely — see its source below. The split "
+                    "decides how much of each weight reaches the score, so a mismatched "
+                    "one misallocates every crash-type-specific weight in the model. "
+                    "Treat the score as indicative until a split for this facility is "
+                    "supplied."
+                ),
+            )
+        )
+    elif crash_mix_was_used and context.get("crash_mix_is_default"):
         found.append(
             Limitation(
                 code="default_crash_mix",

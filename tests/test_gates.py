@@ -13,7 +13,9 @@ from roadrisk.core.diagnostics import (
     compute_vif,
     zero_variance_columns,
 )
+from roadrisk.core.engine import _shipped_checks
 from roadrisk.core.gates import (
+    CheckResult,
     CheckStatus,
     FailureType,
     SnapReport,
@@ -151,6 +153,59 @@ class TestCheckSeven:
     def test_single_column_has_no_collinearity(self) -> None:
         design = pd.DataFrame({"a": [1.0, 2.0, 3.0]})
         assert compute_vif(design).max_vif == pytest.approx(1.0)
+
+    def test_message_says_which_design_it_measured(self) -> None:
+        """The A3 bug: a failure against candidates read as a failure of the result."""
+        rng = np.random.default_rng(3)
+        base = rng.normal(size=400)
+        design = pd.DataFrame(
+            {"a": base, "b": base + rng.normal(scale=0.01, size=400)}
+        )
+        vif = compute_vif(design)
+
+        assert "candidate factors" in check_vif(vif).message
+        assert "fitted model" in check_vif(vif, fitted=True).message
+
+    def test_the_fitted_check_supersedes_the_candidate_one(self) -> None:
+        """Only one check 7 ships, and it is the one describing what was fitted."""
+        candidate = CheckResult(
+            number=7,
+            name="Collinearity (VIF)",
+            status=CheckStatus.FAILED,
+            failure_type=FailureType.SOFT,
+            message="candidate factors are collinear",
+        )
+        fitted = CheckResult(
+            number=7,
+            name="Collinearity (VIF)",
+            status=CheckStatus.PASSED,
+            failure_type=FailureType.SOFT,
+            message="fitted model is clean",
+        )
+        other = CheckResult(
+            number=8,
+            name="Variance-to-mean",
+            status=CheckStatus.PASSED,
+            failure_type=FailureType.INFO,
+            message="fine",
+        )
+
+        shipped = _shipped_checks([other, candidate], [fitted])
+
+        assert [c.number for c in shipped] == [8, 7]
+        assert shipped[1] is fitted
+
+    def test_the_candidate_check_stands_when_nothing_was_fitted(self) -> None:
+        """Mode B scores every available factor, so its check 7 is the right one."""
+        candidate = CheckResult(
+            number=7,
+            name="Collinearity (VIF)",
+            status=CheckStatus.FAILED,
+            failure_type=FailureType.SOFT,
+            message="candidate factors are collinear",
+        )
+
+        assert _shipped_checks([candidate], []) == [candidate]
 
 
 class TestCheckEight:

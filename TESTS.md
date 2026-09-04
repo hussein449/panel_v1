@@ -1,9 +1,9 @@
 # Corridors tested
 
 Every real corridor this tool has been run against, what came back, and what it meant.
-Kept because the failures taught more than the successes: three of the four runs below
-produced a bug fix, and the fourth produced the first Mode A assessment in the project's
-history.
+Kept because the failures taught more than the successes: most of the runs below produced
+a bug fix, one produced the first Mode A assessment in the project's history, and the
+latest produced the first A-full fit.
 
 Synthetic corridors — `roadrisk demo`, the API's demo job — are not recorded here. They
 test the machinery. These test the product.
@@ -15,6 +15,177 @@ test the machinery. These test the product.
 | 3 | F929, Cyprus | 2026-08-30 | B | none | Confirmed the length and context fixes |
 | 4 | **A6 Derby–Buxton, England** | **2026-08-31** | **A** | 284 real | **First fitted model** — curvature significant |
 | 5 | **A82 Lomond–Glen Coe, Scotland** | **2026-08-31** | **A** | 162 real | **Same method, opposite answer** |
+| 6 | **A3 Paris, France** | **2026-09-04** | **A** | 1,403 real | **First A-full run; first French road** |
+
+---
+
+## 6 · A3, Paris — the first corridor with enough crashes to fill the model
+
+**18.69 km · 37 segments · 72 months (2019-01 … 2024-12) · 2,664 panel rows
+· 1,403 crashes supplied, 1,231 placed · Mode A, A-full**
+
+Porte de Bagnolet north-east to the A1 junction at Le Blanc-Mesnil. Crashes from the
+French BAAC files on data.gouv.fr (Licence Ouverte), filtered to `catr = 1` (autoroute)
+and road number 3 inside the corridor's bounding box.
+
+The road was asked for as **`A3`**. OSM spells it **`A 3`**. This is the run that proves
+the ref-spacing fix (`4220fb3`) works: the corridor came back whole, 287 points, not
+self-intersecting, no warnings, 18.69 km traced against a 16.09 km straight line
+(sinuosity 1.16 — right for a motorway bending around the Paris suburbs).
+
+### Why this run matters
+
+Every previous corridor sat on a lower rung. This is the first to clear **700 crashes**
+and reach **A-full**, and the density is not close: **33.3 crashes per segment**, against
+the A6's 1.56 and the A82's 0.53. At that density the model is being asked a question it
+can actually answer.
+
+```
+Negative binomial (NB2), unit-clustered SEs, 37 clusters
+converged · alpha 0.216 · Pearson dispersion 1.06 · AIC 4660.6 · BIC 4713.6
+```
+
+Pearson dispersion of 1.06 means the negative binomial is absorbing the overdispersion
+almost exactly — a well-specified count model, not a strained one.
+
+### What came out
+
+| Factor | Estimate | p | 95% CI | Read |
+|---|---|---|---|---|
+| `access_density` | **+0.440** | **2.8 × 10⁻⁸** | +0.285 … +0.595 | Real, right sign |
+| `lanes` | **+1.387** | **1.1 × 10⁻⁴** | +0.686 … +2.089 | Real, but see below |
+| `speed_limit` | +0.479 | 0.35 | −0.530 … +1.489 | Nothing |
+| `grade_pct` | +0.341 | 0.24 | −0.226 … +0.908 | Nothing |
+| `poi_density` | +0.019 | 0.64 | −0.062 … +0.100 | Nothing |
+| `curve_density` | −0.034 | 0.71 | −0.211 … +0.143 | Wrong sign, noise |
+| `junction_density` | −0.003 | 0.95 | −0.098 … +0.092 | Wrong sign, noise |
+
+**`access_density` is the finding.** More slip roads and accesses per kilometre, more
+crashes — the merge-and-weave effect an urban motorway is expected to show, at
+p = 2.8 × 10⁻⁸ and with the sign the literature predicts.
+
+**`lanes` should not be read as a cause.** The transform is `ln`, so 1.387 says crashes
+scale as roughly `lanes^1.4`. But `traffic_proxy` had no column on this run, so exposure
+is length × duration alone — the model cannot separate *busy* from *long*, and `lanes` is
+the only term in the specification that tracks how much traffic a section carries. It is
+almost certainly standing in for volume. Widening a motorway does not multiply its crashes
+by 2.6, and this run does not claim it does.
+
+**The sign guard did its job.** `junction_density` and `curve_density` both fitted
+negative against a declared `+`. Both are far from significant, and the guard refused to
+interpret either — it reported the univariate estimate (`junction_density` is **+0.163**
+on its own, the expected direction), the correlation with `access_density` (r = 0.45),
+and a leave-one-out refit that flipped sign 8 times in 25. That is the correct behaviour:
+the contradiction is confounding with `access_density`, not a discovery.
+
+### Where it is weak
+
+**Validation did not pass.** Two of the three parts were fine:
+
+| Scheme | Observed | Predicted | Ratio |
+|---|---|---|---|
+| Random units | 1,231 | 1,209 | **1.018** |
+| Contiguous stretches | 1,231 | 1,085 | 1.135 |
+
+Random-fold calibration at 1.8% is genuinely good. Contiguous stretches under-predict by
+13.5%, still inside the ±20% the HSM treats as ordinary — held-out *stretches* are harder
+than held-out *segments*, which is the point of running both.
+
+**The CURE test is what failed**, on three factors — `junction_density` (41% of the range
+outside bounds), `poi_density` (41%) and `access_density` (38%) — and all three drift
+*worst around 0.00*. That is one problem wearing three hats: **28 of the 37 segments have
+zero junctions**, so these are not really density variables on this corridor, they are
+near-binary presence flags forced through a continuous term. The model is systematically
+wrong on the segments that have none. The fix is a presence flag or longer units, not more
+data.
+
+### Two defects this run exposed — both fixed
+
+**1 · Check 7 failed against a model that was never fitted.** The first run reported:
+
+```
+[failed] Collinearity (VIF) — 1 term(s) exceed VIF 5 — speed_limit = 5.4
+```
+
+That VIF was computed on the **12 available factors**, before the ladder runs.
+`MODE_A_RUNGS` caps A-full at **7 factors** (`ladder.py:66`), so the shipped design had
+seven, and `_resolve_collinearity` shed nothing from it — meaning the model actually
+fitted had max VIF **below** 5. A client reads a failed collinearity check and concludes
+their results are unusable. They were not. The gate was honest about a design the engine
+had discarded, and a report that says a result failed a check it passed is worse than one
+that says nothing.
+
+*Fixed:* `check_vif` now takes `fitted=` and says which design it measured; the ladder
+runs it again on the subset it is about to fit; and `_shipped_checks` lets that result
+supersede the candidate one, so exactly one check 7 reaches the report. Mode B keeps the
+candidate check, because Mode B scores every available factor and there is no other
+design to describe. Re-run on the same corridor:
+
+```
+[passed] No collinearity above threshold across the fitted model; highest VIF is 1.8
+```
+
+**2 · The default crash mix was for the wrong kind of road, and was cited on a run that
+never used it.** Context was declared `facility_type: motorway`, and the fallback split
+of crashes by type is *HSM Table 10-4, rural two-lane two-way* — a distribution claiming
+two thirds of crashes are run-off or head-on, on a road built with no oncoming traffic to
+run into. Worse, the caveat about it was printed on a **Mode A** run. The split is only
+consulted by the weighted index; a fitted model never touches it. The report was
+apologising for an assumption the run had not made.
+
+*Fixed:* `CrashMix` now records the facility it was **measured on**, `RunContext` exposes
+`crash_mix_facility_mismatch`, and the limitation is emitted only when an index exists —
+as a **material** finding naming both road types when they disagree, and as the old
+caveat when they do not. No number was invented: the engine now says the split does not
+fit, rather than quietly substituting one that does not exist.
+
+### One thing this run did right without being asked
+
+A later re-run hit an **Overpass outage on every mirror** and came back with 4 factors
+instead of 12. It did not hide it:
+
+```
+osm_tags: resolved=[]
+  "The OSM attribute fetch failed, so every OSM-derived factor is absent from
+   this panel: every Overpass mirror failed — TimeoutError; HTTPError; ..."
+```
+
+Worth recording because the failure mode is silent-looking from the outside — the run
+succeeds, the model converges, and only the adapter note says the road was never
+measured.
+
+### Also worth noting
+
+`curve_radius_min` — the A6's headline result — **never entered the specification.** It
+was available, but the 7-factor cap on A-full dropped it by keep-order. So this run says
+nothing about whether bend severity matters on the A3; the model was not allowed to ask.
+
+### Ranking
+
+Segments are ranked on expected crashes per unit of exposure. Four blackspots in the worst
+20%, and the top one is contiguous and large:
+
+| Blackspot | Chainage | Length | Observed | Expected |
+|---|---|---|---|---|
+| **1** | 11,000 – 13,000 m | 2.0 km | **266** | 237 |
+| 2 | 17,500 – 18,694 m | 1.19 km | 121 | 117 |
+| 3 | 15,000 – 15,500 m | 0.5 km | 32 | 45 |
+| 4 | 4,500 – 5,000 m | 0.5 km | 38 | 44 |
+
+Blackspot 1 is four consecutive segments carrying **266 of the corridor's 1,231 crashes
+in 11% of its length**. That is the kind of output the product exists to produce.
+
+### Interpretation
+
+**The results make sense and the retrieved data is sound.** 88.2% of nearby crashes
+placed on the corridor, 7 rejected as belonging to another road, geometry clean, the
+count family chosen correctly, one strong result with the right sign, one result honestly
+marked as a probable exposure proxy, and five factors correctly reported as finding
+nothing. The weaknesses are named in the report rather than hidden by it.
+
+**Score: 8/10 as it ran; 9/10 after the two fixes above.** What remains is the CURE
+drift, and `traffic_proxy` being absent — which is the single change that would most
+improve this corridor, because it is what `lanes` is currently standing in for.
 
 ---
 

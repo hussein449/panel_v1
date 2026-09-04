@@ -676,6 +676,7 @@ export interface RunContext {
   declared: boolean;
   crash_mix: CrashMix;
   crash_mix_is_default: boolean;
+  crash_mix_facility_mismatch: boolean;
   segment_length_km: number | null;
   reference_aadt: number | null;
 }

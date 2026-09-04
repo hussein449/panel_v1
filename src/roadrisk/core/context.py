@@ -58,6 +58,18 @@ class RunContext:
     def uses_default_crash_mix(self) -> bool:
         return self.crash_mix is DEFAULT_CRASH_MIX
 
+    @property
+    def crash_mix_facility_mismatch(self) -> bool:
+        """True when the crash split describes a different kind of road than this one.
+
+        The default split is measured on rural two-lane highways. Applied to a motorway
+        it claims two thirds of crashes are run-off or head-on, on a road built with no
+        oncoming traffic to run into — a mismatch large enough to move a Mode B score,
+        and one that used to be invisible because the split was reported without ever
+        saying what it had been measured on.
+        """
+        return not self.crash_mix.describes(self.facility_type)
+
     def measured_from(self, panel: pd.DataFrame) -> RunContext:
         """Fill the measurable fields from the panel, leaving declarations alone."""
         if LENGTH_COLUMN not in panel.columns:

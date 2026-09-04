@@ -281,6 +281,56 @@ class TestTheStandingCaveats:
         assert "panel_supplied" not in found
 
 
+class TestTheCrashMixCaveat:
+    """The A3 bug: a fitted run apologised for an assumption it never made.
+
+    The crash split is only consulted by the weighted index. A Mode A run has no index,
+    so a caveat about the split describes nothing that happened.
+    """
+
+    def test_a_run_without_an_index_says_nothing_about_the_split(self) -> None:
+        assessment = {
+            "index": None,
+            "context": {"crash_mix_is_default": True, "facility_type": "motorway"},
+        }
+
+        found = codes(collect_limitations(assessment, None))
+
+        assert "default_crash_mix" not in found
+        assert "crash_mix_facility_mismatch" not in found
+
+    def test_a_run_that_used_the_split_still_carries_the_caveat(self) -> None:
+        assessment = {
+            "index": {"terms": []},
+            "context": {
+                "crash_mix_is_default": True,
+                "crash_mix_facility_mismatch": False,
+                "facility_type": "rural_two_lane",
+            },
+        }
+
+        assert "default_crash_mix" in codes(collect_limitations(assessment, None))
+
+    def test_a_mismatched_split_is_material_and_names_the_road(self) -> None:
+        assessment = {
+            "index": {"terms": []},
+            "context": {
+                "crash_mix_is_default": True,
+                "crash_mix_facility_mismatch": True,
+                "facility_type": "motorway",
+            },
+        }
+        found = collect_limitations(assessment, None)
+
+        mismatch = next(
+            item for item in found if item.code == "crash_mix_facility_mismatch"
+        )
+        assert mismatch.severity == MATERIAL
+        assert "motorway" in mismatch.detail
+        # The weaker caveat is superseded, not printed alongside it.
+        assert "default_crash_mix" not in codes(found)
+
+
 class TestItReachesTheReport:
     def test_the_limitations_travel_in_the_rendered_report(
         self, corridor_run: dict

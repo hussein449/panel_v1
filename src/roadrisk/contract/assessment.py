@@ -42,6 +42,9 @@ class RunContext(Payload):
     declared: bool
     crash_mix: CrashMix
     crash_mix_is_default: bool
+    #: True when the split was measured on a different kind of road than this one — a
+    #: rural two-lane distribution standing in for a motorway, say.
+    crash_mix_facility_mismatch: bool
     segment_length_km: float | None
     reference_aadt: float | None
 

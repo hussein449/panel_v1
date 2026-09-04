@@ -21,6 +21,7 @@ from roadrisk.core.models.index import score_index
 from roadrisk.core.registry import (
     Adapter,
     CrashScope,
+    FacilityType,
     Factor,
     Licence,
     Sign,
@@ -243,3 +244,39 @@ class TestReporting:
         uniform = assess(crash_only_panel, context=RunContext(crash_mix=uniform_mix()))
 
         assert default.manifest.fingerprint != uniform.manifest.fingerprint
+
+
+class TestTheMixKnowsWhichRoadItCameFrom:
+    """The A3 bug: a rural two-lane split applied, silently, to a Paris motorway."""
+
+    def test_the_default_declares_the_facility_it_was_measured_on(self) -> None:
+        assert DEFAULT_CRASH_MIX.facility_type is FacilityType.RURAL_TWO_LANE
+
+    def test_a_split_describes_the_road_it_was_measured_on(self) -> None:
+        assert DEFAULT_CRASH_MIX.describes(FacilityType.RURAL_TWO_LANE)
+
+    def test_a_split_does_not_describe_a_different_road(self) -> None:
+        assert not DEFAULT_CRASH_MIX.describes(FacilityType.MOTORWAY)
+
+    def test_an_unrestricted_split_describes_anything(self) -> None:
+        assert uniform_mix().describes(FacilityType.MOTORWAY)
+
+    def test_an_undeclared_corridor_has_no_mismatch_to_report(self) -> None:
+        """Nothing was claimed, so nothing is contradicted."""
+        assert DEFAULT_CRASH_MIX.describes(FacilityType.ANY)
+
+    def test_context_reports_the_mismatch(self) -> None:
+        motorway = RunContext(facility_type=FacilityType.MOTORWAY)
+        rural = RunContext(facility_type=FacilityType.RURAL_TWO_LANE)
+
+        assert motorway.crash_mix_facility_mismatch
+        assert not rural.crash_mix_facility_mismatch
+
+    def test_the_mismatch_reaches_the_payload(
+        self, crash_only_panel: pd.DataFrame
+    ) -> None:
+        payload = assess(
+            crash_only_panel, context=RunContext(facility_type=FacilityType.MOTORWAY)
+        ).as_dict()
+
+        assert payload["context"]["crash_mix_facility_mismatch"] is True

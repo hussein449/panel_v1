@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from roadrisk.core.errors import RoadRiskError
-from roadrisk.core.registry.schema import CrashScope
+from roadrisk.core.registry.schema import CrashScope, FacilityType
 
 #: The crash types a score is decomposed into. ``TOTAL`` is deliberately absent — it is
 #: a marker meaning "applies to every type", not a type of its own.
@@ -36,10 +36,21 @@ _TOLERANCE = 1e-6
 
 @dataclass(frozen=True)
 class CrashMix:
-    """The share of crashes falling into each crash type, and where it came from."""
+    """The share of crashes falling into each crash type, and where it came from.
+
+    ``facility_type`` is the road type the distribution was *measured on*, which is not
+    the same question as which road it is being *applied to*. A split measured on rural
+    two-lane highways says run-off and head-on crashes are two thirds of the total; on a
+    grade-separated motorway with no oncoming traffic that is simply not true. Recording
+    the facility here is what lets :class:`~roadrisk.core.context.RunContext` notice the
+    mismatch and the report say so, instead of the borrowed figure passing silently.
+    """
 
     shares: dict[CrashScope, float]
     source: str
+    #: ``ANY`` means the split is not restricted to one kind of road — which is a claim
+    #: about the source, not a licence to use it anywhere.
+    facility_type: FacilityType = FacilityType.ANY
 
     def __post_init__(self) -> None:
         missing = [b for b in BUCKETS if b not in self.shares]
@@ -70,6 +81,19 @@ class CrashMix:
 
     def share(self, bucket: CrashScope) -> float:
         return self.shares[bucket]
+
+    def describes(self, facility: FacilityType) -> bool:
+        """Whether this split can speak for ``facility`` without a caveat.
+
+        An unrestricted split describes anything. A split measured on one facility
+        describes that facility and nothing else — and when the caller declared nothing
+        (``ANY``), there is no mismatch to report because there is no claim to contradict.
+        """
+        return (
+            self.facility_type is FacilityType.ANY
+            or facility is FacilityType.ANY
+            or facility is self.facility_type
+        )
 
     def describe(self) -> str:
         return " · ".join(
@@ -119,6 +143,7 @@ HSM_RURAL_TWO_LANE_INJURY = CrashMix(
         "opposite-direction sideswipe; intersection uses angle collisions; pedestrian "
         "aggregates pedestrian and bicycle collisions."
     ),
+    facility_type=FacilityType.RURAL_TWO_LANE,
 )
 
 #: Used when the caller declares nothing. Carries the same regional transfer problem as
