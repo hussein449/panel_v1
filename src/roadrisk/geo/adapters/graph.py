@@ -140,9 +140,23 @@ DEFAULT_SOURCE_SAMPLE = 128
 #: Fixed so two identical runs fingerprint identically. The manifest depends on it.
 SOURCE_SEED = 20260810
 
-#: Refuse to build a graph larger than this. Reaching it means the margin is too wide
-#: for the area, not that the corridor is unusual.
+#: Refuse to build a graph larger than this, counted in **contracted junctions** — the
+#: quantity a Dijkstra actually costs. Reaching it means the margin is too wide for the
+#: area, not that the corridor is unusual.
+#:
+#: **This used to be checked against raw OSM vertices, which is ten to twenty times
+#: larger and is not what betweenness runs on.** Measured on the A3 through Paris at
+#: the default window: 674,358 vertices, 37,935 contracted nodes, betweenness in 25
+#: seconds. The guard refused a graph comfortably inside its own budget, and it refused
+#: it hardest in exactly the places a traffic proxy is most worth having — dense urban
+#: networks, where the whole question is which road carries the through traffic.
 MAX_GRAPH_NODES = 60_000
+
+#: Ceiling on raw OSM vertices, which bounds the contraction itself rather than the
+#: Dijkstras that follow it. Contraction is linear and cheap; this exists so that a
+#: pathological box cannot exhaust memory before :data:`MAX_GRAPH_NODES` is even
+#: measurable. Paris at the widest window uses about a tenth of it.
+MAX_GRAPH_VERTICES = 6_000_000
 
 #: Correlation with a symmetric parabola centred on the corridor above which the proxy
 #: is reported as suspect, and above which it is withheld entirely.
@@ -235,11 +249,13 @@ def fetch_network(
     margin_m: float = DEFAULT_NETWORK_MARGIN_M,
     grid_deg: float = NETWORK_GRID_DEG,
     max_nodes: int = MAX_GRAPH_NODES,
+    max_vertices: int = MAX_GRAPH_VERTICES,
 ) -> RoadGraph:
     """Fetch the surrounding strategic network and contract it to a routable graph.
 
     Raises:
-        CorridorError: Overpass failed, or the region is larger than ``max_nodes``.
+        CorridorError: Overpass failed, the region holds more than ``max_vertices`` raw
+            vertices to contract, or it contracts to more than ``max_nodes`` junctions.
     """
     active = client if client is not None else HttpOverpassClient(timeout_s=180.0)
     payload = active(
@@ -254,7 +270,7 @@ def fetch_network(
         (e for e in elements if e.get("type") == "way" and len(e.get("geometry", [])) >= 2),
         key=lambda way: int(way.get("id", 0)),
     )
-    return _contract(ways, corridor, margin_m, max_nodes)
+    return _contract(ways, corridor, margin_m, max_nodes, max_vertices)
 
 
 def edge_betweenness(
@@ -438,6 +454,7 @@ def _contract(
     corridor: Corridor,
     margin_m: float,
     max_nodes: int,
+    max_vertices: int = MAX_GRAPH_VERTICES,
 ) -> RoadGraph:
     """Turn raw ways into a graph whose nodes are junctions and ends, not vertices.
 
@@ -491,11 +508,14 @@ def _contract(
             adjacency_v[current].append((previous, segment))
             previous = current
 
-        if len(points) > max_nodes:
+        # Bounds the contraction, not the Dijkstras. The graph-size refusal is below,
+        # once the vertices have been collapsed into the junctions it is about.
+        if len(points) > max_vertices:
             raise CorridorError(
-                f"the strategic network within {margin_m / 1000:.0f} km of this corridor "
-                f"exceeds {max_nodes:,} vertices. Reduce the margin — the traffic proxy "
-                "needs a region wide enough to route through, not the whole country."
+                f"the strategic network within {margin_m / 1000:.0f} km of this "
+                f"corridor holds more than {max_vertices:,} raw vertices, which is too "
+                "much to contract. Reduce the margin — the traffic proxy needs a region "
+                "wide enough to route through, not the whole country."
             )
 
     junction = [len(adjacency_v[v]) != 2 for v in range(len(points))]
@@ -563,6 +583,17 @@ def _contract(
         if not consumed[segment]:
             junction[u] = True
             walk(u, v, segment)
+
+    # The refusal that matters, on the quantity that costs: one Dijkstra per sampled
+    # source over the contracted graph. Raw vertices are ten to twenty times more
+    # numerous and were what this used to be measured against.
+    if len(node_points) > max_nodes:
+        raise CorridorError(
+            f"the strategic network within {margin_m / 1000:.0f} km of this corridor "
+            f"contracts to {len(node_points):,} junctions, above the {max_nodes:,} this "
+            "proxy will route over. Reduce the margin — the traffic proxy needs a "
+            "region wide enough to route through, not the whole country."
+        )
 
     adjacency: list[list[tuple[int, int]]] = [[] for _ in node_points]
     for index, edge in enumerate(edges):
@@ -693,6 +724,7 @@ __all__ = [
     "DEFAULT_NETWORK_MARGIN_M",
     "DEFAULT_SOURCE_SAMPLE",
     "MAX_GRAPH_NODES",
+    "MAX_GRAPH_VERTICES",
     "NETWORK_GRID_DEG",
     "SLOTS",
     "SOURCE_SEED",

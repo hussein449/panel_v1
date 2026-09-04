@@ -139,6 +139,105 @@ as a **material** finding naming both road types when they disagree, and as the 
 caveat when they do not. No number was invented: the engine now says the split does not
 fit, rather than quietly substituting one that does not exist.
 
+### The traffic proxy, and the guard that was counting the wrong thing
+
+`traffic_proxy` was never missing. `geo/adapters/graph.py` is complete, `"traffic"` is a
+valid adapter over the API, and it is a checkbox on the page. Turning it on produced:
+
+```
+the strategic network within 20 km of this corridor exceeds 60,000 vertices
+```
+
+**`MAX_GRAPH_NODES` is documented as a ceiling on the graph, and was checked against raw
+OSM vertices.** The same module says OSM carries "ten to fifteen vertices per junction",
+and betweenness runs on junctions. Measured on this corridor:
+
+| Window | Raw vertices | Contracted junctions | Betweenness |
+|---|---|---|---|
+| 5 km margin, 0.1° grid | 141,260 | 8,689 | 5 s |
+| 10 km, 0.2° | 372,907 | 23,057 | 14 s |
+| **20 km, 0.5° — the default it refused** | **674,358** | **37,935** | **25 s** |
+
+An 18× overcount, and it bit hardest on dense urban networks — which is exactly where
+"which road carries the through traffic" is the question worth asking.
+
+*Fixed:* the refusal now runs on contracted junctions, after contraction. A separate
+`MAX_GRAPH_VERTICES` bounds the contraction itself. The A3 then resolved on the first
+try: 93,734 strategic ways contracted to 38,061 junctions and 58,252 links.
+
+### What the traffic proxy changed
+
+| | without | with |
+|---|---|---|
+| AIC / BIC | 4660.6 / 4713.6 | **4636.8 / 4689.8** |
+| alpha · Pearson dispersion | 0.2157 · 1.0585 | **0.1988 · 1.0411** |
+| `traffic_proxy` | — | **+10.193, p = 0.0083** |
+| `lanes` | +1.3874, p = 1.1e-4 | **+0.9135**, p = 0.027 |
+| `grade_pct` | +0.3406, p = 0.24 | **+0.5940, p = 0.029** |
+| `speed_limit` | +0.4791 | −0.3119 |
+| `access_density` | +0.4400 | +0.3256, p = 1.1e-4 |
+| `poi_density` | +0.0193, p = 0.64 | dropped by keep-order |
+| blackspot 1 expected vs 266 observed | 237.3 | **272.1** |
+
+**`lanes` fell by a third**, which is the confirmation that it had been standing in for
+volume: `traffic_proxy` carries `drop_priority: 100`, enters first, and takes back the
+exposure signal `lanes` was holding. `grade_pct` became significant only once volume was
+controlled for. Both are the textbook consequence of adding an omitted exposure term.
+
+**The coefficient looks alarming and is not.** Betweenness is a share bounded well below
+one — this corridor spans 0.0007 to 0.065 — so `ln1p` barely compresses it and the
+coefficient is large because the variable is small. End to end the linear predictor moves
+0.634, which is **1.9× expected crashes** between the least and most central segment.
+
+**It is not free.** Two costs, both reported by the run rather than found afterwards:
+
+- `low_confidence_factors` — *"On more than half the corridor, traffic_proxy was filled
+  in from a neighbouring value rather than resolved for that segment."* Tier B, inferred,
+  and interpolated on most segments.
+- Held-out **contiguous stretches got worse**: ratio 1.135 → 0.822, MAD 0.575 → 0.667,
+  optimism 0.010 → 0.108. A factor that varies smoothly along the corridor is exactly the
+  one that cannot be recovered when a contiguous stretch is held out. Random-unit folds
+  stayed calibrated (1.018 → 1.054).
+
+Worth having. Not worth pretending it is a measurement.
+
+### Why validation fails, and why one factor fits backwards
+
+Both are the same fact, and it is not a bug. Per-unit values, in corridor order:
+
+| Factor | Zero on | Distinct | r with crashes | CURE |
+|---|---|---|---|---|
+| `junction_density` | **28 / 37 (76%)** | 5 | +0.191 | **drifts** |
+| `access_density` | **28 / 37 (76%)** | 6 | +0.490 | **drifts** |
+| `poi_density` | **31 / 37 (84%)** | 7 | +0.047 | **drifts** |
+| `curve_density` | 10 / 37 (27%) | 6 | +0.273 | ok |
+| `lanes` · `grade_pct` · `speed_limit` | 0 | 24 – 37 | +0.40 · +0.32 · −0.34 | ok |
+
+**Correlation between zero share and CURE share-outside: +0.912.** The factors that drift
+are the factors that are mostly zero, and nothing else drifts.
+
+The data is right — the A3 is grade separated, so it genuinely has interchanges at nine
+segments and none between them. The *specification* is wrong: `ln1p(density)` is a smooth
+curve fitted to a spike at zero plus nine points. `junction_density` is estimated from
+nine informative segments against a stronger, correlated neighbour, and leave-one-out
+flips its sign 8 times in 25. It is not contradicting the literature. It is unidentified.
+
+**Three fixes, in order of value:**
+
+1. **Screen for variation before the factor cap.** A-full keeps the 7 highest
+   `drop_priority`, never looking at the corridor. On the A3 that spent a slot on
+   `poi_density` (84% zeros, r = +0.047) while dropping `landuse_urban` (0% zeros,
+   **r = +0.458**, the second-strongest predictor in the whole set). Enabling
+   `traffic_proxy` fixed this by accident; a variation screen would fix it on purpose.
+2. **Enter near-binary densities as presence flags.** Above roughly 60% zeros,
+   `ln1p(count/km)` is a spike-and-slab. `has_junction` is the honest term, and would end
+   the CURE drift.
+3. **Prefer `ramp_density` on a motorway.** Nonzero on 30 of 37 segments against
+   `junction_density`'s 9. A motorway has interchanges, not junctions.
+
+None of these are defects. They are specification choices the engine currently makes in
+advance instead of from the corridor in front of it.
+
 ### One thing this run did right without being asked
 
 A later re-run hit an **Overpass outage on every mirror** and came back with 4 factors

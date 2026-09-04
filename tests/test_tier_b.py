@@ -180,6 +180,53 @@ class TestContraction:
         assert graph.n_nodes == 2
         assert graph.n_edges == 1
 
+    def test_the_size_refusal_counts_junctions_not_raw_vertices(
+        self, corridor: Corridor
+    ) -> None:
+        """The A3 bug: Paris was refused on 674,358 vertices worth 37,935 junctions.
+
+        A straight way of sixty vertices contracts to two nodes, so a ceiling of two
+        must accept it. The quantity a Dijkstra costs is junctions, and measuring the
+        refusal against vertices rejected the dense urban corridors this proxy is most
+        worth having on.
+        """
+        graph = fetch_network(
+            corridor,
+            client=client_returning(way(straight(0, 3000))),
+            margin_m=5000.0,
+            max_nodes=2,
+        )
+
+        assert graph.n_nodes == 2
+
+    def test_a_graph_of_too_many_junctions_is_still_refused(
+        self, corridor: Corridor
+    ) -> None:
+        """The ceiling still exists; it is only measured on the right thing now."""
+        crossings = [
+            way([at(float(x), -400.0), at(float(x), 400.0)], highway="secondary")
+            for x in range(200, 2800, 200)
+        ]
+        with pytest.raises(CorridorError, match="contracts to"):
+            fetch_network(
+                corridor,
+                client=client_returning(way(straight(0, 3000)), *crossings),
+                margin_m=5000.0,
+                max_nodes=4,
+            )
+
+    def test_a_region_too_large_to_contract_is_refused_on_vertices(
+        self, corridor: Corridor
+    ) -> None:
+        """The vertex ceiling survives, bounding contraction rather than the fit."""
+        with pytest.raises(CorridorError, match="raw vertices"):
+            fetch_network(
+                corridor,
+                client=client_returning(way(straight(0, 3000))),
+                margin_m=5000.0,
+                max_vertices=10,
+            )
+
     def test_a_t_junction_splits_the_through_road(self, corridor: Corridor) -> None:
         graph = fetch_network(
             corridor,
