@@ -279,6 +279,8 @@ export interface CrashMix {
 export interface Cure {
   factor: string;
   share_outside: number;
+  share_outside_low: number;
+  share_outside_high: number;
   drifts: boolean;
   x: number[];
   cumulative: number[];

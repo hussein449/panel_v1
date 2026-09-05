@@ -531,7 +531,12 @@ class Cure(Payload):
     """
 
     factor: str
+    #: Median over the orderings this factor's tied values permit — see
+    #: :func:`roadrisk.core.validation._cure_for` for why a tied factor has more than one.
     share_outside: float
+    #: 5th and 95th percentile of that sample; equal to ``share_outside`` when untied.
+    share_outside_low: float
+    share_outside_high: float
     drifts: bool
     x: list[float]
     cumulative: list[float]

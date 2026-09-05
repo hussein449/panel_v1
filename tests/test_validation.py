@@ -21,6 +21,7 @@ from roadrisk.core.validation import (
     CALIBRATION_TOLERANCE,
     CURE_TOLERANCE,
     MIN_UNITS,
+    CureCurve,
     validate,
 )
 from roadrisk.demo import synthetic_panel
@@ -122,6 +123,96 @@ class TestCureFindsMisspecificationAndOnlyThat:
         plot = curve.render()
         assert "cumulative residual" in plot
         assert "#" in plot, "the breach markers should appear on a drifting curve"
+
+
+class TestTiedValues:
+    """CURE sorts by the covariate, and tied values can be summed in any order.
+
+    A stable sort leaves them in the order they arrived — corridor order — so a block of
+    tied units accumulates the *spatial* correlation of the residuals and the curve
+    leaves its band for a reason that has nothing to do with the factor being plotted.
+    On the A3 through Paris that reported 43% and 38% outside for two factors tied
+    across 28 of 37 units, and called the model mis-specified; the median over 2,000
+    equally valid tie orders was 2.7% for both.
+    """
+
+    def tied_panel(self, share: float) -> pd.DataFrame:
+        """A correctly specified panel, with `junction_density` tied across `share`."""
+        panel = synthetic_panel(n_units=80, n_periods=18, seed=7, unit_dispersion=0.5)
+        units = sorted(panel["unit_id"].unique())
+        flat = set(units[: int(len(units) * share)])
+        panel.loc[panel["unit_id"].isin(flat), "junction_density"] = 0.0
+        return panel
+
+    def curve(self, report, factor: str):
+        return next(c for c in report.cure if c.factor == factor)
+
+    def test_an_untied_factor_has_a_single_ordering(self, clean_report) -> None:
+        """No ties, no sample: the statistic is exact and the interval collapses."""
+        curve = self.curve(clean_report, "grade_pct")
+
+        assert curve.share_outside_low == curve.share_outside
+        assert curve.share_outside_high == curve.share_outside
+        assert not curve.tie_sensitive
+
+    def test_a_tied_factor_reports_the_spread_it_has(self) -> None:
+        report = _validate(self.tied_panel(0.75))
+        curve = self.curve(report, "junction_density")
+
+        assert curve.share_outside_low < curve.share_outside_high
+        assert curve.share_outside_low <= curve.share_outside <= curve.share_outside_high
+
+    def test_heavy_ties_do_not_condemn_a_correctly_specified_model(self) -> None:
+        """The A3 regression. The panel below has no defect planted in it at all."""
+        report = _validate(self.tied_panel(0.75))
+
+        assert not self.curve(report, "junction_density").drifts
+
+    def test_a_planted_defect_still_survives_the_tie_sample(self, broken_report) -> None:
+        """Averaging over orderings must not blunt the diagnostic into uselessness."""
+        assert self.curve(broken_report, "curve_density").drifts
+
+    def test_the_same_panel_gives_the_same_answer_twice(self) -> None:
+        """The seed is fixed because a run's manifest fingerprints its results."""
+        panel = self.tied_panel(0.75)
+        first = self.curve(_validate(panel.copy()), "junction_density")
+        second = self.curve(_validate(panel.copy()), "junction_density")
+
+        assert first.share_outside == second.share_outside
+        assert first.share_outside_high == second.share_outside_high
+
+    def test_a_straddling_interval_is_called_out(self) -> None:
+        curve = CureCurve(
+            factor="speed_limit",
+            x=(0.0, 1.0),
+            cumulative=(0.0, 0.0),
+            bound=(1.0, 1.0),
+            share_outside=0.08,
+            share_outside_low=0.05,
+            share_outside_high=CURE_TOLERANCE + 0.02,
+        )
+        assert curve.tie_sensitive
+
+    def test_the_spread_reaches_the_description(self) -> None:
+        curve = CureCurve(
+            factor="junction_density",
+            x=(0.0, 1.0),
+            cumulative=(9.0, 9.0),
+            bound=(1.0, 1.0),
+            share_outside=0.5,
+            share_outside_low=0.1,
+            share_outside_high=0.6,
+        )
+        assert "tied values permit" in curve.describe()
+
+    def test_the_spread_reaches_the_payload(self) -> None:
+        payload = _validate(self.tied_panel(0.75)).as_dict()
+        entry = next(
+            c for c in payload["cure"] if c["factor"] == "junction_density"
+        )
+
+        assert "share_outside_low" in entry
+        assert "share_outside_high" in entry
 
 
 class TestTheDesignEffect:

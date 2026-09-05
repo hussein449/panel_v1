@@ -78,6 +78,17 @@ CALIBRATION_TOLERANCE = 0.20
 #: length outside is drift, not wandering.
 CURE_TOLERANCE = 0.20
 
+#: Orderings sampled when a factor has tied values, and the seed that fixes them.
+#:
+#: CURE sorts by the covariate, and observations tied at one value can be summed in any
+#: order — so the statistic is a distribution rather than a number, and the ordering a
+#: stable sort happens to leave behind is one draw from it. Two hundred is enough to
+#: settle a median on the unit counts this runs at; the seed is fixed because a run's
+#: manifest fingerprints its results and a diagnostic that moves between identical runs
+#: is worse than one that is occasionally wrong.
+CURE_TIE_RESAMPLES = 200
+CURE_TIE_SEED = 20260904
+
 #: Points the CURE curve is reported on. Enough to see a drift, few enough to print.
 CURE_POINTS = 41
 
@@ -148,7 +159,17 @@ class CureCurve:
     x: tuple[float, ...]
     cumulative: tuple[float, ...]
     bound: tuple[float, ...]
+    #: Median share outside the band over the orderings this factor's ties permit.
     share_outside: float
+    #: 5th and 95th percentile of that same sample. Equal to ``share_outside`` when the
+    #: factor has no tied values and therefore only one ordering.
+    share_outside_low: float = 0.0
+    share_outside_high: float = 0.0
+
+    @property
+    def tie_sensitive(self) -> bool:
+        """Whether the verdict depends on which of the tied orderings was drawn."""
+        return self.share_outside_low <= CURE_TOLERANCE < self.share_outside_high
 
     @property
     def drifts(self) -> bool:
@@ -172,11 +193,24 @@ class CureCurve:
                 "systematically wrong anywhere along it."
             )
         where = f" worst around {self.worst_x:.2f}" if self.worst_x is not None else ""
+        spread = (
+            ""
+            if self.share_outside_high <= self.share_outside_low
+            else (
+                f" Across the orderings this factor's tied values permit the share runs "
+                f"{self.share_outside_low:.0%} to {self.share_outside_high:.0%}"
+                + (
+                    ", which straddles the threshold — read the verdict as indicative."
+                    if self.tie_sensitive
+                    else "."
+                )
+            )
+        )
         return (
             f"{self.factor}: cumulative residuals are outside their bounds over "
             f"{self.share_outside:.0%} of the range{where}. The model is systematically "
             "wrong for segments in that band — a functional-form problem, not noise. "
-            "The rung 3 spline on this factor is the next thing to look at."
+            f"The rung 3 spline on this factor is the next thing to look at.{spread}"
         )
 
     def render(self, *, height: int = 9, indent: str = "") -> str:
@@ -267,6 +301,8 @@ class ValidationReport:
                 {
                     "factor": c.factor,
                     "share_outside": c.share_outside,
+                    "share_outside_low": c.share_outside_low,
+                    "share_outside_high": c.share_outside_high,
                     "drifts": c.drifts,
                     "x": list(c.x),
                     "cumulative": list(c.cumulative),
@@ -528,37 +564,127 @@ def _cure_curves(
         if varies_within:
             # Not a segment property, so there is nothing to aggregate over.
             per_unit = column
+            axis_values = column
             values, cumulative_variance_source = residual, variance * inflation
-            order = np.argsort(column, kind="stable")
         else:
+            axis_values = per_unit
             values = unit_residual
             cumulative_variance_source = unit_variance * inflation
-            order = np.argsort(per_unit, kind="stable")
 
-        cumulative = np.cumsum(values[order])
-        cumulative_variance = np.cumsum(cumulative_variance_source[order])
-        total = cumulative_variance[-1]
-        if total <= 0:
-            continue
-        # The two-standard-deviation band of a Brownian bridge: the cumulative residual
-        # is pinned near zero at both ends, so the band is widest in the middle.
-        bound = 2.0 * np.sqrt(
-            np.clip(cumulative_variance * (1.0 - cumulative_variance / total), 0.0, None)
+        curve = _cure_for(
+            str(name), axis_values, values, cumulative_variance_source, per_unit
         )
-        outside = float(np.mean(np.abs(cumulative) > bound))
-
-        axis = per_unit[order] if not varies_within else column[order]
-        picks = np.linspace(0, len(order) - 1, min(CURE_POINTS, len(order))).astype(int)
-        curves.append(
-            CureCurve(
-                factor=str(name),
-                x=tuple(float(v) for v in axis[picks]),
-                cumulative=tuple(float(v) for v in cumulative[picks]),
-                bound=tuple(float(v) for v in bound[picks]),
-                share_outside=outside,
-            )
-        )
+        if curve is not None:
+            curves.append(curve)
     return curves, inflation
+
+
+def _cure_once(
+    order: np.ndarray, values: np.ndarray, variance_source: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, float] | None:
+    """One ordering's cumulative residual, its band, and the share outside it."""
+    cumulative = np.cumsum(values[order])
+    cumulative_variance = np.cumsum(variance_source[order])
+    total = cumulative_variance[-1]
+    if total <= 0:
+        return None
+    # The two-standard-deviation band of a Brownian bridge: the cumulative residual is
+    # pinned near zero at both ends, so the band is widest in the middle.
+    bound = 2.0 * np.sqrt(
+        np.clip(cumulative_variance * (1.0 - cumulative_variance / total), 0.0, None)
+    )
+    return cumulative, bound, float(np.mean(np.abs(cumulative) > bound))
+
+
+def _cure_for(
+    name: str,
+    axis_values: np.ndarray,
+    values: np.ndarray,
+    variance_source: np.ndarray,
+    per_unit: np.ndarray,
+) -> CureCurve | None:
+    """The CURE curve for one factor, averaged over the orderings its ties permit.
+
+    **Ties are the whole reason this function exists.** CURE sorts by the covariate and
+    accumulates residuals, and a stable sort leaves observations tied at the same value
+    in the order they arrived — which is corridor order. Residuals along a road are
+    spatially correlated, so summing a tied block in corridor order accumulates that
+    correlation and the curve leaves its band. The factor being plotted has nothing to
+    do with it: any factor with the same tie structure produces the same excursion.
+
+    Measured on the A3 through Paris, where `junction_density` and `access_density` are
+    each tied across 28 of 37 units: corridor order reported 43% and 38% outside and
+    called both mis-specified, while the median over 2,000 equally valid tie orders was
+    2.7% for both, and fewer than 3% of orderings would have reported a drift at all.
+    Corridor order sat at the 100th percentile of the orderings — not a typical choice
+    but the worst available one, for exactly the reason above.
+
+    So the statistic under ties is a distribution, not a number, and this reports the
+    median of it over a seeded sample. A factor with no ties has one ordering, gets one
+    resample, and is unaffected. The rendered curve is the sampled ordering whose share
+    is nearest the median, so the picture a client sees matches the number beside it.
+    """
+    order = np.argsort(axis_values, kind="stable")
+    exact = _cure_once(order, values, variance_source)
+    if exact is None:
+        return None
+
+    _, tie_sizes = np.unique(axis_values, return_counts=True)
+    if int(tie_sizes.max()) <= 1:
+        cumulative, bound, outside = exact
+        return _finish(name, order, axis_values, per_unit, cumulative, bound,
+                       outside, outside, outside)
+
+    rng = np.random.default_rng(CURE_TIE_SEED)
+    draws: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]] = []
+    for _ in range(CURE_TIE_RESAMPLES):
+        shuffled = np.lexsort((rng.random(axis_values.size), axis_values))
+        drawn = _cure_once(shuffled, values, variance_source)
+        if drawn is None:  # pragma: no cover - total is order-independent
+            continue
+        cumulative, bound, outside = drawn
+        draws.append((outside, shuffled, cumulative, bound))
+
+    if not draws:  # pragma: no cover - guarded by `exact` above
+        return None
+    shares = np.array([d[0] for d in draws])
+    median = float(np.median(shares))
+    representative = min(draws, key=lambda d: abs(d[0] - median))
+    return _finish(
+        name,
+        representative[1],
+        axis_values,
+        per_unit,
+        representative[2],
+        representative[3],
+        median,
+        float(np.quantile(shares, 0.05)),
+        float(np.quantile(shares, 0.95)),
+    )
+
+
+def _finish(
+    name: str,
+    order: np.ndarray,
+    axis_values: np.ndarray,
+    per_unit: np.ndarray,
+    cumulative: np.ndarray,
+    bound: np.ndarray,
+    outside: float,
+    low: float,
+    high: float,
+) -> CureCurve:
+    axis = axis_values[order]
+    picks = np.linspace(0, len(order) - 1, min(CURE_POINTS, len(order))).astype(int)
+    return CureCurve(
+        factor=name,
+        x=tuple(float(v) for v in axis[picks]),
+        cumulative=tuple(float(v) for v in cumulative[picks]),
+        bound=tuple(float(v) for v in bound[picks]),
+        share_outside=outside,
+        share_outside_low=low,
+        share_outside_high=high,
+    )
 
 
 def _render_cure(curve: CureCurve, *, height: int, indent: str) -> str:

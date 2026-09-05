@@ -222,6 +222,8 @@ curve fitted to a spike at zero plus nine points. `junction_density` is estimate
 nine informative segments against a stronger, correlated neighbour, and leave-one-out
 flips its sign 8 times in 25. It is not contradicting the literature. It is unidentified.
 
+**And then the drift turned out not to be about the factors at all — see below.**
+
 **Three fixes, in order of value:**
 
 1. **Screen for variation before the factor cap.** *(Built — see below.)* A-full keeps
@@ -286,6 +288,83 @@ corridor's correlations.
 demoted, but `traffic_proxy` (priority 100) had already taken the seat it would have lost.
 Identical coefficients, identical AIC. Worth recording: the screen is a no-op exactly when
 something better is already doing its job.
+
+### Presence flags: built, measured, rejected
+
+Fix 2 above was to enter the near-binary densities as `has_junction` rather than
+`ln1p(count/km)`. `Transform.PRESENCE` was written and applied to `junction_density` and
+`access_density` on this panel. It is worse on every measure:
+
+| | `ln1p` | `presence` |
+|---|---|---|
+| AIC, no traffic proxy | 4658.8 | 4679.5 |
+| AIC, with traffic proxy | 4636.8 | 4660.2 |
+| CURE `junction_density` | 40.5% | 43.2% |
+| CURE `access_density` | 37.8% | 37.8% |
+| Sign contradictions | 1 | 2 |
+| `access_density` | p = 5.0e-9 | p = 1.4e-4 |
+| Spatial ratio, with traffic proxy | 0.822 | 0.630 |
+
+**The drift did not move.** Collapsing a factor from five distinct values to two is about
+as large a change of functional form as there is, and `share_outside` shifted 2.7 points
+— in the wrong direction. If the drift were a functional-form problem that would have
+fixed it. The transform was reverted rather than shipped unused.
+
+### What the drift actually was: a stable sort over tied values
+
+`_cure_curves` ordered units with `np.argsort(..., kind="stable")`. Units tied at the
+same factor value therefore keep the order they arrived in, which is **corridor order** —
+so across a tied block the cumulative residual is the residual summed *along the road*.
+Residuals along a road are spatially correlated; this corridor's measured design effect
+is 4.2. The factor being plotted contributes nothing to that excursion, and any factor
+sharing the tie structure produces the same one. `junction_density`, `access_density` and
+`poi_density` drifted at 40.5%, 37.8% and 40.5% — three different factors, one shared
+block of zeros.
+
+**Tested by permutation, on the real residuals from the shipped run.** The tie order is
+arbitrary: 28 units at one value can be summed in any of 28! orders, each as valid as
+corridor order. Over 2,000 of them:
+
+| Factor | Largest tie | Reported | Median | 5th–95th | Corridor order's percentile |
+|---|---|---|---|---|---|
+| `junction_density` | 28 / 37 | **0.432** | **0.027** | 0.027 – 0.135 | **100th** |
+| `access_density` | 28 / 37 | **0.378** | **0.027** | 0.027 – 0.136 | **100th** |
+| `curve_density` | 12 | 0.054 | 0.027 | — | 65th |
+| `lanes` | 8 | 0.054 | 0.054 | — | 49th |
+| `grade_pct` | none | 0.135 | 0.135 | exact | — |
+
+**Fewer than 3% of equally valid orderings would have reported a drift at all**, and
+corridor order was not a typical draw but the worst available one — which is what the
+mechanism predicts, since corridor order is precisely the arrangement that groups
+spatially adjacent units together. The controls hold: the untied factor is deterministic,
+and the mildly tied ones sit mid-distribution.
+
+*Fixed:* the statistic under ties is a distribution, so the engine now reports the median
+over `CURE_TIE_RESAMPLES` seeded orderings, with the 5th and 95th percentiles beside it
+and a `tie_sensitive` flag when that interval straddles the threshold. A factor with no
+ties has one ordering, takes one resample, and is unaffected — `grade_pct` returns
+0.135 either way. The rendered curve is the sampled ordering nearest the median, so the
+picture matches the number. The seed is fixed because a run's manifest fingerprints its
+results.
+
+**The A3 now passes validation**, and the fit is untouched — coefficients agree to 1e-9,
+as they must, since CURE is a post-fit diagnostic:
+
+| | before | after |
+|---|---|---|
+| `validation.passed` | **False** | **True** |
+| `junction_density` | 0.432 drifts | **0.027 ok** (0.027 – 0.135) |
+| `access_density` | 0.378 drifts | **0.027 ok** (0.027 – 0.136) |
+| `speed_limit` | 0.054 ok | 0.081 ok, **tie-sensitive** (0.054 – 0.218) |
+| `grade_pct` (untied control) | 0.135 ok | 0.135 ok |
+| `validation_failed` limitation | present | **gone** |
+
+`speed_limit` is the honesty case: its interval crosses the threshold, so the report now
+says the verdict depends on which ordering was drawn instead of picking one and asserting
+it.
+
+The planted-U-shape test still fires, which is the property that matters — a diagnostic
+averaged into never firing would be worse than the bug.
 
 ### One thing this run did right without being asked
 
