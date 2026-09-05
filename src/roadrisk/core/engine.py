@@ -56,7 +56,7 @@ from roadrisk.core.models import (
 )
 from roadrisk.core.priors import build_priors
 from roadrisk.core.ranking import Ranking, rank_mode_a, rank_mode_b
-from roadrisk.core.registry import Factor, Registry, load_registry
+from roadrisk.core.registry import FacilityType, Factor, Registry, load_registry
 from roadrisk.core.runlog import RunLog, RunManifest, build_manifest
 from roadrisk.core.signguard import (
     DEFAULT_CORRELATION_THRESHOLD,
@@ -92,6 +92,9 @@ class Assessment:
     constant_factors: list[str]
     manifest: RunManifest
     log: RunLog
+    #: Held out because they do not describe this kind of road — a motorway has no
+    #: at-grade junctions to count. Distinct from a column nobody supplied.
+    inapplicable_factors: list[Factor] = field(default_factory=list)
     fit: FitResult | None = None
     index: IndexResult | None = None
     sign_guard: SignGuardReport | None = None
@@ -197,6 +200,13 @@ class Assessment:
                     for f in self.missing_factors
                 ],
                 "constant": self.constant_factors,
+                "not_applicable_here": [
+                    {
+                        "name": f.name,
+                        "reason": f.not_applicable_reason.strip(),
+                    }
+                    for f in self.inapplicable_factors
+                ],
                 "dropped_for_collinearity": self.ladder.dropped_for_collinearity,
                 "demoted_for_no_variation": self.ladder.demoted_for_no_variation,
                 "in_model": self.factor_names,
@@ -351,8 +361,8 @@ def assess(
         },
     )
 
-    available, missing, constant, design = _resolve_factors(
-        prepared, active_registry, log
+    available, missing, constant, inapplicable, design = _resolve_factors(
+        prepared, active_registry, log, active_context.facility_type
     )
 
     counts = prepared[CRASH_COLUMN]
@@ -399,6 +409,7 @@ def assess(
         "available_factors": available,
         "missing_factors": missing,
         "constant_factors": constant,
+        "inapplicable_factors": inapplicable,
         "manifest": manifest,
         "log": log,
     }
@@ -849,10 +860,27 @@ def _resolve_factors(
     prepared: pd.DataFrame,
     registry: Registry,
     log: RunLog,
-) -> tuple[list[Factor], list[Factor], list[str], pd.DataFrame]:
+    facility_type: FacilityType = FacilityType.ANY,
+) -> tuple[list[Factor], list[Factor], list[str], list[Factor], pd.DataFrame]:
     """Work out which registry factors this panel can actually support."""
-    available = registry.available(prepared.columns)
+    available = registry.available(prepared.columns, facility_type=facility_type)
     missing = registry.missing(prepared.columns)
+    inapplicable = registry.not_applicable(
+        prepared.columns, facility_type=facility_type
+    )
+
+    for factor in inapplicable:
+        log.warning(
+            "factors",
+            "not_applicable_here",
+            (
+                f"'{factor.name}' is not fitted on a "
+                f"{facility_type.value.replace('_', ' ')}: "
+                f"{factor.not_applicable_reason.strip()}"
+            ),
+            factor=factor.name,
+            facility_type=facility_type.value,
+        )
 
     for factor in missing:
         log.warning(
@@ -891,7 +919,7 @@ def _resolve_factors(
         ),
         available=[f.name for f in available],
     )
-    return available, missing, constant, design
+    return available, missing, constant, inapplicable, design
 
 
 def _mode_b_assessment(

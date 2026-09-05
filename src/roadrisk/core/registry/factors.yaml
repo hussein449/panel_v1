@@ -104,6 +104,19 @@ factors:
     transform: ln1p
     expected_sign: "+"
     drop_priority: 95
+    not_applicable_on: [motorway]
+    not_applicable_reason: >
+      A motorway is grade separated by definition: traffic joins and leaves it by slip
+      road, and there are no at-grade junctions on it to count. Whatever an adapter
+      reports here for such a corridor is either an interchange already counted by
+      ramp_density, or a crossing road that never meets this one. Measured on the A3
+      through Paris, junction_density resolved on 9 of 37 segments against
+      ramp_density's 30, and its coefficient fitted the wrong way round while agreeing
+      with the literature on its own — the signature of a term estimated from almost
+      nothing beside a stronger partner it correlates with.
+      Fitting it anyway does not just waste a slot in the specification. It puts a
+      contradiction on the report that no site inspection can resolve, because the
+      feature it names is not on the road.
     missing_behaviour: >
       Conflict-point exposure is lost. Intersections dominate non-exposure risk on
       most corridors, so the geometry terms will absorb part of this effect.

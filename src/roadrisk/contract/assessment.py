@@ -87,6 +87,18 @@ class MissingFactor(Payload):
     missing_behaviour: str
 
 
+class InapplicableFactor(Payload):
+    """A factor whose data was present and which was set aside anyway.
+
+    Different from :class:`MissingFactor` in the way that matters to a reader: nobody
+    failed to supply anything. The registry says the feature does not exist on this
+    kind of road, so a column claiming to measure it is measuring something else.
+    """
+
+    name: str
+    reason: str
+
+
 class FactorSummary(Payload):
     """Which factors survived to the specification, and which fell out where."""
 
@@ -97,6 +109,9 @@ class FactorSummary(Payload):
     #: Factors sent to the back of the keep order because they hold one value across
     #: most of this corridor. Demoted, not removed — they still fit if the rung has room.
     demoted_for_no_variation: list[str]
+    #: Factors held out because they name a feature this kind of road does not have —
+    #: at-grade junctions on a motorway. Their data was present; they were not fitted.
+    not_applicable_here: list[InapplicableFactor]
     in_model: list[str]
 
 

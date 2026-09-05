@@ -245,6 +245,25 @@ def _factors(assessment: Mapping[str, Any]) -> list[Limitation]:
             )
         )
 
+    inapplicable = factors.get("not_applicable_here") or []
+    if inapplicable:
+        found.append(
+            Limitation(
+                code="factors_not_applicable",
+                severity=CONTEXT,
+                title="Some factors do not describe this kind of road",
+                detail=(
+                    " ".join(
+                        f"{item.get('name')}: {item.get('reason')}"
+                        for item in inapplicable
+                    )
+                    + " Held out deliberately, with the data present. A term naming a "
+                    "feature the road does not have cannot be resolved by a site "
+                    "inspection, so reporting it would cost more than omitting it."
+                ),
+            )
+        )
+
     demoted = factors.get("demoted_for_no_variation") or []
     in_model = set(factors.get("in_model") or [])
     unseated = [name for name in demoted if name not in in_model]

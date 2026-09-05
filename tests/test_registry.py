@@ -8,9 +8,16 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from pydantic import ValidationError
 
 from roadrisk.core.errors import RegistryError
-from roadrisk.core.registry import Registry, Sign, parse_registry
+from roadrisk.core.registry import (
+    FacilityType,
+    Factor,
+    Registry,
+    Sign,
+    parse_registry,
+)
 
 DERIVE_SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "derive_weights.py"
 
@@ -303,6 +310,120 @@ class TestSelection:
     def test_keep_order_is_the_reverse(self, shipped_registry: Registry) -> None:
         keep = Registry.in_keep_order(shipped_registry.factors)
         assert keep[0].drop_priority == max(f.drop_priority for f in keep)
+
+
+class TestFacilityApplicability:
+    """A factor naming a feature the road does not have is not a weak term; it is a
+    term about something else, and it has to be held out rather than fitted."""
+
+    def junction(self, shipped_registry: Registry):
+        return shipped_registry.by_name("junction_density")
+
+    def test_a_motorway_has_no_at_grade_junctions_to_count(
+        self, shipped_registry: Registry
+    ) -> None:
+        assert not self.junction(shipped_registry).applies_to(FacilityType.MOTORWAY)
+
+    def test_every_other_road_type_still_counts_them(
+        self, shipped_registry: Registry
+    ) -> None:
+        """The exclusion is about grade separation, not about junctions being awkward."""
+        junction = self.junction(shipped_registry)
+        for facility in (
+            FacilityType.RURAL_TWO_LANE,
+            FacilityType.RURAL_MULTILANE,
+            FacilityType.URBAN_ARTERIAL,
+        ):
+            assert junction.applies_to(facility), facility.value
+
+    def test_an_undeclared_corridor_keeps_everything(
+        self, shipped_registry: Registry
+    ) -> None:
+        """The engine will not drop a term on a guess about what the road is."""
+        assert self.junction(shipped_registry).applies_to(FacilityType.ANY)
+
+    def test_ramp_density_survives_on_a_motorway(
+        self, shipped_registry: Registry
+    ) -> None:
+        """The thing that replaces it must not be excluded by the same rule."""
+        ramp = shipped_registry.by_name("ramp_density")
+        assert ramp.applies_to(FacilityType.MOTORWAY)
+
+    def test_available_drops_it_only_on_a_motorway(
+        self, shipped_registry: Registry
+    ) -> None:
+        columns = ["junction_density", "ramp_density", "curve_density"]
+
+        motorway = shipped_registry.available(
+            columns, facility_type=FacilityType.MOTORWAY
+        )
+        arterial = shipped_registry.available(
+            columns, facility_type=FacilityType.URBAN_ARTERIAL
+        )
+
+        assert "junction_density" not in {f.name for f in motorway}
+        assert "ramp_density" in {f.name for f in motorway}
+        assert "junction_density" in {f.name for f in arterial}
+
+    def test_not_applicable_is_separate_from_missing(
+        self, shipped_registry: Registry
+    ) -> None:
+        """Nobody failed to supply it. That is a different thing to tell a client."""
+        columns = ["junction_density", "curve_density"]
+
+        held = shipped_registry.not_applicable(
+            columns, facility_type=FacilityType.MOTORWAY
+        )
+        missing = shipped_registry.missing(columns)
+
+        assert [f.name for f in held] == ["junction_density"]
+        assert "junction_density" not in {f.name for f in missing}
+
+    def test_available_and_not_applicable_do_not_overlap(
+        self, shipped_registry: Registry
+    ) -> None:
+        columns = shipped_registry.columns
+        available = shipped_registry.available(
+            columns, facility_type=FacilityType.MOTORWAY
+        )
+        held = shipped_registry.not_applicable(
+            columns, facility_type=FacilityType.MOTORWAY
+        )
+
+        assert not {f.name for f in available} & {f.name for f in held}
+
+    def test_the_default_excludes_nothing(self, shipped_registry: Registry) -> None:
+        """Every caller that predates this argument must behave exactly as before."""
+        columns = shipped_registry.columns
+        assert shipped_registry.available(columns) == shipped_registry.available(
+            columns, facility_type=FacilityType.ANY
+        )
+        assert shipped_registry.not_applicable(columns) == []
+
+    def test_an_exclusion_without_an_argument_is_refused(self) -> None:
+        """An exclusion nobody justified is indistinguishable from one added to win."""
+        base = {
+            "name": "x",
+            "label": "x",
+            "column": "x",
+            "transform": "identity",
+            "expected_sign": "+",
+            "drop_priority": 10,
+            "missing_behaviour": "lost",
+            "adapters": [{"name": "osm", "tier": "A", "licence": "ODbL"}],
+            "not_applicable_on": ["motorway"],
+        }
+        with pytest.raises(ValidationError, match="states no reason"):
+            Factor.model_validate(base)
+
+        Factor.model_validate({**base, "not_applicable_reason": "grade separated"})
+
+    def test_the_shipped_exclusion_carries_its_argument(
+        self, shipped_registry: Registry
+    ) -> None:
+        junction = self.junction(shipped_registry)
+        assert "grade separated" in junction.not_applicable_reason
+        assert "ramp_density" in junction.not_applicable_reason
 
     def test_by_name_raises_on_unknown(self, shipped_registry: Registry) -> None:
         with pytest.raises(KeyError):

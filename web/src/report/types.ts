@@ -361,6 +361,7 @@ export interface FactorSummary {
   constant: string[];
   dropped_for_collinearity: string[];
   demoted_for_no_variation: string[];
+  not_applicable_here: InapplicableFactor[];
   in_model: string[];
 }
 
@@ -389,6 +390,18 @@ export interface Fit {
   panel_notes: string[];
   intercept: Coefficient | null;
   coefficients: Coefficient[];
+}
+
+/**
+ * A factor whose data was present and which was set aside anyway.
+ *
+ * Different from :class:`MissingFactor` in the way that matters to a reader: nobody
+ * failed to supply anything. The registry says the feature does not exist on this
+ * kind of road, so a column claiming to measure it is measuring something else.
+ */
+export interface InapplicableFactor {
+  name: string;
+  reason: string;
 }
 
 /**

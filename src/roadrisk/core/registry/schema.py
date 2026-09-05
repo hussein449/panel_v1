@@ -348,7 +348,50 @@ class Factor(BaseModel):
             "in. Empty means uncited, and an uncited factor never enters Mode B."
         ),
     )
+    not_applicable_on: list[FacilityType] = Field(
+        default_factory=list,
+        description=(
+            "Facility types on which this factor does not describe a real feature of "
+            "the road, and must not be fitted. Empty — the usual case — means the "
+            "factor applies everywhere. This is not a statement that the factor is "
+            "weak on those roads; it is a statement that the quantity does not exist "
+            "there, so a column claiming to measure it is measuring something else."
+        ),
+    )
+    not_applicable_reason: str = Field(
+        default="",
+        description=(
+            "Why the exclusion holds, in the registry rather than in code. Required "
+            "whenever `not_applicable_on` is non-empty, because an exclusion nobody "
+            "wrote an argument for is indistinguishable from one added to make a "
+            "corridor look better."
+        ),
+    )
+
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def _exclusions_carry_a_reason(self) -> Factor:
+        if self.not_applicable_on and not self.not_applicable_reason.strip():
+            raise ValueError(
+                f"factor '{self.name}' is excluded on "
+                f"{', '.join(f.value for f in self.not_applicable_on)} but states no "
+                "reason. An exclusion is a claim about the road and has to be argued "
+                "where the next reader will find it."
+            )
+        return self
+
+    def applies_to(self, facility: FacilityType) -> bool:
+        """Whether this factor describes a real feature of that kind of road.
+
+        ``FacilityType.ANY`` means the caller declared nothing, and the engine does not
+        guess: an undeclared corridor keeps every factor, because dropping a term on an
+        assumption about the road would be the same class of error the exclusion exists
+        to prevent.
+        """
+        if facility is FacilityType.ANY:
+            return True
+        return facility not in self.not_applicable_on
 
     @property
     def is_sourced(self) -> bool:
@@ -450,14 +493,50 @@ class Registry(BaseModel):
     def columns(self) -> list[str]:
         return [f.column for f in self.factors]
 
-    def available(self, present_columns: object) -> list[Factor]:
-        """Factors whose input column is present in the supplied panel.
+    def available(
+        self,
+        present_columns: object,
+        *,
+        facility_type: FacilityType = FacilityType.ANY,
+    ) -> list[Factor]:
+        """Factors whose input column is present and which apply to this road type.
 
         Returned in descent order, most-droppable first, so callers never have to
         re-sort and accidentally introduce a different order.
+
+        ``facility_type`` defaults to ``ANY``, which excludes nothing — a caller that
+        does not know the road type gets the behaviour it had before this argument
+        existed, rather than a guess.
         """
         columns = set(present_columns)  # type: ignore[arg-type]
-        return self.in_drop_order([f for f in self.factors if f.column in columns])
+        return self.in_drop_order(
+            [
+                f
+                for f in self.factors
+                if f.column in columns and f.applies_to(facility_type)
+            ]
+        )
+
+    def not_applicable(
+        self,
+        present_columns: object,
+        *,
+        facility_type: FacilityType = FacilityType.ANY,
+    ) -> list[Factor]:
+        """Factors held out because they do not describe this kind of road.
+
+        Separate from :meth:`missing`, which is about a column nobody supplied. A
+        factor here has its data and is set aside anyway, and the two are different
+        things to tell a client.
+        """
+        columns = set(present_columns)  # type: ignore[arg-type]
+        return self.in_drop_order(
+            [
+                f
+                for f in self.factors
+                if f.column in columns and not f.applies_to(facility_type)
+            ]
+        )
 
     def missing(self, present_columns: object) -> list[Factor]:
         """Factors whose column is absent. Each one drops exactly one term."""

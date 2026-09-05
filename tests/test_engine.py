@@ -5,11 +5,13 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from roadrisk.core.context import RunContext
 from roadrisk.core.engine import assess
 from roadrisk.core.errors import ContractViolation
 from roadrisk.core.ladder import Mode, Rung, _screen_for_variation
 from roadrisk.core.registry import (
     Adapter,
+    FacilityType,
     Factor,
     Licence,
     Sign,
@@ -190,6 +192,65 @@ class TestVariationScreen:
         payload = assess(rich_panel).as_dict()
 
         assert "demoted_for_no_variation" in payload["factors"]
+
+
+class TestFacilityScoping:
+    """The engine must ask what kind of road it is before deciding what to fit.
+
+    On the A3 through Paris `junction_density` resolved on 9 of 37 segments, fitted the
+    wrong way round, and put a contradiction on the report that no site inspection could
+    resolve — a motorway is grade separated and has no at-grade junctions on it.
+    """
+
+    def test_a_motorway_does_not_fit_junction_density(
+        self, rich_panel: pd.DataFrame
+    ) -> None:
+        result = assess(
+            rich_panel, context=RunContext(facility_type=FacilityType.MOTORWAY)
+        )
+
+        assert "junction_density" not in [f.name for f in result.available_factors]
+        assert "junction_density" in [f.name for f in result.inapplicable_factors]
+
+    def test_every_other_road_type_still_does(self, rich_panel: pd.DataFrame) -> None:
+        result = assess(
+            rich_panel, context=RunContext(facility_type=FacilityType.URBAN_ARTERIAL)
+        )
+
+        assert "junction_density" in [f.name for f in result.available_factors]
+        assert result.inapplicable_factors == []
+
+    def test_an_undeclared_corridor_is_not_guessed_at(
+        self, rich_panel: pd.DataFrame
+    ) -> None:
+        result = assess(rich_panel)
+
+        assert "junction_density" in [f.name for f in result.available_factors]
+        assert result.inapplicable_factors == []
+
+    def test_it_is_logged_with_the_reason(self, rich_panel: pd.DataFrame) -> None:
+        result = assess(
+            rich_panel, context=RunContext(facility_type=FacilityType.MOTORWAY)
+        )
+        event = next(e for e in result.log if e.code == "not_applicable_here")
+
+        assert "junction_density" in event.message
+        assert "grade separated" in event.message
+
+    def test_it_reaches_the_payload_separately_from_missing(
+        self, rich_panel: pd.DataFrame
+    ) -> None:
+        """Nobody failed to supply it — the panel carried the column."""
+        payload = assess(
+            rich_panel, context=RunContext(facility_type=FacilityType.MOTORWAY)
+        ).as_dict()
+        held = payload["factors"]["not_applicable_here"]
+
+        assert [item["name"] for item in held] == ["junction_density"]
+        assert held[0]["reason"]
+        assert "junction_density" not in [
+            m["name"] for m in payload["factors"]["missing"]
+        ]
 
 
 class TestRefusal:
