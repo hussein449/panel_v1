@@ -304,6 +304,20 @@ def edge_betweenness(
     return totals * scale
 
 
+def _sample_resolution(n_nodes: int, n_sources: int) -> float:
+    """The share one path through one link contributes — the estimator's own grain.
+
+    Below this the sample cannot distinguish "no through traffic" from "none of the
+    sampled sources happened to route this way", so it is the smallest difference the
+    number is entitled to claim.
+    """
+    if n_nodes < 3:  # pragma: no cover - guarded by the callers
+        return 0.0
+    sampled = min(max(n_sources, 1), n_nodes)
+    pairs = n_nodes * (n_nodes - 1) / 2.0
+    return (n_nodes / sampled) / 2.0 / pairs
+
+
 def compute_traffic_proxy(
     segmentation: Segmentation,
     graph: RoadGraph,
@@ -358,6 +372,16 @@ def compute_traffic_proxy(
             "a tag can — it is a property of the graph, not of the road"
         )
 
+    # A unit no sampled path happened to use reads exactly zero, which is a claim about
+    # the sample rather than about the road: its true share lies somewhere in
+    # [0, resolution), where resolution is what one path through one link contributes.
+    # Zero is also the one value this factor's `ln` transform cannot take. Both are
+    # answered by flooring at half the resolution — the midpoint of what was actually
+    # established.
+    resolution = _sample_resolution(graph.n_nodes, n_sources)
+    n_floored = int((values < resolution / 2.0).sum())
+    values = np.maximum(values, resolution / 2.0)
+
     artefact = _artefact_correlation(segmentation, values)
     if artefact is not None and artefact >= artefact_refuse:
         return _refuse(
@@ -391,6 +415,14 @@ def compute_traffic_proxy(
         f"{graph.n_nodes:,}. Exact betweenness would be false precision on a quantity "
         "with no units, and the sample is seeded so two identical runs agree.",
     ]
+    if n_floored:
+        notes.append(
+            f"{n_floored} of {len(segmentation)} unit(s) carried no sampled shortest "
+            f"path and were floored to half the estimator's resolution "
+            f"({resolution / 2.0:.2e}). That is the midpoint of what a zero reading "
+            "establishes — the true share lies below the resolution, not at zero — and "
+            "it keeps the factor on the multiplicative scale it is fitted on."
+        )
     if artefact is not None and artefact >= artefact_warn:
         notes.append(
             f"WARNING: the result correlates {artefact:.2f} with a symmetric parabola "

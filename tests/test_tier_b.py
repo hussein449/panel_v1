@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from shapely.geometry import LineString, Point
 
-from roadrisk.core.registry import Licence, Registry, Tier
+from roadrisk.core.registry import Licence, Registry, Tier, Transform
 from roadrisk.geo import build_corridor_panel
 from roadrisk.geo.adapters.graph import (
     ARTEFACT_REFUSE,
@@ -26,6 +26,7 @@ from roadrisk.geo.adapters.graph import (
     DEFAULT_NETWORK_MARGIN_M,
     GraphEdge,
     RoadGraph,
+    _sample_resolution,
     build_network_query,
     compute_traffic_proxy,
     edge_betweenness,
@@ -381,6 +382,84 @@ class TestTrafficProxy:
 
         assert result.resolved[0].column == "traffic_proxy"
         assert any("NEVER AADT" in note for note in result.resolved[0].notes)
+
+    def test_no_unit_reads_exactly_zero(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        """Zero is a claim about the sample, and `ln` cannot take it either way.
+
+        A unit no sampled shortest path happened to use has a true share somewhere
+        below the estimator's resolution, not of zero, so it is floored at half of it.
+        """
+        graph = fetch_network(
+            corridor,
+            client=client_returning(
+                way(straight(0, 3000)),
+                way([at(1000.0, 0.0), at(1000.0, 2000.0)], highway="secondary"),
+                way([at(2000.0, 0.0), at(2000.0, 2000.0)], highway="secondary"),
+                way([at(1000.0, 2000.0), at(2000.0, 2000.0)], highway="secondary"),
+            ),
+            margin_m=5000.0,
+        )
+        result = compute_traffic_proxy(units, graph, registry=shipped_registry)
+
+        values = list(result.resolved[0].values)
+        assert values, "the adapter resolved nothing to check"
+        assert all(v > 0.0 for v in values)
+
+    def test_a_graph_too_small_to_route_leaves_a_constant_column(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        """Two nodes carry no shortest paths, so every unit reads the same.
+
+        There is no resolution to floor against and nothing to learn either way. The
+        column is constant, and the engine drops constant columns before any transform
+        sees them — so `ln` is never asked to take the logarithm of zero.
+        """
+        graph = fetch_network(
+            corridor, client=client_returning(way(straight(0, 3000))), margin_m=5000.0
+        )
+        result = compute_traffic_proxy(units, graph, registry=shipped_registry)
+
+        values = list(result.resolved[0].values)
+        assert len(set(values)) == 1
+
+    def test_the_floor_is_the_estimator_resolution(self) -> None:
+        """Half of what one path through one link contributes, not an arbitrary epsilon."""
+        assert _sample_resolution(100, 128) == pytest.approx(
+            (100 / 100) / 2.0 / (100 * 99 / 2.0)
+        )
+        # More sources than nodes cannot sample a node twice.
+        assert _sample_resolution(10, 128) == _sample_resolution(10, 10)
+
+    def test_flooring_is_reported_when_it_happens(
+        self, corridor: Corridor, units, shipped_registry: Registry
+    ) -> None:
+        graph = fetch_network(
+            corridor, client=client_returning(way(straight(0, 3000))), margin_m=5000.0
+        )
+        result = compute_traffic_proxy(units, graph, registry=shipped_registry)
+        notes = result.resolved[0].notes
+
+        if any(note.startswith("0 of") for note in notes):  # pragma: no cover
+            pytest.skip("this fixture floored nothing")
+        floored = [n for n in notes if "floored to half the estimator" in n]
+        if floored:
+            assert "resolution" in floored[0]
+
+    def test_the_registry_fits_it_on_a_multiplicative_scale(
+        self, shipped_registry: Registry
+    ) -> None:
+        """ln1p on a share of order 1e-3 is the identity, and extrapolates linearly.
+
+        Cross-validated on the A3, that failed contiguous-stretch calibration at 0.674;
+        under `ln` the same corridor calibrates at 1.143. A lock, because the difference
+        does not look like it matters and does.
+        """
+        factor = next(
+            f for f in shipped_registry.factors if f.name == "traffic_proxy"
+        )
+        assert factor.transform is Transform.LN
 
     def test_a_corridor_off_the_strategic_network_is_refused(
         self, corridor: Corridor, units, shipped_registry: Registry

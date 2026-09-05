@@ -53,7 +53,7 @@ factors:
   - name: traffic_proxy
     label: Traffic proxy (graph centrality)
     column: traffic_proxy
-    transform: ln1p
+    transform: ln
     expected_sign: "+"
     drop_priority: 100
     missing_behaviour: >
@@ -67,6 +67,23 @@ factors:
       UNCITED, and probably permanently so: this is our own construct, and no
       published weight exists for graph centrality. The HSM AADT exponent does not
       transfer precisely because this is not AADT.
+      TRANSFORM IS `ln`, NOT `ln1p`, AND THE DIFFERENCE IS NOT COSMETIC. Betweenness
+      is a share, and on a real corridor it runs around 1e-3: on the A3 through Paris,
+      0.00069 to 0.066. ln1p over that range is the identity to three decimal places
+      (span 0.0637 against a raw span of 0.0658), so the term is linear in x, needs a
+      coefficient near +11 to move anything, and extrapolates linearly. Cross-validated
+      on that corridor, the fold holding out both the minimum and the maximum predicted
+      1,022 crashes against 311 observed and the contiguous-stretch calibration failed
+      at 0.674. Under `ln` the same fold reads 1.270 and the corridor calibrates at
+      1.143. A z-score was tried as a control and changed nothing, which is the proof
+      that the problem is the shape and not the scale: standardising is a linear
+      reparameterisation and this term needed a multiplicative one.
+      The in-sample cost is real and was accepted deliberately: AIC 4626.9 to 4656.8,
+      p = 4e-9 to 0.034. Fitting the corridor better while predicting held-out road
+      worse is what cross-validation exists to catch.
+      Zero is not representable under `ln`, and the adapter floors it at half the
+      estimator's resolution rather than leaving the transform to fail — a unit no
+      sampled path used has a true share below the resolution, not of zero.
     adapters:
       - name: client_aadt
         tier: D
