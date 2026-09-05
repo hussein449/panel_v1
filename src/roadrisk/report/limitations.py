@@ -288,21 +288,55 @@ def _sign_guard(assessment: Mapping[str, Any]) -> list[Limitation]:
     if not findings:
         return []
 
-    names = ", ".join(str(f.get("factor")) for f in findings)
-    return [
+    found: list[Limitation] = []
+    # A contradiction whose suppressor has been identified is ordinary behaviour for
+    # correlated terms, not a defect, and filing it beside the unexplained ones buries
+    # the difference between "we know why this happened" and "we do not".
+    suppressed = [f for f in findings if f.get("suppressed_by")]
+    if suppressed:
+        pairs = ", ".join(
+            f"{f.get('factor')} (by {f.get('suppressed_by')})" for f in suppressed
+        )
+        found.append(
+            Limitation(
+                code="sign_suppressed",
+                severity=CONTEXT,
+                title="A factor's effect is being absorbed by one it moves with",
+                detail=(
+                    f"{pairs} came out against the direction the literature predicts, "
+                    "and in each case one correlated factor accounts for it: the term "
+                    "points the expected way on its own and still does beside that "
+                    "partner alone. Drivers slowing for bends is the usual example — "
+                    "speed absorbs curvature, so curvature reads backwards next to it. "
+                    "This is how correlated terms behave and it is not evidence against "
+                    "the literature. What it does mean is that the coefficient measures "
+                    "the factor net of its partner, which is not the quantity the "
+                    "expectation is about, so neither should be read on its own."
+                ),
+            )
+        )
+
+    unexplained = [f for f in findings if not f.get("suppressed_by")]
+    if not unexplained:
+        return found
+
+    names = ", ".join(str(f.get("factor")) for f in unexplained)
+    found.append(
         Limitation(
             code="sign_contradiction",
             severity=MATERIAL,
             title="A factor's effect came out opposite to what the evidence expects",
             detail=(
                 f"{names} fitted with the opposite sign to the one the literature "
-                "predicts. That usually means it is standing in for something else on "
+                "predicts, and no single correlated factor accounts for it. That "
+                "usually means it is standing in for something else on "
                 "this corridor rather than causing anything, and it is not "
                 "interpretable as a cause. It is reported rather than removed, because "
                 "hiding it would hide the finding."
             ),
         )
-    ]
+    )
+    return found
 
 
 # ---- whether it predicts anything ---------------------------------------------

@@ -755,6 +755,8 @@ export interface SignGuardFinding {
   estimate: number;
   p_value: number;
   contradicts: boolean;
+  suppressed_by: string | null;
+  suppressed: boolean;
   significant: boolean;
   verdict: string;
   univariate_estimate: number | null;

@@ -1184,6 +1184,8 @@ def _sign_guard_as_dict(report: SignGuardReport | None) -> dict[str, Any] | None
                 "estimate": f.estimate,
                 "p_value": f.p_value,
                 "contradicts": f.contradicts,
+                "suppressed_by": f.suppressed_by,
+                "suppressed": f.suppressed,
                 "significant": f.significant,
                 "verdict": f.verdict,
                 "univariate_estimate": f.univariate_estimate,

@@ -90,6 +90,20 @@ class SignFinding:
     #: The rung 3 spline on this factor. Reference only — it carries a shape and a
     #: plot, and by construction no number that could reach a client report.
     shape: ShapeDiagnostic | None = None
+    #: The correlated factor that, fitted alongside this one and nothing else, puts the
+    #: sign back the way the registry declares it. ``None`` when no single partner does.
+    #:
+    #: **This is the difference between a mechanism and a mystery.** Drivers slow for
+    #: bends, so on a corridor carrying both, speed absorbs the curvature signal and
+    #: curvature comes out backwards — a textbook suppressor, and the pairwise refit
+    #: shows it directly. A contradiction no partner explains is a different animal and
+    #: has to stay flagged as one.
+    suppressed_by: str | None = None
+
+    @property
+    def suppressed(self) -> bool:
+        """A contradiction whose mechanism has been identified, not merely suspected."""
+        return self.contradicts and self.suppressed_by is not None
 
 
 @dataclass(frozen=True)
@@ -102,6 +116,16 @@ class SignGuardReport:
     @property
     def contradictions(self) -> list[SignFinding]:
         return [f for f in self.findings if f.contradicts]
+
+    @property
+    def suppressed(self) -> list[SignFinding]:
+        """Contradictions a single correlated partner accounts for."""
+        return [f for f in self.contradictions if f.suppressed]
+
+    @property
+    def unexplained(self) -> list[SignFinding]:
+        """Contradictions no single partner accounts for. The ones worth worrying at."""
+        return [f for f in self.contradictions if not f.suppressed]
 
     @property
     def clean(self) -> bool:
@@ -177,6 +201,17 @@ def run_sign_guard(
         partners = correlated_partners(
             design, factor.name, threshold=correlation_threshold
         )
+        univariate = _univariate(fit_fn, counts, design, log_exposure, factor.name)
+        pairwise = _pairwise(
+            fit_fn,
+            counts,
+            design,
+            log_exposure,
+            factor,
+            partners,
+            full_estimate=coefficient.estimate,
+        )
+        suppressed_by = _suppressor(factor, univariate, pairwise)
         finding = SignFinding(
             factor=factor.name,
             label=factor.label,
@@ -185,19 +220,15 @@ def run_sign_guard(
             p_value=coefficient.p_value,
             significant=coefficient.significant,
             contradicts=True,
-            verdict=_verdict(factor, coefficient.estimate, coefficient.significant),
-            univariate_estimate=_univariate(
-                fit_fn, counts, design, log_exposure, factor.name
-            ),
-            pairwise=_pairwise(
-                fit_fn,
-                counts,
-                design,
-                log_exposure,
+            verdict=_verdict(
                 factor,
-                partners,
-                full_estimate=coefficient.estimate,
+                coefficient.estimate,
+                coefficient.significant,
+                suppressed_by=suppressed_by,
             ),
+            univariate_estimate=univariate,
+            pairwise=pairwise,
+            suppressed_by=suppressed_by,
             correlations=partners,
             leave_one_out=_leave_one_out(
                 fit_fn,
@@ -258,7 +289,56 @@ def run_sign_guard(
     return SignGuardReport(findings=findings, correlations=correlations)
 
 
-def _verdict(factor: Factor, estimate: float, significant: bool) -> str:
+def _suppressor(
+    factor: Factor, univariate: float | None, pairwise: list[PairwiseRefit]
+) -> str | None:
+    """The single partner that puts the sign back, if one does.
+
+    Two conditions, and both are needed. The factor must point the declared way **on its
+    own** — otherwise there is no correct sign for a partner to have suppressed, and the
+    disagreement is with the data rather than with the specification. And adding exactly
+    one correlated partner must put it back — which identifies that partner as the
+    absorber rather than leaving the cause somewhere among the other five terms.
+
+    Where both hold the mechanism is named, not guessed: curvature comes out backwards
+    beside speed because drivers slow for bends, and the pairwise refit shows precisely
+    that. Where they do not, nothing has been explained and the finding stays open.
+    """
+    expected = factor.expected_sign.as_int
+    if univariate is None or univariate == 0.0:
+        return None
+    if (univariate > 0) != (expected > 0):
+        return None
+    restored = [
+        refit
+        for refit in pairwise
+        if refit.agrees_with_expected and refit.estimate is not None
+    ]
+    if not restored:
+        return None
+    # The most correlated partner, which is the one with the most to absorb.
+    return max(restored, key=lambda refit: abs(refit.correlation)).partner
+
+
+def _verdict(
+    factor: Factor,
+    estimate: float,
+    significant: bool,
+    *,
+    suppressed_by: str | None = None,
+) -> str:
+    if suppressed_by is not None:
+        return (
+            f"Fitted {estimate:+.3f} against a declared expectation of "
+            f"'{factor.expected_sign.value}', but this is suppression rather than a "
+            f"contradiction and the suppressor is identified: on its own the factor "
+            f"points the declared way, and it still does beside '{suppressed_by}' "
+            "alone. The two move together on this corridor and the partner absorbs the "
+            "signal, which is ordinary behaviour for correlated terms and not evidence "
+            "that the literature is wrong here. The coefficient still must not be read "
+            f"on its own — what it measures is this factor net of '{suppressed_by}', "
+            "which is not the quantity the registry's expectation is about."
+        )
     firmness = (
         "It is also statistically significant, which makes it a specification problem "
         "rather than noise."

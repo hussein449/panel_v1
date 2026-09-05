@@ -383,6 +383,10 @@ class SignGuardFinding(Payload):
     estimate: float
     p_value: float
     contradicts: bool
+    #: The one correlated factor that puts the sign back, when a single one does. A
+    #: named suppressor is a mechanism; a contradiction without one is still open.
+    suppressed_by: str | None
+    suppressed: bool
     significant: bool
     verdict: str
     univariate_estimate: float | None
