@@ -7,6 +7,8 @@ import pytest
 
 from roadrisk.core.engine import assess
 from roadrisk.core.ladder import Mode
+from roadrisk.core.registry import load_registry
+from roadrisk.core.signguard import DropOneRefit, _suppressor, _verdict
 from roadrisk.demo import TRUE_EFFECTS, synthetic_panel
 
 
@@ -143,68 +145,62 @@ class TestSuppressionIsNotContradiction:
         assert reversed_result.sign_guard.unexplained
 
     def test_a_wrong_univariate_sign_cannot_be_suppression(self) -> None:
-        """If the factor points the wrong way alone, no partner suppressed anything."""
-        from roadrisk.core.registry import load_registry
-        from roadrisk.core.signguard import PairwiseRefit, _suppressor
+        """If the factor points the wrong way alone, nothing suppressed anything."""
+        factor = load_registry().by_name("curve_density")
+        restored = [DropOneRefit("speed_limit", -0.5, 0.3)]
 
-        factor = next(
-            f for f in load_registry().factors if f.name == "curve_density"
-        )
-        restored = [PairwiseRefit("speed_limit", -0.5, 0.3, True, True)]
+        assert _suppressor(factor, univariate=-0.2, without=restored) is None
 
-        assert _suppressor(factor, univariate=-0.2, pairwise=restored) is None
+    def test_the_term_whose_removal_restores_the_sign_is_the_absorber(self) -> None:
+        """Not a partner that behaves in a pair — the one that was taking the signal.
 
-    def test_a_restored_pair_names_the_suppressor(self) -> None:
-        from roadrisk.core.registry import load_registry
-        from roadrisk.core.signguard import PairwiseRefit, _suppressor
-
-        factor = next(
-            f for f in load_registry().factors if f.name == "curve_density"
-        )
-        pairwise = [
-            PairwiseRefit("lanes", 0.31, -0.02, False, True),
-            PairwiseRefit("speed_limit", -0.62, 0.04, True, True),
+        Measured on the A3: curve_radius_min fits +0.090 in the full model and −0.028
+        once access_density is dropped, while every pairwise fit with it stays positive.
+        A test that only looked at pairs called this unexplained.
+        """
+        factor = load_registry().by_name("curve_radius_min")
+        without = [
+            DropOneRefit("lanes", 0.00, 0.2582),
+            DropOneRefit("access_density", -0.37, -0.0275),
         ]
 
-        assert _suppressor(factor, univariate=0.14, pairwise=pairwise) == "speed_limit"
+        assert _suppressor(factor, univariate=-0.08, without=without) == "access_density"
 
-    def test_the_most_correlated_restoring_partner_wins(self) -> None:
-        """The partner with the most to absorb is the one being named."""
-        from roadrisk.core.registry import load_registry
-        from roadrisk.core.signguard import PairwiseRefit, _suppressor
-
-        factor = next(
-            f for f in load_registry().factors if f.name == "curve_density"
-        )
-        pairwise = [
-            PairwiseRefit("lanes", 0.35, 0.01, True, True),
-            PairwiseRefit("speed_limit", -0.62, 0.04, True, True),
+    def test_the_most_correlated_restoring_term_wins(self) -> None:
+        """The one with the most to absorb is the one being named."""
+        factor = load_registry().by_name("curve_density")
+        without = [
+            DropOneRefit("lanes", 0.35, 0.01),
+            DropOneRefit("speed_limit", -0.62, 0.04),
         ]
 
-        assert _suppressor(factor, univariate=0.14, pairwise=pairwise) == "speed_limit"
+        assert _suppressor(factor, univariate=0.14, without=without) == "speed_limit"
 
-    def test_no_restoring_partner_leaves_it_unexplained(self) -> None:
-        from roadrisk.core.registry import load_registry
-        from roadrisk.core.signguard import PairwiseRefit, _suppressor
+    def test_no_restoring_term_leaves_it_unexplained(self) -> None:
+        factor = load_registry().by_name("junction_density")
+        without = [DropOneRefit("access_density", 0.45, -0.01)]
 
-        factor = next(
-            f for f in load_registry().factors if f.name == "junction_density"
-        )
-        pairwise = [PairwiseRefit("access_density", 0.45, -0.01, False, False)]
+        assert _suppressor(factor, univariate=0.16, without=without) is None
 
-        assert _suppressor(factor, univariate=0.16, pairwise=pairwise) is None
+    def test_a_pair_that_behaves_is_not_enough_on_its_own(self) -> None:
+        """The earlier test's mistake, pinned so it cannot come back.
 
-    def test_the_verdict_names_the_suppressor_rather_than_condemning(self) -> None:
-        from roadrisk.core.registry import load_registry
-        from roadrisk.core.signguard import _verdict
+        A partner added to a two-term fit can leave the sign alone simply by not being
+        the cause — the other five terms are absent, and so is their confounding. Only
+        a removal from the full specification identifies an absorber.
+        """
+        factor = load_registry().by_name("curve_radius_min")
+        without = [DropOneRefit("speed_limit", 0.49, 0.0908)]
 
-        factor = next(
-            f for f in load_registry().factors if f.name == "curve_density"
-        )
+        assert _suppressor(factor, univariate=-0.08, without=without) is None
+
+    def test_the_verdict_names_the_absorber_rather_than_condemning(self) -> None:
+        factor = load_registry().by_name("curve_density")
         verdict = _verdict(factor, -0.05, False, suppressed_by="speed_limit")
 
         assert "suppression rather than a contradiction" in verdict
         assert "speed_limit" in verdict
+        assert "taken out of the specification" in verdict
         assert "NOT interpretable as causal" not in verdict
 
     def test_it_reaches_the_payload(self, reversed_result) -> None:
@@ -215,3 +211,4 @@ class TestSuppressionIsNotContradiction:
 
         assert "suppressed_by" in flagged
         assert "suppressed" in flagged
+        assert flagged["without"], "the drop-one refits must travel with the finding"

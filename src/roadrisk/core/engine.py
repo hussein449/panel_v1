@@ -1220,6 +1220,14 @@ def _sign_guard_as_dict(report: SignGuardReport | None) -> dict[str, Any] | None
                 "correlations": [
                     {"partner": name, "r": value} for name, value in f.correlations
                 ],
+                "without": [
+                    {
+                        "partner": w.partner,
+                        "correlation": w.correlation,
+                        "estimate": w.estimate,
+                    }
+                    for w in f.without
+                ],
                 "pairwise": [
                     {
                         "partner": p.partner,

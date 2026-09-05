@@ -56,6 +56,21 @@ class PairwiseRefit:
 
 
 @dataclass(frozen=True)
+class DropOneRefit:
+    """The suspect factor refitted with one other term removed from the full model.
+
+    The complement of :class:`PairwiseRefit`, and the one that identifies an absorber:
+    a partner added to a two-term fit can keep the sign right without being the cause
+    of anything, but a term whose *removal* restores it is the term that was taking the
+    signal.
+    """
+
+    partner: str
+    correlation: float
+    estimate: float | None
+
+
+@dataclass(frozen=True)
 class LeaveOneOutReport:
     """Coefficient stability when single units are withheld."""
 
@@ -85,6 +100,9 @@ class SignFinding:
     verdict: str
     univariate_estimate: float | None = None
     pairwise: list[PairwiseRefit] = field(default_factory=list)
+    #: The full fit with each other term removed in turn. The refit that identifies an
+    #: absorber, where :attr:`pairwise` only shows which pairs happen to behave.
+    without: list[DropOneRefit] = field(default_factory=list)
     correlations: list[tuple[str, float]] = field(default_factory=list)
     leave_one_out: LeaveOneOutReport | None = None
     #: The rung 3 spline on this factor. Reference only — it carries a shape and a
@@ -211,7 +229,10 @@ def run_sign_guard(
             partners,
             full_estimate=coefficient.estimate,
         )
-        suppressed_by = _suppressor(factor, univariate, pairwise)
+        without = _without_each(
+            fit_fn, counts, design, log_exposure, factor.name
+        )
+        suppressed_by = _suppressor(factor, univariate, without)
         finding = SignFinding(
             factor=factor.name,
             label=factor.label,
@@ -228,6 +249,7 @@ def run_sign_guard(
             ),
             univariate_estimate=univariate,
             pairwise=pairwise,
+            without=without,
             suppressed_by=suppressed_by,
             correlations=partners,
             leave_one_out=_leave_one_out(
@@ -289,20 +311,53 @@ def run_sign_guard(
     return SignGuardReport(findings=findings, correlations=correlations)
 
 
+def _without_each(
+    fit_fn: FitFn,
+    counts: pd.Series,
+    design: pd.DataFrame,
+    log_exposure: pd.Series,
+    factor: str,
+) -> list[DropOneRefit]:
+    """The suspect factor refitted with each other term removed in turn.
+
+    **This is the question a suppressor answers, and the pairwise refit does not.**
+    Pairing the suspect with one partner asks whether those two alone reproduce the
+    expected sign, which a partner that is not the absorber will happily do — the
+    remaining five terms are absent, so their confounding is absent with them. Removing
+    one term from the full specification asks the question directly: does the sign come
+    back when this term is gone, with everything else still controlled for.
+    """
+    refits: list[DropOneRefit] = []
+    for partner in design.columns:
+        if partner == factor:
+            continue
+        estimate = _estimate(
+            fit_fn(counts, design.drop(columns=[partner]), log_exposure), factor
+        )
+        refits.append(
+            DropOneRefit(
+                partner=partner,
+                correlation=float(design[factor].corr(design[partner])),
+                estimate=estimate,
+            )
+        )
+    return refits
+
+
 def _suppressor(
-    factor: Factor, univariate: float | None, pairwise: list[PairwiseRefit]
+    factor: Factor, univariate: float | None, without: list[DropOneRefit]
 ) -> str | None:
-    """The single partner that puts the sign back, if one does.
+    """The single term whose removal puts the sign back, if one does.
 
     Two conditions, and both are needed. The factor must point the declared way **on its
-    own** — otherwise there is no correct sign for a partner to have suppressed, and the
-    disagreement is with the data rather than with the specification. And adding exactly
-    one correlated partner must put it back — which identifies that partner as the
-    absorber rather than leaving the cause somewhere among the other five terms.
+    own** — otherwise there is no correct sign for anything to have suppressed, and the
+    disagreement is with the data rather than with the specification. And removing
+    exactly one term from the full fit must restore it, which identifies that term as
+    the absorber rather than leaving the cause spread across the rest.
 
-    Where both hold the mechanism is named, not guessed: curvature comes out backwards
-    beside speed because drivers slow for bends, and the pairwise refit shows precisely
-    that. Where they do not, nothing has been explained and the finding stays open.
+    Where both hold the mechanism is named rather than guessed. Where they do not,
+    nothing has been explained and the finding stays open — the planted-reversal fixture
+    is a genuinely negative effect, no removal rescues it, and it must stay flagged.
     """
     expected = factor.expected_sign.as_int
     if univariate is None or univariate == 0.0:
@@ -311,12 +366,12 @@ def _suppressor(
         return None
     restored = [
         refit
-        for refit in pairwise
-        if refit.agrees_with_expected and refit.estimate is not None
+        for refit in without
+        if refit.estimate is not None and (refit.estimate > 0) == (expected > 0)
     ]
     if not restored:
         return None
-    # The most correlated partner, which is the one with the most to absorb.
+    # The most correlated of them, which is the one with the most to absorb.
     return max(restored, key=lambda refit: abs(refit.correlation)).partner
 
 
@@ -331,9 +386,10 @@ def _verdict(
         return (
             f"Fitted {estimate:+.3f} against a declared expectation of "
             f"'{factor.expected_sign.value}', but this is suppression rather than a "
-            f"contradiction and the suppressor is identified: on its own the factor "
-            f"points the declared way, and it still does beside '{suppressed_by}' "
-            "alone. The two move together on this corridor and the partner absorbs the "
+            "contradiction and the absorber is identified: on its own the factor points "
+            f"the declared way, and it does so again as soon as '{suppressed_by}' is "
+            "taken out of the specification, with everything else still controlled for. "
+            "The two move together on this corridor and the partner is taking the "
             "signal, which is ordinary behaviour for correlated terms and not evidence "
             "that the literature is wrong here. The coefficient still must not be read "
             f"on its own — what it measures is this factor net of '{suppressed_by}', "

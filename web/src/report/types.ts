@@ -310,6 +310,19 @@ export interface Disagreement {
   note: string;
 }
 
+/**
+ * The contradicting factor refitted with one partner removed from the full model.
+ *
+ * Where :class:`PairwiseFit` asks whether two terms alone behave, this asks whether
+ * the sign returns when a term is taken out with everything else still controlled
+ * for — which is the question that identifies which term was absorbing the signal.
+ */
+export interface DropOneFit {
+  partner: string;
+  correlation: number;
+  estimate: number | null;
+}
+
 /** Three answers per factor, and the one the engine designates. */
 export interface Evidence {
   answer: string;
@@ -775,6 +788,7 @@ export interface SignGuardFinding {
   univariate_estimate: number | null;
   correlations: FactorCorrelation[];
   pairwise: PairwiseFit[];
+  without: DropOneFit[];
   leave_one_out: LeaveOneOut | null;
   shape: Shape | null;
 }

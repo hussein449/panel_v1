@@ -379,6 +379,19 @@ class PairwiseFit(Payload):
     differs_from_full_fit: bool
 
 
+class DropOneFit(Payload):
+    """The contradicting factor refitted with one partner removed from the full model.
+
+    Where :class:`PairwiseFit` asks whether two terms alone behave, this asks whether
+    the sign returns when a term is taken out with everything else still controlled
+    for — which is the question that identifies which term was absorbing the signal.
+    """
+
+    partner: str
+    correlation: float
+    estimate: float | None
+
+
 class LeaveOneOut(Payload):
     """How far the estimate moves when each unit is dropped in turn."""
 
@@ -407,6 +420,9 @@ class SignGuardFinding(Payload):
     univariate_estimate: float | None
     correlations: list[FactorCorrelation]
     pairwise: list[PairwiseFit]
+    #: The full fit with each other term dropped in turn — the refit that identifies an
+    #: absorber, where `pairwise` only shows which two-term fits happen to behave.
+    without: list[DropOneFit]
     leave_one_out: LeaveOneOut | None
     shape: Shape | None
 
