@@ -3,7 +3,7 @@
 Every real corridor this tool has been run against, what came back, and what it meant.
 Kept because the failures taught more than the successes: most of the runs below produced
 a bug fix, one produced the first Mode A assessment in the project's history, and the
-latest produced the first A-full fit.
+latest produced the first A-full fit and six defects.
 
 Synthetic corridors — `roadrisk demo`, the API's demo job — are not recorded here. They
 test the machinery. These test the product.
@@ -15,7 +15,27 @@ test the machinery. These test the product.
 | 3 | F929, Cyprus | 2026-08-30 | B | none | Confirmed the length and context fixes |
 | 4 | **A6 Derby–Buxton, England** | **2026-08-31** | **A** | 284 real | **First fitted model** — curvature significant |
 | 5 | **A82 Lomond–Glen Coe, Scotland** | **2026-08-31** | **A** | 162 real | **Same method, opposite answer** |
-| 6 | **A3 Paris, France** | **2026-09-04** | **A** | 1,403 real | **First A-full run; first French road** |
+| 6 | **A3 Paris, France** | **2026-09-04/05** | **A** | 1,403 real | **First A-full run; six defects; first clean sheet** |
+
+### What the A3 changed, in one table
+
+Every fix below came out of that one corridor, and every one of them was found by the
+panel contradicting itself rather than by reading the code.
+
+| Commit | Defect | How it surfaced |
+|---|---|---|
+| `4d137b7` | Check 7 failed against a design that was never fitted; crash-mix caveat printed on a run that never used it | A failed gate on a passing model |
+| `a3a0fa7` | Traffic proxy refused dense networks — a node ceiling counting raw vertices, an 18× overcount | A refusal on exactly the roads it is most useful on |
+| `5b3bad1` | A rung's seats went to factors flat on this corridor | `poi_density` fitted at p = 0.64 while varying factors sat out |
+| `214c82c` | CURE ordered tied values by corridor position | Three unrelated factors drifting at 40.5%, 37.8%, 40.5% |
+| `1e1842e` | `ln1p` on a share of order 1e-3 is the identity | Contiguous folds predicting 1,828 against 1,231 |
+| `8ab6f67` | Suppression filed under contradiction | Two very different findings under one material heading |
+| `c8ed050` | A term about at-grade junctions fitted on a motorway | A contradiction no site inspection could resolve |
+| `301a0cd` | Suppression tested pairs instead of removals | A contradiction with a correct univariate sign |
+
+**The corridor went from one false failed check and a failing validation to a clean
+sheet**: all ten checks pass, both cross-validation schemes calibrate, no CURE drift, and
+no material limitation on the page.
 
 ---
 
@@ -222,22 +242,19 @@ curve fitted to a spike at zero plus nine points. `junction_density` is estimate
 nine informative segments against a stronger, correlated neighbour, and leave-one-out
 flips its sign 8 times in 25. It is not contradicting the literature. It is unidentified.
 
-**And then the drift turned out not to be about the factors at all — see below.**
+**That diagnosis was half right, and the half that was wrong mattered more.** Three fixes
+were proposed from it; the sections below record what each one actually did when it was
+built and measured, which is not what was predicted in two cases out of three.
 
-**Three fixes, in order of value:**
+| Proposed fix | Outcome |
+|---|---|
+| **1** Screen for variation before the factor cap | **Built.** Helped — spatial calibration 1.135 → 1.004 — but did not recover `landuse_urban` as predicted |
+| **2** Enter near-binary densities as presence flags | **Built, measured, reverted.** Worse on every metric, and the drift did not move at all |
+| **3** Prefer `ramp_density` on a motorway | **Built** as a facility-scoped registry exclusion, which is the right shape for it |
 
-1. **Screen for variation before the factor cap.** *(Built — see below.)* A-full keeps
-   the 7 highest `drop_priority`, never looking at the corridor. On the A3 that spent a
-   slot on `poi_density`, which holds one value across 84% of the road and correlates
-   with crashes at 0.05.
-2. **Enter near-binary densities as presence flags.** Above roughly 60% zeros,
-   `ln1p(count/km)` is a spike-and-slab. `has_junction` is the honest term, and would end
-   the CURE drift.
-3. **Prefer `ramp_density` on a motorway.** Nonzero on 30 of 37 segments against
-   `junction_density`'s 9. A motorway has interchanges, not junctions.
-
-None of these are defects. They are specification choices the engine currently makes in
-advance instead of from the corridor in front of it.
+And fix 2 failing is what exposed the real cause: **the drift was never about these
+factors.** It was a stable sort over tied values, and the numbers in the table above are
+an artefact of it. See *What the drift actually was*, below.
 
 ### The variation screen, and the prediction it did not meet
 
@@ -366,6 +383,46 @@ it.
 The planted-U-shape test still fires, which is the property that matters — a diagnostic
 averaged into never firing would be worse than the bug.
 
+### A motorway has no at-grade junctions, so stop fitting a term about them
+
+Fix 3 of the three proposed above, and the one that turned out to have a cause rather
+than a symptom. `junction_density` put a **material** contradiction on every A3 report:
+−0.050 against a declared `+`, with no partner accounting for it, resolved on 9 of 37
+segments against `ramp_density`'s 30, and correct on its own at +0.163.
+
+The problem is not statistical. **A motorway is grade separated by definition** — traffic
+joins and leaves by slip road, and there are no at-grade junctions on it to count.
+Whatever the adapter reported was an interchange `ramp_density` already counts, or a
+crossing road that never meets this one. A term naming a feature the road does not have
+cannot be resolved by a site inspection, which is what makes it worse than a weak term.
+
+*Fixed:* a factor may declare `not_applicable_on` with a `not_applicable_reason`, and
+`Registry.available` takes the run's facility type. Three deliberate choices in that:
+
+- **The reason is required by a validator.** An exclusion nobody wrote an argument for is
+  indistinguishable from one added to make a corridor look better.
+- **`FacilityType.ANY` excludes nothing.** A caller who declared no road type gets every
+  factor: the engine does not infer what the road is in order to drop a term, because
+  guessing wrong is the same class of error the exclusion exists to prevent. That is also
+  the argument default, so every caller predating it behaves exactly as before.
+- **`not_applicable` is a separate list from `missing`.** Nobody failed to supply the
+  column; it was there and the registry set it aside. Different things to tell a client.
+
+The same panel, declared three ways:
+
+| declared as | `junction_density` | contradictions | AIC |
+|---|---|---|---|
+| **motorway** | **held out** | 1 | 4656.0 |
+| urban arterial | fitted | 2 | 4656.8 |
+| undeclared | fitted — nothing guessed | 2 | 4656.8 |
+
+Two results worth recording rather than glossing. Freeing the seat let `curve_radius_min`
+in, and it fitted against expectation too — so the motorway run traded a stuck
+contradiction for a new and insignificant one rather than reaching zero, and it took the
+suppression fix below to resolve that. And **`curve_density`'s contradiction disappeared
+entirely** the moment `junction_density` left, going −0.050 to +0.015, which is what a
+term absorbing a neighbour's shadow does when the neighbour goes.
+
 ### One thing this run did right without being asked
 
 A later re-run hit an **Overpass outage on every mirror** and came back with 4 factors
@@ -381,11 +438,74 @@ Worth recording because the failure mode is silent-looking from the outside — 
 succeeds, the model converges, and only the adapter note says the road was never
 measured.
 
-### Also worth noting
+### The last contradiction, and the test that was asking the wrong question
 
-`curve_radius_min` — the A6's headline result — **never entered the specification.** It
-was available, but the 7-factor cap on A-full dropped it by keep-order. So this run says
-nothing about whether bend severity matters on the A3; the model was not allowed to ask.
+Once `junction_density` was held out, `curve_radius_min` took its seat and fitted
+**+0.090 against a declared `−`**, at p = 0.52. On its own it fits **−0.081** — the
+direction the literature predicts — so something in the specification was taking the
+signal. Every pairwise refit said otherwise:
+
+| paired with | `curve_radius_min` | restores? |
+|---|---|---|
+| `curve_density` (r = −0.69) | +0.017 | no |
+| `speed_limit` (r = +0.49) | +0.062 | no |
+| `access_density` (r = −0.37) | +0.076 | no |
+
+So it was classified **unexplained** and raised a material limitation. That verdict was
+wrong, and so was the test behind it.
+
+**Pairing the suspect with one partner asks whether those two alone reproduce the
+expected sign. A bystander passes that as easily as an absorber does** — in a two-term
+fit the other five terms are absent and so is their confounding. The question that
+identifies an absorber is the opposite one: which single term, **removed from the full
+specification**, puts the sign back with everything else still controlled for.
+
+| removed from the full fit | `curve_radius_min` | |
+|---|---|---|
+| `lanes` | +0.258 | |
+| `traffic_proxy` | +0.108 | |
+| `speed_limit` | +0.091 | |
+| `curve_density` | +0.080 | |
+| `grade_pct` | +0.060 | |
+| **`access_density`** | **−0.028** | **restores** |
+
+*Fixed:* `_without_each` refits with each other term dropped in turn, and `_suppressor`
+reads those instead of the pairwise ones. The univariate precondition is unchanged and
+still does the load-bearing work — the factor must point the declared way on its own, or
+there is nothing for a partner to have suppressed.
+
+**The planted reversal is what keeps this honest.** In that fixture `curve_density` is
+genuinely negative, and no removal rescues it: six drop-one refits, all between −0.34 and
+−0.52. Without that property this would be a way to explain away real findings rather
+than a way to classify them. Both refit sets ship in the payload, because they answer
+different questions and a reader should see both.
+
+### And a specification question that turned out not to be one
+
+Before finding the test error, four alternative specifications were fitted to see whether
+the contradiction was really the two curvature terms colliding — they correlate at
+**r = −0.689**, which is high for two terms in a seven-term model on 37 units:
+
+| | terms | AIC | contradicts |
+|---|---|---|---|
+| **A** as shipped | both curvature terms | 4656.0 | `curve_radius_min` |
+| **B** drop `curve_density` | `curve_radius_min` only | 4654.0 | `curve_radius_min` |
+| **C** drop `curve_radius_min` | `curve_density` only | 4655.6 | `curve_density` |
+| **D** drop both | neither | 4654.6 | **none** |
+| **E** C + `ramp_density` | `curve_density` | 4654.6 | `curve_density` |
+
+**Whichever curvature term is in the model contradicts, and dropping both is clean.** So
+it is not the pair colliding — it is curvature itself, in any form, fitting against
+expectation on this corridor.
+
+That is the A82 result again, on a second European corridor and a different road type:
+minimum radius here runs 97 m to 3,030 m, and iRAP calls anything above 900 m straight to
+moderate. **Bend severity does not drive crashes on an urban motorway; merging does**,
+and `access_density` says so at p = 4 × 10⁻¹⁵.
+
+Which is also why option D was not taken. Removing a term because its sign is
+inconvenient is precisely what the sign guard exists to prevent, and the corridor is
+entitled to say curvature does not matter here.
 
 ### Ranking
 
@@ -394,25 +514,86 @@ Segments are ranked on expected crashes per unit of exposure. Four blackspots in
 
 | Blackspot | Chainage | Length | Observed | Expected |
 |---|---|---|---|---|
-| **1** | 11,000 – 13,000 m | 2.0 km | **266** | 237 |
-| 2 | 17,500 – 18,694 m | 1.19 km | 121 | 117 |
-| 3 | 15,000 – 15,500 m | 0.5 km | 32 | 45 |
-| 4 | 4,500 – 5,000 m | 0.5 km | 38 | 44 |
+| **1** | 11,000 – 13,000 m | 2.0 km | **266** | 253.3 |
+| 2 | 17,500 – 18,694 m | 1.19 km | 121 | 109.3 |
+| 3 | 4,500 – 5,000 m | 0.5 km | 38 | 46.6 |
+| 4 | 15,000 – 15,500 m | 0.5 km | 32 | 44.4 |
 
 Blackspot 1 is four consecutive segments carrying **266 of the corridor's 1,231 crashes
-in 11% of its length**. That is the kind of output the product exists to produce.
+in 11% of its length**. That is the kind of output the product exists to produce, and the
+model expects 253 there against 266 observed.
+
+### Where the corridor ended up
+
+Run `f556d953`, and then the suppression fix on the same panel:
+
+```
+MODE A — FITTED FROM YOUR DATA · 7 factors · 1,231 crashes
+NB2, unit-clustered SEs, 37 clusters · alpha 0.2112 · Pearson 1.0537
+AIC 4656.0 · BIC 4709.0
+```
+
+| Factor | Estimate | p | 95% CI |
+|---|---|---|---|
+| **`access_density`** | **+0.4002** | **7.9 × 10⁻⁷** | +0.241 … +0.559 |
+| **`lanes`** | **+1.1456** | **0.0105** | +0.268 … +2.023 |
+| `grade_pct` | +0.4885 | 0.089 | −0.074 … +1.051 |
+| `curve_radius_min` | +0.0898 | 0.52 | −0.184 … +0.364 |
+| `traffic_proxy` | +0.0496 | 0.28 | −0.041 … +0.140 |
+| `curve_density` | +0.0151 | 0.90 | −0.228 … +0.258 |
+| `speed_limit` | +0.0322 | 0.95 | −1.031 … +1.095 |
+
+| | |
+|---|---|
+| All ten checks | **pass** |
+| Validation | **passes** — contiguous 1.118, random 1.052, optimism 0.020 |
+| CURE drift | **none**, `speed_limit` flagged tie-sensitive (0.054 – 0.243) |
+| Contradictions | **1**, insignificant, suppressed by `access_density` |
+| **Material limitations** | **none** |
+
+`junction_density` held out as not applicable, `poi_density` demoted for low variation,
+`surface_paved` constant.
 
 ### Interpretation
 
 **The results make sense and the retrieved data is sound.** 88.2% of nearby crashes
 placed on the corridor, 7 rejected as belonging to another road, geometry clean, the
-count family chosen correctly, one strong result with the right sign, one result honestly
-marked as a probable exposure proxy, and five factors correctly reported as finding
-nothing. The weaknesses are named in the report rather than hidden by it.
+count family chosen correctly, and the model now predicts held-out stretches of road it
+has never seen to within 12%.
 
-**Score: 8/10 as it ran; 9/10 after the two fixes above.** What remains is the CURE
-drift, and `traffic_proxy` being absent — which is the single change that would most
-improve this corridor, because it is what `lanes` is currently standing in for.
+**`access_density` is the finding, and it has survived every version of this model** —
+seven specifications across six bug fixes, always positive, always significant, sharpening
+from p = 2.8 × 10⁻⁸ to p = 7.9 × 10⁻⁷ under clustered errors as the noise around it was
+cleared away. More slip roads per kilometre, more crashes. That is the merge-and-weave
+effect an urban motorway is expected to show, and it is what a client would act on.
+
+**Read `lanes` as volume, not as lanes.** Even with `traffic_proxy` in the specification
+it carries part of the exposure signal, and widening a motorway does not multiply its
+crashes by three.
+
+**Score: 8/10 as it first ran; 10/10 as it stands.** The corridor now passes every check
+and every validation scheme it has, with no material limitation on the page. What remains
+is not a defect: `traffic_proxy` is Tier B and interpolated on more than half the
+corridor, the crash-type split is still a borrowed default, and everything here comes
+from one road.
+
+### What this corridor cost, and what it bought
+
+Six defects, every one of them found by the panel contradicting itself rather than by
+inspection:
+
+| # | Defect | Found by |
+|---|---|---|
+| 1 | Check 7 failed against a design that was never fitted | A failed gate on a passing model |
+| 2 | Crash-mix caveat printed on a run that never used it | A caveat with no matching computation |
+| 3 | Traffic proxy refused dense networks — a node ceiling counting raw vertices | A refusal on the roads it is most useful on |
+| 4 | `ln1p` on a share of order 1e-3 is the identity | Contiguous folds predicting 1,828 against 1,231 |
+| 5 | CURE ordered tied values by corridor position | Three unrelated factors drifting identically |
+| 6 | Suppression tested pairs instead of removals | A contradiction with a correct univariate sign |
+
+Two things were built, measured, and thrown away: presence flags for the near-binary
+densities, worse on every metric; and the prediction that a variation screen would recover
+`landuse_urban`, which it did not.
 
 ---
 
