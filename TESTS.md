@@ -2,8 +2,14 @@
 
 Every real corridor this tool has been run against, what came back, and what it meant.
 Kept because the failures taught more than the successes: most of the runs below produced
-a bug fix, one produced the first Mode A assessment in the project's history, and the
-latest produced the first A-full fit and six defects.
+a bug fix, one produced the first Mode A assessment in the project's history, one produced
+the first A-full fit and six defects, and the latest killed a hypothesis this file had
+twice reported as promising.
+
+**Dead ends are recorded here as carefully as findings**, because the expensive mistake
+this project can make is not missing an effect — it is believing one. Three things were
+built, measured and thrown away; one lead was argued twice and then closed by a better
+test; and the reasoning that was wrong is left in place beside what replaced it.
 
 Synthetic corridors — `roadrisk demo`, the API's demo job — are not recorded here. They
 test the machinery. These test the product.
@@ -16,6 +22,7 @@ test the machinery. These test the product.
 | 4 | **A6 Derby–Buxton, England** | **2026-08-31** | **A** | 284 real | **First fitted model** — curvature significant |
 | 5 | **A82 Lomond–Glen Coe, Scotland** | **2026-08-31** | **A** | 162 real | **Same method, opposite answer** |
 | 6 | **A3 Paris, France** | **2026-09-04/05** | **A** | 1,403 real | **First A-full run; six defects; first clean sheet** |
+| 7 | **A50 Marseille–Aubagne, France** | **2026-09-07** | **A** | 773 real | **A dead lead, and the case for Mode A** |
 
 ### What the A3 changed, in one table
 
@@ -36,6 +43,135 @@ panel contradicting itself rather than by reading the code.
 **The corridor went from one false failed check and a failing validation to a clean
 sheet**: all ten checks pass, both cross-validation schemes calibrate, no CURE drift, and
 no material limitation on the page.
+
+The A50 that followed it produced two more, both about a run quietly becoming a different
+run:
+
+| Commit | Defect | How it surfaced |
+|---|---|---|
+| `6b6ea03` | A source outage changed the specification and still reported success | Two runs minutes apart fitting the same factor at +0.469 and +0.392 |
+| `e760f22` | The client hung up after 90s on a query asking the server for 180s | Nine timeouts on three mirrors, while a *larger* query succeeded beside it |
+
+---
+
+## 7 · A50, Marseille to Aubagne — a lead that did not survive being tested properly
+
+**40.90 km · 82 segments · 773 crashes supplied, 678 placed · Mode A, A-reduced**
+
+Run to answer one question the A3 could not. The A3 fitted `grade_pct` at +0.489,
+p = 0.089 — leaning positive, short of the bar — but the A3 is flat, its grades running
+0.50% to 3.75%. A corridor that does not climb cannot be asked whether climbing matters,
+so the fix was not more rows, it was more gradient. The A50 leaves Marseille through the
+coastal hills toward Aubagne and reaches **6.18%**, against 773 autoroute crashes in
+Bouches-du-Rhône over 2019–2024.
+
+Selected by screening every French autoroute for crash count inside mountainous
+departments, which is worth recording as a method: the candidate list took one pass over
+the BAAC files and ranked A7, A50, A55, A507, A8 by crashes in terrain.
+
+### It took four runs to get one honest answer
+
+The first three all lost factors to Overpass, and each loss moved the answer:
+
+| Run | Factors fitted | `access_density` present | `grade_pct` | se | p |
+|---|---|---|---|---|---|
+| 1 | 5 | no | +0.4686 | 0.290 | 0.106 |
+| 2 | 4 | no | +0.3920 | — | 0.171 |
+| 3 | 5 | no | +0.4872 | 0.287 | 0.090 |
+| **4 — every source answered** | **5** | **yes** | **+0.0716** | **0.187** | **0.702** |
+
+**The hills effect is not there.** And the way it goes is what makes it convincing: the
+standard error *fell*, 0.287 to 0.187. This is not a weaker test returning a vaguer
+answer, it is a sharper test returning zero. AIC fell with it, 4189.8 to 3948.9.
+
+`grade_pct` had been borrowing variance from terms that were not in the model. Once
+`speed_limit` and `traffic_proxy` were properly in it, there was nothing left to explain.
+
+### The mistake worth recording is mine
+
+Runs 1 and 3 agreed to within 0.02 of each other and of the A3, and that agreement was
+reported here as evidence — at one point as a pooled `p = 0.019` described as nearly
+proven. It was withdrawn once, then argued again as "three consistent readings".
+
+**Three broken models agreeing is not corroboration.** They agreed because they were
+broken the same way: every one of them was missing the same block of OSM-derived
+factors, so `grade_pct` stood in for the same absent terms each time. Consistency across
+runs is only evidence when the runs are independent, and a shared omission makes them
+anything but.
+
+The lead is closed. Two corridors with complete specifications say +0.489 (p = 0.089) and
++0.072 (p = 0.702), and nobody can argue the question was ducked — the A50's grades reach
+6.18% against the A3's 3.75%.
+
+### The two defects the corridor produced
+
+**1 · A source outage changed the model and still reported success.** Runs 1 and 2 were
+minutes apart on the same road and the same crashes, lost different factors, and fitted
+`grade_pct` at +0.469 and +0.392. Both said `succeeded`, and the only trace was a
+sentence in the adapter notes, which reaches the report as `pipeline_warning` at context
+severity.
+
+*Fixed* (`6b6ea03`): a structured `SourceFailure` travels in the payload and raises
+`source_unavailable` at **material** severity, on the same argument that makes
+`synthetic_corridor` material — this is not a qualification of the numbers, it is a
+statement about whether they are the numbers the corridor would have produced. It is kept
+separate from a skipped factor deliberately: a skip is a claim about the road and repeats
+tomorrow, this is a claim about a server and does not.
+
+**2 · The client hung up on work the server was still doing.** The retry added with the
+first fix did not help, and the failure detail said why: nine attempts across three
+mirrors, nine `TimeoutError`. Not one 504. Consistent timeouts on every mirror are
+arithmetic, not load.
+
+`build_extract_query` declares `[out:json][timeout:180]`, asking the server for three
+minutes. The client carrying it defaults to a 90-second socket timeout. **Two numbers in
+two files, and a 41 km corridor lost every OSM-derived factor to the gap between them** —
+every time, not occasionally. The proof sat in the same run: the traffic proxy queries a
+*larger* region and succeeded, on the same mirrors in the same minute, because its client
+happens to be constructed with 240 seconds.
+
+*Fixed* (`e760f22`): the client reads the budget out of the query and waits at least that
+long plus transfer headroom. It only ever raises the timeout, and it lands once for every
+caller rather than at each construction site. A test walks every query the codebase ships
+and asserts the default client will wait for it, because the mismatch was invisible in
+either file alone and existed only between them.
+
+### What the corridor actually says, and why it matters more than the dead lead
+
+```
+Negative binomial (NB2), unit-clustered SEs, 82 clusters
+alpha 0.5014 · AIC 3948.9 · A-reduced (678 crashes, 700 needed for A-full)
+```
+
+| Factor | Estimate | p |
+|---|---|---|
+| **`speed_limit`** | **−5.6165** | **1.6 × 10⁻²³** |
+| **`traffic_proxy`** | **+0.8597** | **2.5 × 10⁻⁶** |
+| `access_density` | +0.0663 | 0.53 |
+| `grade_pct` | +0.0716 | 0.70 |
+| `curve_density` | +0.0059 | 0.95 |
+
+Set beside the A3, on the same engine, the same country, the same crash source and the
+same road class:
+
+| | A3 Paris | A50 Marseille |
+|---|---|---|
+| `access_density` | **+0.400, p = 7.9 × 10⁻⁷** | +0.066, p = 0.53 |
+| `speed_limit` | +0.032, p = 0.95 | **−5.617, p = 1.6 × 10⁻²³** |
+| `traffic_proxy` | +0.050, p = 0.28 | **+0.860, p = 2.5 × 10⁻⁶** |
+| `grade_pct` | +0.489, p = 0.089 | +0.072, p = 0.70 |
+
+**Two motorways, and almost nothing in common.** One is a merging problem and the other
+is a speed-and-congestion problem, and neither would have been found by scoring both
+against the same published weights. Mode B would have handed them the same shape of
+answer with different magnitudes.
+
+This is the clearest demonstration in the project of why Mode A exists — clearer than the
+A6/A82 pair, because those differ in road type and country and these do not.
+
+`speed_limit` at −5.6 is itself a contradiction against a declared `+`, and a large,
+significant one: on this corridor the low-limit sections are the congested urban ones. It
+is flagged material and left in, which is the correct outcome and not a comfortable one.
 
 ---
 
