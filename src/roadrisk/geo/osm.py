@@ -251,12 +251,40 @@ class HttpOverpassClient:
     #: Seconds before the second pass, doubling after. Overpass sheds load for seconds
     #: rather than minutes, so a short wait recovers most of it.
     backoff_s: float = 5.0
+    #: Added to a query's own declared timeout when that is the longer of the two, to
+    #: cover transferring a result the server has finished computing.
+    transfer_headroom_s: float = 30.0
     #: Injected so tests do not sleep. Nothing else should pass this.
     sleep: Callable[[float], None] = time.sleep
+
+    def _timeout_for(self, query: str) -> float:
+        """Never hang up on work the server was told it could still be doing.
+
+        **An Overpass query carries its own server-side budget** — `[out:json]
+        [timeout:180]` asks the server to keep going for three minutes. A socket
+        timeout below that abandons a request the server is still working on, and it
+        does so every time rather than occasionally, because it is arithmetic and not
+        luck.
+
+        The A50 east of Marseille is where this surfaced. Its extract query declares 180
+        and was carried by the default 90-second client: nine attempts across three
+        mirrors, nine timeouts. The traffic proxy's query over a *larger* region
+        succeeded in the same run, on the same mirrors, in the same minute — because the
+        client carrying it had been given 240 seconds. The corridor lost every
+        OSM-derived factor to a mismatch between two numbers in different files.
+
+        Reading the budget off the query fixes it once for every caller, including the
+        next one to construct a client without thinking about it.
+        """
+        declared = re.search(r"\[timeout:\s*(\d+)\s*\]", query)
+        if not declared:
+            return self.timeout_s
+        return max(self.timeout_s, float(declared.group(1)) + self.transfer_headroom_s)
 
     def __call__(self, query: str) -> dict[str, Any]:
         failures: list[str] = []
         attempts = max(self.attempts, 1)
+        timeout = self._timeout_for(query)
         for attempt in range(attempts):
             if attempt:
                 self.sleep(self.backoff_s * (2 ** (attempt - 1)))
@@ -266,9 +294,7 @@ class HttpOverpassClient:
                     request = urllib.request.Request(
                         endpoint, data=data, headers={"User-Agent": USER_AGENT}
                     )
-                    with urllib.request.urlopen(
-                        request, timeout=self.timeout_s
-                    ) as response:
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
                         return json.loads(response.read().decode())
                 except Exception as exc:  # noqa: BLE001 - try the next mirror
                     failures.append(
@@ -276,7 +302,8 @@ class HttpOverpassClient:
                     )
 
         raise CorridorError(
-            f"every Overpass mirror failed on all {attempts} attempt(s) — "
+            f"every Overpass mirror failed on all {attempts} attempt(s), each given "
+            f"{timeout:.0f}s — "
             + "; ".join(failures)
             + ". Mirrors return 504 under load; retry, or export the road manually "
             "(run `roadrisk centreline-help`)."

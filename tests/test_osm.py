@@ -729,6 +729,69 @@ class TestTheClientWaitsAndTriesAgain:
         with pytest.raises(CorridorError, match="all 3 attempt"):
             client("query")
 
+    def test_it_never_hangs_up_before_the_server_was_told_to(self, monkeypatch) -> None:
+        """The A50 bug: a 90s client carrying a query that asks the server for 180s.
+
+        Nine attempts across three mirrors, nine timeouts, and the corridor lost every
+        OSM-derived factor — while the *larger* network query succeeded in the same
+        minute on the same mirrors, because its client had been given 240 seconds.
+        """
+        seen: list[float] = []
+
+        def opener(request, timeout):  # noqa: ANN001
+            seen.append(timeout)
+            return _FakeResponse(b'{"elements": []}')
+
+        monkeypatch.setattr("urllib.request.urlopen", opener)
+        client = HttpOverpassClient(endpoints=("http://a",), timeout_s=90.0)
+
+        client("[out:json][timeout:180];way(1,2,3,4);out geom;")
+
+        assert seen == [210.0], "180s of server budget plus transfer headroom"
+
+    def test_a_generous_client_is_not_cut_down_to_the_query(self, monkeypatch) -> None:
+        """The guard only ever raises the timeout. A caller may still ask for more."""
+        seen: list[float] = []
+
+        def opener(request, timeout):  # noqa: ANN001
+            seen.append(timeout)
+            return _FakeResponse(b'{"elements": []}')
+
+        monkeypatch.setattr("urllib.request.urlopen", opener)
+        client = HttpOverpassClient(endpoints=("http://a",), timeout_s=400.0)
+
+        client("[out:json][timeout:180];way(1,2,3,4);out geom;")
+
+        assert seen == [400.0]
+
+    def test_a_query_declaring_nothing_keeps_the_client_timeout(self, monkeypatch) -> None:
+        seen: list[float] = []
+
+        def opener(request, timeout):  # noqa: ANN001
+            seen.append(timeout)
+            return _FakeResponse(b'{"elements": []}')
+
+        monkeypatch.setattr("urllib.request.urlopen", opener)
+        client = HttpOverpassClient(endpoints=("http://a",), timeout_s=90.0)
+
+        client("way(1,2,3,4);out geom;")
+
+        assert seen == [90.0]
+
+    def test_every_shipped_query_is_carried_by_a_client_that_waits_for_it(self) -> None:
+        """The mismatch was between two numbers in different files. Pin it shut."""
+        from roadrisk.geo.adapters.osmdata import build_extract_query
+
+        client = HttpOverpassClient()
+        line = [(ORIGIN_LAT, ORIGIN_LON), (ORIGIN_LAT + 0.01, ORIGIN_LON + 0.01)]
+        for query in (
+            build_query("B9", BoundingBox(34.9, 32.8, 35.0, 32.9)),
+            build_extract_query(line),
+        ):
+            declared = re.search(r"\[timeout:\s*(\d+)\s*\]", query)
+            assert declared, "every shipped query declares a server budget"
+            assert client._timeout_for(query) >= float(declared.group(1))
+
     def test_a_healthy_mirror_never_sleeps(self, monkeypatch) -> None:
         monkeypatch.setattr(
             "urllib.request.urlopen",
