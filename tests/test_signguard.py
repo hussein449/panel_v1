@@ -10,6 +10,8 @@ from roadrisk.core.ladder import Mode
 from roadrisk.core.registry import load_registry
 from roadrisk.core.signguard import DropOneRefit, _suppressor, _verdict
 from roadrisk.demo import TRUE_EFFECTS, synthetic_panel
+from roadrisk.report import collect_limitations
+from roadrisk.report.limitations import CAVEAT, CONTEXT, MATERIAL
 
 
 @pytest.fixture(scope="module")
@@ -212,3 +214,65 @@ class TestSuppressionIsNotContradiction:
         assert "suppressed_by" in flagged
         assert "suppressed" in flagged
         assert flagged["without"], "the drop-one refits must travel with the finding"
+
+
+class TestHowLoudlyAContradictionIsReported:
+    """A coefficient that cannot be told apart from zero has no sign to contradict with.
+
+    The A3 fitted `speed_limit` at +0.032 and, one factor later, at −0.037 — p = 0.95
+    both times, noise both times — and only the second raised a material heading.
+    """
+
+    def finding(self, *, significant: bool, suppressed_by=None) -> dict:
+        return {
+            "factor": "speed_limit",
+            "contradicts": True,
+            "significant": significant,
+            "suppressed_by": suppressed_by,
+        }
+
+    def codes_for(self, findings: list[dict]) -> dict[str, str]:
+        found = collect_limitations({"sign_guard": {"findings": findings}}, None)
+        return {item.code: item.severity for item in found}
+
+    def test_a_firm_wrong_sign_is_material(self) -> None:
+        codes = self.codes_for([self.finding(significant=True)])
+
+        assert codes["sign_contradiction"] == MATERIAL
+        assert "sign_contradiction_uncertain" not in codes
+
+    def test_a_wrong_sign_that_is_noise_is_only_a_caveat(self) -> None:
+        codes = self.codes_for([self.finding(significant=False)])
+
+        assert codes["sign_contradiction_uncertain"] == CAVEAT
+        assert "sign_contradiction" not in codes
+
+    def test_the_weak_one_is_still_reported(self) -> None:
+        """Graded down, not hidden — the corridor still failed to reproduce an effect."""
+        found = collect_limitations(
+            {"sign_guard": {"findings": [self.finding(significant=False)]}}, None
+        )
+        item = next(f for f in found if f.code == "sign_contradiction_uncertain")
+
+        assert "speed_limit" in item.detail
+        assert "cannot be told apart from zero" in item.detail
+        assert "did not reproduce an effect" in item.detail
+
+    def test_both_kinds_are_kept_apart(self) -> None:
+        codes = self.codes_for(
+            [
+                self.finding(significant=True),
+                {**self.finding(significant=False), "factor": "curve_density"},
+            ]
+        )
+
+        assert codes["sign_contradiction"] == MATERIAL
+        assert codes["sign_contradiction_uncertain"] == CAVEAT
+
+    def test_suppression_still_outranks_both(self) -> None:
+        codes = self.codes_for(
+            [self.finding(significant=True, suppressed_by="access_density")]
+        )
+
+        assert codes["sign_suppressed"] == CONTEXT
+        assert "sign_contradiction" not in codes

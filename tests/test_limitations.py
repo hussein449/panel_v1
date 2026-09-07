@@ -180,8 +180,18 @@ class TestItIsGeneratedFromTheRun:
         assert "lanes" in found.detail
 
     def test_a_sign_contradiction_is_material_and_named(self) -> None:
+        """Material when the estimate is firm. An insignificant one is graded down —
+        see `TestHowLoudlyAContradictionIsReported` in test_signguard.py."""
         assessment = {
-            "sign_guard": {"findings": [{"factor": "curve_density", "contradicts": True}]}
+            "sign_guard": {
+                "findings": [
+                    {
+                        "factor": "curve_density",
+                        "contradicts": True,
+                        "significant": True,
+                    }
+                ]
+            }
         }
 
         found = next(

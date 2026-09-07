@@ -364,22 +364,55 @@ def _sign_guard(assessment: Mapping[str, Any]) -> list[Limitation]:
     if not unexplained:
         return found
 
-    names = ", ".join(str(f.get("factor")) for f in unexplained)
-    found.append(
-        Limitation(
-            code="sign_contradiction",
-            severity=MATERIAL,
-            title="A factor's effect came out opposite to what the evidence expects",
-            detail=(
-                f"{names} fitted with the opposite sign to the one the literature "
-                "predicts, and no single correlated factor accounts for it. That "
-                "usually means it is standing in for something else on "
-                "this corridor rather than causing anything, and it is not "
-                "interpretable as a cause. It is reported rather than removed, because "
-                "hiding it would hide the finding."
-            ),
+    # **A coefficient that cannot be told apart from zero has no sign to contradict
+    # anything with.** Grading one material says the model is specified wrongly; grading
+    # an insignificant one that way says it about a coin flip. The A3 is the case: it
+    # fitted `speed_limit` at +0.032 and then, one factor later, at -0.037 — p = 0.95
+    # both times, noise both times — and only the second raised a material heading.
+    #
+    # Still reported, and still reported as a disagreement with the literature, because
+    # a factor failing to reproduce a known effect is worth a reader's attention. What
+    # changes is how loudly, and the sign guard already carries the number that decides.
+    firm = [f for f in unexplained if f.get("significant")]
+    uncertain = [f for f in unexplained if not f.get("significant")]
+
+    if firm:
+        names = ", ".join(str(f.get("factor")) for f in firm)
+        found.append(
+            Limitation(
+                code="sign_contradiction",
+                severity=MATERIAL,
+                title="A factor's effect came out opposite to what the evidence expects",
+                detail=(
+                    f"{names} fitted with the opposite sign to the one the literature "
+                    "predicts, significantly, and no single correlated factor accounts "
+                    "for it. A firm estimate pointing the wrong way is a specification "
+                    "problem rather than noise: the term is standing in for something "
+                    "else on this corridor rather than causing anything, and it is not "
+                    "interpretable as a cause. It is reported rather than removed, "
+                    "because hiding it would hide the finding."
+                ),
+            )
         )
-    )
+
+    if uncertain:
+        names = ", ".join(str(f.get("factor")) for f in uncertain)
+        found.append(
+            Limitation(
+                code="sign_contradiction_uncertain",
+                severity=CAVEAT,
+                title="A factor pointed the wrong way, too weakly to mean anything",
+                detail=(
+                    f"{names} fitted against the direction the literature predicts, but "
+                    "not significantly — the estimate cannot be told apart from zero, so "
+                    "its sign is not information and neither is the disagreement. What "
+                    "it does say is that this corridor did not reproduce an effect the "
+                    "literature expects, which is worth knowing and is not the same as "
+                    "evidence against it. Do not read the coefficient, in either "
+                    "direction."
+                ),
+            )
+        )
     return found
 
 
