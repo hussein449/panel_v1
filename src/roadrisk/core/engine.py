@@ -95,6 +95,9 @@ class Assessment:
     #: Held out because they do not describe this kind of road — a motorway has no
     #: at-grade junctions to count. Distinct from a column nobody supplied.
     inapplicable_factors: list[Factor] = field(default_factory=list)
+    #: (set aside, kept) where two factors measure one property and the registry
+    #: prefers the cited measurement. Distinct again: the data was there and usable.
+    superseded_factors: list[tuple[Factor, Factor]] = field(default_factory=list)
     fit: FitResult | None = None
     index: IndexResult | None = None
     sign_guard: SignGuardReport | None = None
@@ -206,6 +209,15 @@ class Assessment:
                         "reason": f.not_applicable_reason.strip(),
                     }
                     for f in self.inapplicable_factors
+                ],
+                "superseded": [
+                    {
+                        "name": loser.name,
+                        "kept": winner.name,
+                        "measures": loser.measures,
+                        "reason": loser.measures_note.strip(),
+                    }
+                    for loser, winner in self.superseded_factors
                 ],
                 "dropped_for_collinearity": self.ladder.dropped_for_collinearity,
                 "demoted_for_no_variation": self.ladder.demoted_for_no_variation,
@@ -361,7 +373,7 @@ def assess(
         },
     )
 
-    available, missing, constant, inapplicable, design = _resolve_factors(
+    available, missing, constant, inapplicable, superseded, design = _resolve_factors(
         prepared, active_registry, log, active_context.facility_type
     )
 
@@ -410,6 +422,7 @@ def assess(
         "missing_factors": missing,
         "constant_factors": constant,
         "inapplicable_factors": inapplicable,
+        "superseded_factors": superseded,
         "manifest": manifest,
         "log": log,
     }
@@ -861,13 +874,37 @@ def _resolve_factors(
     registry: Registry,
     log: RunLog,
     facility_type: FacilityType = FacilityType.ANY,
-) -> tuple[list[Factor], list[Factor], list[str], list[Factor], pd.DataFrame]:
+) -> tuple[
+    list[Factor],
+    list[Factor],
+    list[str],
+    list[Factor],
+    list[tuple[Factor, Factor]],
+    pd.DataFrame,
+]:
     """Work out which registry factors this panel can actually support."""
     available = registry.available(prepared.columns, facility_type=facility_type)
     missing = registry.missing(prepared.columns)
     inapplicable = registry.not_applicable(
         prepared.columns, facility_type=facility_type
     )
+    superseded = registry.superseded(prepared.columns, facility_type=facility_type)
+
+    for loser, winner in registry.superseded(
+        prepared.columns, facility_type=facility_type
+    ):
+        log.warning(
+            "factors",
+            "superseded_measurement",
+            (
+                f"'{loser.name}' and '{winner.name}' both measure "
+                f"{loser.measures.replace('_', ' ')}; '{winner.name}' is fitted "
+                f"because it carries a published weight. {loser.measures_note.strip()}"
+            ),
+            factor=loser.name,
+            kept=winner.name,
+            measures=loser.measures,
+        )
 
     for factor in inapplicable:
         log.warning(
@@ -919,7 +956,7 @@ def _resolve_factors(
         ),
         available=[f.name for f in available],
     )
-    return available, missing, constant, inapplicable, design
+    return available, missing, constant, inapplicable, superseded, design
 
 
 def _mode_b_assessment(

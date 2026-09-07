@@ -264,6 +264,31 @@ def _factors(assessment: Mapping[str, Any]) -> list[Limitation]:
             )
         )
 
+    superseded = factors.get("superseded") or []
+    if superseded:
+        found.append(
+            Limitation(
+                code="factors_superseded",
+                severity=CONTEXT,
+                title="Two factors measured the same thing, so one was set aside",
+                detail=(
+                    " ".join(
+                        f"{item.get('name')} and {item.get('kept')} are both "
+                        f"measurements of "
+                        f"{str(item.get('measures', '')).replace('_', ' ')}; "
+                        f"{item.get('kept')} was fitted because it carries a published "
+                        "weight."
+                        for item in superseded
+                    )
+                    + " Two views of one property cannot be told apart over a corridor "
+                    "of this length, and a model asked to try reports a sign for each "
+                    "that depends on whether the other is present. The one that was "
+                    "set aside is not absent from the road, and its effect is inside "
+                    "the one that stayed."
+                ),
+            )
+        )
+
     demoted = factors.get("demoted_for_no_variation") or []
     in_model = set(factors.get("in_model") or [])
     unseated = [name for name in demoted if name not in in_model]

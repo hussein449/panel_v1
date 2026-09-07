@@ -191,6 +191,23 @@ factors:
     transform: ln1p
     expected_sign: "+"
     drop_priority: 85
+    measures: horizontal_alignment
+    measures_note: >
+      One of two measurements of the same geometry, and the one without a published
+      weight behind it, so curve_radius_min is fitted instead wherever both are
+      available. They are not independent: counted off the same centreline they
+      correlate at -0.54 on the A3 through Paris and -0.74 on the A50 east of
+      Marseille, because a stretch with tight bends is a stretch with many of them.
+      Fitting both asks a model to separate two views of one property over a few dozen
+      segments, and it cannot. On the A50, curve_density fits -0.081 beside its partner
+      and +0.006 without it — the same road and the same crashes reaching opposite
+      conclusions about the sign, which reaches the report as a contradiction no site
+      inspection could resolve.
+      This factor is still the better measurement of one thing the other cannot see:
+      how OFTEN a driver is asked to turn, rather than how hard the worst turn is. If a
+      published weight for curve frequency along a segment is ever found, the
+      preference here reverses on its own, because the rule is "prefer the cited one"
+      rather than a name written into the code.
     missing_behaviour: >
       Horizontal alignment leaves the model entirely. Grade alone does not stand in
       for it.
@@ -517,6 +534,19 @@ factors:
     transform: ln
     expected_sign: "-"
     drop_priority: 55
+    measures: horizontal_alignment
+    measures_note: >
+      The cited measurement of horizontal alignment, carrying an HSM weight and an
+      Elvik one, so it is the one fitted where curve_density is also available. Note
+      that it wins on evidence and not on drop_priority: at 55 against curve_density's
+      85 it would lose the seat under keep-order alone, which is the situation this
+      declaration exists to correct. A quantity somebody has already related to crashes
+      elsewhere is a better bet than one nobody has.
+      Corroborated rather than justified by the corridors: on the A6 Derby-Buxton this
+      factor fits -0.4872 at p = 4.7e-07 while curve_density fits -0.048 at p = 0.85 on
+      the same panel. That is not the reason for the preference — choosing by which
+      term fits better would be selecting on the outcome — but it would have been worth
+      recording had it gone the other way.
     weights:
       - value: -0.1855
         family: hsm

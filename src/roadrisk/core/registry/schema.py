@@ -368,7 +368,38 @@ class Factor(BaseModel):
         ),
     )
 
+    measures: str = Field(
+        default="",
+        description=(
+            "The underlying road property this factor is one measurement of. Empty — "
+            "the usual case — means the factor stands alone. Two factors sharing a "
+            "construct are two views of one thing, and only the better-evidenced one "
+            "is fitted: a specification carrying both asks the model to separate them, "
+            "and on a corridor of a few dozen segments it cannot."
+        ),
+    )
+    measures_note: str = Field(
+        default="",
+        description=(
+            "Why this factor shares its construct, and what it measures differently. "
+            "Required whenever `measures` is set, for the same reason "
+            "`not_applicable_reason` is: a grouping nobody argued for is "
+            "indistinguishable from one that tidied away an inconvenient term."
+        ),
+    )
+
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def _constructs_carry_a_reason(self) -> Factor:
+        if self.measures and not self.measures_note.strip():
+            raise ValueError(
+                f"factor '{self.name}' declares it measures '{self.measures}' but "
+                "states no reason. Sharing a construct removes a factor from some "
+                "specifications, and that has to be argued where the next reader "
+                "will find it."
+            )
+        return self
 
     @model_validator(mode="after")
     def _exclusions_carry_a_reason(self) -> Factor:
@@ -437,6 +468,37 @@ class Factor(BaseModel):
                 )
             seen.add(key)
         return self
+
+
+def _one_per_construct(factors: list[Factor]) -> list[Factor]:
+    """Keep one measurement of each declared construct: the better-evidenced one.
+
+    **The rule is a standing one, decided in advance, and never read off the corridor.**
+    Within a construct the factor carrying a published weight is preferred, because a
+    quantity somebody has already related to crashes elsewhere is a better bet than one
+    nobody has; ties go to the higher ``drop_priority``, which is the registry's own
+    ordering. Choosing instead by which term fits this corridor better would be
+    selecting on the outcome, and every p-value downstream would be worth less for it.
+
+    Measured on the A3 and the A50: ``curve_radius_min`` and ``curve_density`` correlate
+    at −0.54 and −0.74, and the sign of each flips depending on whether the other is in
+    the specification. On the A50, ``curve_density`` fits −0.081 beside its partner and
+    +0.006 without it — same road, same crashes, opposite conclusions. A model asked to
+    separate two views of one geometry over 37 or 82 segments cannot do it, and reports
+    a contradiction that no site inspection could ever resolve.
+    """
+    by_construct: dict[str, list[Factor]] = {}
+    standalone: list[Factor] = []
+    for factor in factors:
+        if factor.measures:
+            by_construct.setdefault(factor.measures, []).append(factor)
+        else:
+            standalone.append(factor)
+    winners = [
+        max(group, key=lambda f: (f.is_sourced, f.drop_priority, f.name))
+        for group in by_construct.values()
+    ]
+    return [*standalone, *winners]
 
 
 class Registry(BaseModel):
@@ -509,13 +571,43 @@ class Registry(BaseModel):
         existed, rather than a guess.
         """
         columns = set(present_columns)  # type: ignore[arg-type]
-        return self.in_drop_order(
-            [
+        usable = [
+            f
+            for f in self.factors
+            if f.column in columns and f.applies_to(facility_type)
+        ]
+        return self.in_drop_order(_one_per_construct(usable))
+
+    def superseded(
+        self,
+        present_columns: object,
+        *,
+        facility_type: FacilityType = FacilityType.ANY,
+    ) -> list[tuple[Factor, Factor]]:
+        """Factors set aside as (loser, winner), because they measure the same thing.
+
+        Separate from :meth:`not_applicable`, which is about the road, and from
+        :meth:`missing`, which is about a column nobody supplied. This one is about the
+        registry declaring two views of one property.
+        """
+        columns = set(present_columns)  # type: ignore[arg-type]
+        usable = [
+            f
+            for f in self.factors
+            if f.column in columns and f.applies_to(facility_type)
+        ]
+        kept = {f.name for f in _one_per_construct(usable)}
+        pairs: list[tuple[Factor, Factor]] = []
+        for factor in self.in_drop_order(usable):
+            if factor.name in kept or not factor.measures:
+                continue
+            winner = next(
                 f
-                for f in self.factors
-                if f.column in columns and f.applies_to(facility_type)
-            ]
-        )
+                for f in usable
+                if f.name in kept and f.measures == factor.measures
+            )
+            pairs.append((factor, winner))
+        return pairs
 
     def not_applicable(
         self,

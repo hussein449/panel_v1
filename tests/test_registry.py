@@ -312,6 +312,95 @@ class TestSelection:
         assert keep[0].drop_priority == max(f.drop_priority for f in keep)
 
 
+class TestOneMeasurementPerConstruct:
+    """Two views of one property cannot be separated over a few dozen segments.
+
+    `curve_radius_min` and `curve_density` correlate at −0.54 on the A3 and −0.74 on the
+    A50, and the sign of each flips depending on whether the other is fitted: on the A50
+    `curve_density` reads −0.081 beside its partner and +0.006 without it, on the same
+    road and the same crashes.
+    """
+
+    COLUMNS = ["curve_radius_min", "curve_density", "grade_pct"]
+
+    def test_only_the_cited_measurement_is_fitted(
+        self, shipped_registry: Registry
+    ) -> None:
+        names = {f.name for f in shipped_registry.available(self.COLUMNS)}
+
+        assert "curve_radius_min" in names
+        assert "curve_density" not in names
+        assert "grade_pct" in names, "factors outside a construct are untouched"
+
+    def test_evidence_beats_keep_order(self, shipped_registry: Registry) -> None:
+        """The situation the declaration exists to correct.
+
+        `curve_density` has the higher drop_priority — 85 against 55 — so keep-order
+        alone would give it the seat. The cited factor wins anyway.
+        """
+        radius = shipped_registry.by_name("curve_radius_min")
+        density = shipped_registry.by_name("curve_density")
+
+        assert density.drop_priority > radius.drop_priority
+        assert radius.is_sourced and not density.is_sourced
+        assert {f.name for f in shipped_registry.available(self.COLUMNS)} == {
+            "curve_radius_min",
+            "grade_pct",
+        }
+
+    def test_the_loser_is_reported_with_the_winner(
+        self, shipped_registry: Registry
+    ) -> None:
+        pairs = shipped_registry.superseded(self.COLUMNS)
+
+        assert [(a.name, b.name) for a, b in pairs] == [
+            ("curve_density", "curve_radius_min")
+        ]
+
+    def test_a_construct_with_one_member_present_keeps_it(
+        self, shipped_registry: Registry
+    ) -> None:
+        """Nothing to choose between, so nothing is set aside."""
+        names = {f.name for f in shipped_registry.available(["curve_density"])}
+
+        assert names == {"curve_density"}
+        assert shipped_registry.superseded(["curve_density"]) == []
+
+    def test_available_and_superseded_do_not_overlap(
+        self, shipped_registry: Registry
+    ) -> None:
+        columns = shipped_registry.columns
+        kept = {f.name for f in shipped_registry.available(columns)}
+        gone = {a.name for a, _ in shipped_registry.superseded(columns)}
+
+        assert not kept & gone
+
+    def test_a_construct_without_an_argument_is_refused(self) -> None:
+        base = {
+            "name": "x",
+            "label": "x",
+            "column": "x",
+            "transform": "identity",
+            "expected_sign": "+",
+            "drop_priority": 10,
+            "missing_behaviour": "lost",
+            "adapters": [{"name": "osm", "tier": "A", "licence": "ODbL"}],
+            "measures": "horizontal_alignment",
+        }
+        with pytest.raises(ValidationError, match="states no reason"):
+            Factor.model_validate(base)
+
+        Factor.model_validate({**base, "measures_note": "one of two views"})
+
+    def test_the_shipped_pair_argue_their_case(
+        self, shipped_registry: Registry
+    ) -> None:
+        for name in ("curve_radius_min", "curve_density"):
+            factor = shipped_registry.by_name(name)
+            assert factor.measures == "horizontal_alignment"
+            assert "correlate" in factor.measures_note or "cited" in factor.measures_note
+
+
 class TestFacilityApplicability:
     """A factor naming a feature the road does not have is not a weak term; it is a
     term about something else, and it has to be held out rather than fitted."""

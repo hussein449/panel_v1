@@ -87,6 +87,21 @@ class MissingFactor(Payload):
     missing_behaviour: str
 
 
+class SupersededFactor(Payload):
+    """A factor set aside because another measures the same property, with evidence.
+
+    Different again from :class:`MissingFactor` and :class:`InapplicableFactor`: the
+    column was present, and the property is real on this road. Two measurements of one
+    thing cannot be separated over a few dozen segments, so the registry keeps the one
+    the literature has already related to crashes.
+    """
+
+    name: str
+    kept: str
+    measures: str
+    reason: str
+
+
 class InapplicableFactor(Payload):
     """A factor whose data was present and which was set aside anyway.
 
@@ -112,6 +127,9 @@ class FactorSummary(Payload):
     #: Factors held out because they name a feature this kind of road does not have —
     #: at-grade junctions on a motorway. Their data was present; they were not fitted.
     not_applicable_here: list[InapplicableFactor]
+    #: Factors set aside because another measures the same property with published
+    #: evidence behind it. Their data was present and usable.
+    superseded: list[SupersededFactor]
     in_model: list[str]
 
 

@@ -376,6 +376,7 @@ export interface FactorSummary {
   dropped_for_collinearity: string[];
   demoted_for_no_variation: string[];
   not_applicable_here: InapplicableFactor[];
+  superseded: SupersededFactor[];
   in_model: string[];
 }
 
@@ -844,6 +845,21 @@ export interface SplineCurve {
   y: number[];
   lower: number[];
   upper: number[];
+}
+
+/**
+ * A factor set aside because another measures the same property, with evidence.
+ *
+ * Different again from :class:`MissingFactor` and :class:`InapplicableFactor`: the
+ * column was present, and the property is real on this road. Two measurements of one
+ * thing cannot be separated over a few dozen segments, so the registry keeps the one
+ * the literature has already related to crashes.
+ */
+export interface SupersededFactor {
+  name: string;
+  kept: string;
+  measures: string;
+  reason: string;
 }
 
 /**
