@@ -844,7 +844,12 @@ class TestPipelineIntegration:
 
         assert "curve_radius_min" in built.panel.columns
         assert "roadside_object_density" not in built.panel.columns
-        assert any("Mapillary fetch failed" in note for note in built.warnings)
+        # Structured, not only prose: the limitations page reads this to say at material
+        # severity that the run is not comparable with one taken when the source was up.
+        assert [f.source for f in built.source_failures] == ["Mapillary"]
+        assert built.source_failures[0].covers == "roadside_object_density"
+        assert "token expired" in built.source_failures[0].detail
+        assert any("could not be reached" in note for note in built.warnings)
 
     def test_a_failed_network_fetch_costs_only_the_traffic_proxy(self, units) -> None:
         def failing(query: str):
@@ -860,7 +865,21 @@ class TestPipelineIntegration:
 
         assert "curve_radius_min" in built.panel.columns
         assert "traffic_proxy" not in built.panel.columns
-        assert any("strategic network fetch failed" in note for note in built.warnings)
+        assert [f.covers for f in built.source_failures] == ["traffic_proxy"]
+        assert "Overpass" in built.source_failures[0].source
+        assert any("could not be reached" in note for note in built.warnings)
+
+    def test_a_source_that_answers_leaves_no_failure_behind(self) -> None:
+        """The flag must mean something, so it has to be absent on a healthy run."""
+        built = build_corridor_panel(
+            [(lat, lon) for lon, lat in straight()],
+            periods=["2024-01"],
+            name="B9",
+            target_length_m=UNIT_M,
+        )
+
+        assert built.source_failures == []
+        assert built.as_dict()["source_failures"] == []
 
     def test_the_pipeline_stays_offline_unless_asked(self) -> None:
         built = build_corridor_panel(

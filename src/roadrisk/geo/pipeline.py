@@ -31,6 +31,7 @@ from roadrisk.geo.adapters import (
     OsmExtract,
     PointSampler,
     RoadGraph,
+    SourceFailure,
     collect_notes,
     compute_grade,
     compute_landcover,
@@ -102,6 +103,16 @@ class CorridorPanel:
     #: produced by somebody who had just typed `--demo`, and from 5.1d one can reach a
     #: person who did not ask for it and has no other way to tell.
     synthetic: bool = False
+
+    @property
+    def source_failures(self) -> list[SourceFailure]:
+        """Sources that could not be reached on this run.
+
+        Read off the adapters rather than stored separately, so it cannot drift from
+        what actually happened. Non-empty means the specification this run fitted
+        depends on which servers were up, and the report says so at material severity.
+        """
+        return [a.source_failure for a in self.adapters if a.source_failure is not None]
 
     @property
     def n_units(self) -> int:
@@ -279,6 +290,14 @@ class CorridorPanel:
             "fusion_notes": list(self.fusion.notes),
             "warnings": list(self.warnings),
             "synthetic": self.synthetic,
+            "source_failures": [
+                {
+                    "source": failure.source,
+                    "covers": failure.covers,
+                    "detail": failure.detail,
+                }
+                for failure in self.source_failures
+            ],
         }
 
 
@@ -639,12 +658,14 @@ def _osm_branch(
     """
     extract = osm
     notes: list[str] = []
+    failure: SourceFailure | None = None
     if extract is None and client is not None:
-        extract, fetch_warnings = _fetch_extract(corridor, client, ref)
-        notes.extend(fetch_warnings)
+        extract, failure = _fetch_extract(corridor, client, ref)
+        if failure is not None:
+            notes.append(_failure_note(failure))
 
     if extract is None:
-        return [AdapterResult(name="osm", notes=notes)]
+        return [AdapterResult(name="osm", notes=notes, source_failure=failure)]
 
     notes.extend(extract.warnings)
     tags = read_tags(extract, segmentation, registry=registry, ref=ref or extract.ref)
@@ -662,12 +683,16 @@ def _network_branch(
 ) -> list[AdapterResult]:
     graph = network
     notes: list[str] = []
+    failure: SourceFailure | None = None
     if graph is None and client is not None:
-        graph, network_warnings = _fetch_network(corridor, client)
-        notes.extend(network_warnings)
+        graph, failure = _fetch_network(corridor, client)
+        if failure is not None:
+            notes.append(_failure_note(failure))
 
     if graph is None:
-        return [AdapterResult(name="traffic_proxy", notes=notes)]
+        return [
+            AdapterResult(name="traffic_proxy", notes=notes, source_failure=failure)
+        ]
 
     result = compute_traffic_proxy(segmentation, graph, registry=registry)
     result.notes.extend(notes)
@@ -680,13 +705,14 @@ def _mapillary_branch(
     registry: Registry,
     client: MapillaryClient,
 ) -> list[AdapterResult]:
-    features, notes = _fetch_features(corridor, client)
+    features, failure = _fetch_features(corridor, client)
     if features is None:
-        return [AdapterResult(name="mapillary", notes=list(notes))]
+        notes = [_failure_note(failure)] if failure is not None else []
+        return [
+            AdapterResult(name="mapillary", notes=notes, source_failure=failure)
+        ]
 
-    result = compute_object_density(segmentation, features, registry=registry)
-    result.notes.extend(notes)
-    return [result]
+    return [compute_object_density(segmentation, features, registry=registry)]
 
 
 def _imagery_branch(corridor: Corridor) -> list[AdapterResult]:
@@ -705,57 +731,76 @@ def _imagery_branch(corridor: Corridor) -> list[AdapterResult]:
     return [AdapterResult(name="imagery", notes=list(imagery_notes(corridor)))]
 
 
+def _failure_note(failure: SourceFailure) -> str:
+    """The sentence form, kept for the log and the notes list.
+
+    The structured record is what the limitations page reads; this is what somebody
+    watching the run sees go past.
+    """
+    return (
+        f"{failure.source} could not be reached, so {failure.covers} is absent from "
+        f"this panel: {failure.detail} This is a server outage, not a property of the "
+        "road — the same corridor fetched later will fit a different specification, so "
+        "do not compare this run with another until it has been re-run."
+    )
+
+
 def _fetch_extract(
     corridor: Corridor,
     client: OverpassClient,
     ref: str | None,
-) -> tuple[OsmExtract | None, list[str]]:
+) -> tuple[OsmExtract | None, SourceFailure | None]:
     """Fetch the OSM extract, degrading loudly rather than losing the whole run.
 
     Overpass mirrors return 504 under load often enough that a corridor's crash data,
     segmentation and curvature should not be thrown away because a volunteer-run server
-    was busy. The failure is reported at the top of the run, not swallowed.
+    was busy. **But degrading has to be loud in the payload, not only in the log** —
+    the failure returns a :class:`SourceFailure` rather than a sentence, because a run
+    that lost factors to server load is not comparable with one that did not, and a
+    reader who was not watching the console has no other way to tell.
     """
     try:
-        return fetch_extract(corridor, client=client, ref=ref), []
+        return fetch_extract(corridor, client=client, ref=ref), None
     except CorridorError as exc:
-        return None, [
-            "The OSM attribute fetch failed, so every OSM-derived factor is absent from "
-            f"this panel: {exc} Curvature and the crash counts are unaffected. Re-run "
-            "to pick the factors up."
-        ]
+        return None, SourceFailure(
+            source="OpenStreetMap (Overpass)",
+            covers="every OSM-derived factor — tags and densities alike",
+            detail=str(exc),
+        )
 
 
 def _fetch_network(
     corridor: Corridor,
     client: OverpassClient,
-) -> tuple[RoadGraph | None, list[str]]:
+) -> tuple[RoadGraph | None, SourceFailure | None]:
     """Fetch the regional network, degrading loudly rather than losing the run.
 
     This is by far the largest query the pipeline makes — a whole region rather than a
     ribbon — so it is the one most likely to meet a busy mirror.
     """
     try:
-        return fetch_network(corridor, client=client), []
+        return fetch_network(corridor, client=client), None
     except CorridorError as exc:
-        return None, [
-            f"The strategic network fetch failed, so traffic_proxy is absent: {exc} "
-            "Every other factor is unaffected."
-        ]
+        return None, SourceFailure(
+            source="OpenStreetMap (Overpass), strategic network",
+            covers="traffic_proxy",
+            detail=str(exc),
+        )
 
 
 def _fetch_features(
     corridor: Corridor,
     client: MapillaryClient,
-) -> tuple[Any | None, list[str]]:
+) -> tuple[Any | None, SourceFailure | None]:
     """Fetch Mapillary detections, degrading loudly."""
     try:
-        return fetch_features(corridor, client=client), []
+        return fetch_features(corridor, client=client), None
     except CorridorError as exc:
-        return None, [
-            f"The Mapillary fetch failed, so roadside_object_density is absent: {exc} "
-            "Every other factor is unaffected."
-        ]
+        return None, SourceFailure(
+            source="Mapillary",
+            covers="roadside_object_density",
+            detail=str(exc),
+        )
 
 
 __all__ = ["CorridorPanel", "build_corridor_panel"]

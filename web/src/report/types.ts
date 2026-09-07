@@ -236,6 +236,7 @@ export interface Corridor {
   fusion_notes: string[];
   warnings: string[];
   synthetic?: boolean | null;
+  source_failures?: SourceFailure[] | null;
 }
 
 /**
@@ -806,6 +807,19 @@ export interface SnapReport {
   n_dropped: number;
   snap_rate: number;
   dropped_reasons: Record<string, number>;
+}
+
+/**
+ * A source that could not be reached, and what the run lost because of it.
+ *
+ * Not the same thing as an :class:`AdapterSkip`. A skip is a statement about the road
+ * and repeats; this is a statement about a server and does not, so the specification
+ * a run fitted after one of these is an accident of when the run happened.
+ */
+export interface SourceFailure {
+  source: string;
+  covers: string;
+  detail: string;
 }
 
 /**

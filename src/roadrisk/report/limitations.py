@@ -549,6 +549,38 @@ def _geography(corridor: Mapping[str, Any]) -> list[Limitation]:
             )
         )
 
+    failures = corridor.get("source_failures") or []
+    if failures:
+        # Material, and for the same reason `synthetic_corridor` is: this is not a
+        # qualification of the numbers, it is a statement about whether they are the
+        # numbers this corridor would have produced. Everything else on this page holds
+        # if the run is repeated. This one says the run is not repeatable — the same
+        # road and the same crashes fetched an hour later fit a different specification.
+        #
+        # It was a sentence in the adapter notes until the A50 was run twice minutes
+        # apart, lost different factors to Overpass each time, and reported `succeeded`
+        # on both. The two runs disagreed about a coefficient by a fifth of its value,
+        # and nothing a reader could see distinguished them.
+        found.append(
+            Limitation(
+                code="source_unavailable",
+                severity=MATERIAL,
+                title="A data source could not be reached, so factors are missing",
+                detail=(
+                    " ".join(
+                        f"{item.get('source')} was unreachable, so "
+                        f"{item.get('covers')} is absent."
+                        for item in failures
+                    )
+                    + " These factors are missing because a server was down, not "
+                    "because this road lacks them, so the specification fitted here is "
+                    "an accident of when the run happened. Re-run before comparing "
+                    "this assessment with any other, including an earlier one of this "
+                    "same corridor."
+                ),
+            )
+        )
+
     snap = corridor.get("snap")
     if snap and snap.get("n_supplied"):
         dropped_reasons = snap.get("dropped_reasons") or {}

@@ -281,6 +281,75 @@ class TestTheStandingCaveats:
         assert "panel_supplied" not in found
 
 
+class TestAnUnreachableSource:
+    """A run that lost factors to a server outage is not comparable with any other.
+
+    The A50 east of Marseille was run twice minutes apart, lost different factors to
+    Overpass each time, and fitted `grade_pct` at +0.469 and +0.392. Both reported
+    success, and the difference lived only in the adapter notes.
+    """
+
+    def corridor(self, failures: list[dict]) -> dict:
+        return {"source_failures": failures}
+
+    def test_it_is_material_not_a_footnote(self) -> None:
+        found = collect_limitations(
+            {},
+            self.corridor(
+                [
+                    {
+                        "source": "OpenStreetMap (Overpass)",
+                        "covers": "every OSM-derived factor",
+                        "detail": "every mirror failed",
+                    }
+                ]
+            ),
+        )
+        item = next(f for f in found if f.code == "source_unavailable")
+
+        assert item.severity == MATERIAL
+
+    def test_it_names_the_source_and_what_was_lost(self) -> None:
+        found = collect_limitations(
+            {},
+            self.corridor(
+                [
+                    {
+                        "source": "Mapillary",
+                        "covers": "roadside_object_density",
+                        "detail": "token expired",
+                    }
+                ]
+            ),
+        )
+        item = next(f for f in found if f.code == "source_unavailable")
+
+        assert "Mapillary" in item.detail
+        assert "roadside_object_density" in item.detail
+
+    def test_it_says_the_run_is_not_comparable(self) -> None:
+        """The point of the limitation, and the thing a reader has to come away with."""
+        found = collect_limitations(
+            {},
+            self.corridor(
+                [{"source": "s", "covers": "c", "detail": "d"}]
+            ),
+        )
+        item = next(f for f in found if f.code == "source_unavailable")
+
+        assert "server was down, not" in item.detail
+        assert "Re-run before comparing" in item.detail
+
+    def test_a_healthy_run_says_nothing(self) -> None:
+        assert "source_unavailable" not in codes(
+            collect_limitations({}, self.corridor([]))
+        )
+
+    def test_a_run_predating_the_field_says_nothing(self) -> None:
+        """An absent list means the run predates the question, not that all was well."""
+        assert "source_unavailable" not in codes(collect_limitations({}, {}))
+
+
 class TestTheCrashMixCaveat:
     """The A3 bug: a fitted run apologised for an assumption it never made.
 

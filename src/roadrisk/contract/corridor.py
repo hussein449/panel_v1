@@ -99,6 +99,19 @@ class AdapterSkip(Payload):
     reason: str
 
 
+class SourceFailure(Payload):
+    """A source that could not be reached, and what the run lost because of it.
+
+    Not the same thing as an :class:`AdapterSkip`. A skip is a statement about the road
+    and repeats; this is a statement about a server and does not, so the specification
+    a run fitted after one of these is an accident of when the run happened.
+    """
+
+    source: str
+    covers: str
+    detail: str
+
+
 class AdapterRun(Payload):
     """What one adapter resolved and what it refused."""
 
@@ -249,3 +262,9 @@ class Corridor(Payload):
     #: it at all — and an absent flag means the run predates the question, not that the
     #: answer is no. `collect_limitations` says only what it knows.
     synthetic: bool | None = None
+    #: Sources that could not be reached, so this run fitted whatever survived them.
+    #:
+    #: Optional for the same reason `synthetic` is: a run stored before this existed
+    #: does not carry it, and an absent list means the run predates the question rather
+    #: than that every source answered.
+    source_failures: list[SourceFailure] | None = None

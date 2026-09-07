@@ -133,6 +133,31 @@ class SkippedFactor:
 
 
 @dataclass(frozen=True)
+class SourceFailure:
+    """A data source that could not be reached, and what the run lost because of it.
+
+    **Distinct from a skipped factor, and the distinction is the whole point.** A skip
+    is a statement about the road — no way carries the tag, the corridor is off the
+    strategic network — and it will say the same thing tomorrow. This is a statement
+    about a volunteer-run server being busy, and it will not.
+
+    Measured on the A50 east of Marseille: two runs minutes apart lost different factors
+    to Overpass timeouts and fitted ``grade_pct`` at +0.469 and +0.392, a difference
+    manufactured entirely by which mirror happened to answer. Both runs reported
+    ``succeeded``, and nothing above the adapter notes told them apart. A run whose
+    specification depends on server load is not comparable with any other run, and that
+    is a material fact about it rather than a footnote.
+    """
+
+    #: Named as a reader would recognise it: "OpenStreetMap (Overpass)".
+    source: str
+    #: What was being asked of it, in words: "every OSM-derived factor".
+    covers: str
+    #: The underlying error, verbatim, so a retry can be judged rather than guessed.
+    detail: str
+
+
+@dataclass(frozen=True)
 class AdapterResult:
     """Everything one adapter module produced on one corridor."""
 
@@ -140,6 +165,10 @@ class AdapterResult:
     resolved: list[FactorValues] = field(default_factory=list)
     skipped: list[SkippedFactor] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: Set when factors are absent because a source could not be reached, rather than
+    #: because the road does not have them. Never set for a refusal the adapter reasoned
+    #: its way to — those are skips, and they are reproducible.
+    source_failure: SourceFailure | None = None
 
     @property
     def columns(self) -> list[str]:
@@ -266,6 +295,7 @@ __all__ = [
     "AdapterResult",
     "FactorValues",
     "SkippedFactor",
+    "SourceFailure",
     "collect_notes",
     "require_slots",
     "resolve",

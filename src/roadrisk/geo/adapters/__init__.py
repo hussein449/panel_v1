@@ -59,6 +59,7 @@ from roadrisk.geo.adapters.base import (
     AdapterResult,
     FactorValues,
     SkippedFactor,
+    SourceFailure,
     collect_notes,
     resolve,
 )
@@ -134,6 +135,7 @@ __all__ = [
     "RasterProduct",
     "RoadGraph",
     "SkippedFactor",
+    "SourceFailure",
     "SourceAgreement",
     "Stations",
     "build_extract_query",

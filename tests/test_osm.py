@@ -15,6 +15,7 @@ import pytest
 from roadrisk.geo.errors import CorridorError
 from roadrisk.geo.osm import (
     BoundingBox,
+    HttpOverpassClient,
     Selector,
     build_query,
     canonical_ref,
@@ -673,3 +674,82 @@ class TestTheSelectorItself:
     def test_an_empty_value_is_refused(self) -> None:
         with pytest.raises(CorridorError, match="cannot be empty"):
             Selector.by_name("   ")
+
+
+class TestTheClientWaitsAndTriesAgain:
+    """Giving up on a busy mirror does not fail the run — it changes the model.
+
+    The pipeline degrades rather than raising, so a transient 504 produces a different
+    specification and a success. The A50 was run twice minutes apart and fitted
+    `grade_pct` at +0.469 and +0.392 for no reason but which mirror answered.
+    """
+
+    def test_a_mirror_that_recovers_on_the_second_pass_is_used(self, monkeypatch) -> None:
+        calls: list[str] = []
+
+        def opener(request, timeout):  # noqa: ANN001 - urlopen's shape
+            calls.append(request.full_url)
+            if len(calls) <= 2:
+                raise TimeoutError("504")
+            return _FakeResponse(b'{"elements": []}')
+
+        monkeypatch.setattr("urllib.request.urlopen", opener)
+        slept: list[float] = []
+        client = HttpOverpassClient(
+            endpoints=("http://a", "http://b"), sleep=slept.append
+        )
+
+        assert client("query") == {"elements": []}
+        assert len(calls) == 3, "both mirrors on pass one, then the first on pass two"
+        assert slept == [5.0], "it waited once before trying again"
+
+    def test_it_backs_off_by_doubling(self, monkeypatch) -> None:
+        def opener(request, timeout):  # noqa: ANN001
+            raise TimeoutError("504")
+
+        monkeypatch.setattr("urllib.request.urlopen", opener)
+        slept: list[float] = []
+        client = HttpOverpassClient(
+            endpoints=("http://a",), sleep=slept.append, attempts=4, backoff_s=2.0
+        )
+
+        with pytest.raises(CorridorError):
+            client("query")
+        assert slept == [2.0, 4.0, 8.0]
+
+    def test_it_gives_up_eventually_and_says_how_hard_it_tried(self, monkeypatch) -> None:
+        def opener(request, timeout):  # noqa: ANN001
+            raise TimeoutError("504")
+
+        monkeypatch.setattr("urllib.request.urlopen", opener)
+        client = HttpOverpassClient(
+            endpoints=("http://a", "http://b"), sleep=lambda _: None
+        )
+
+        with pytest.raises(CorridorError, match="all 3 attempt"):
+            client("query")
+
+    def test_a_healthy_mirror_never_sleeps(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            lambda request, timeout: _FakeResponse(b'{"elements": []}'),
+        )
+        slept: list[float] = []
+        client = HttpOverpassClient(endpoints=("http://a",), sleep=slept.append)
+
+        assert client("query") == {"elements": []}
+        assert slept == []
+
+
+class _FakeResponse:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None

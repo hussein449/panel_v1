@@ -34,9 +34,10 @@ from __future__ import annotations
 import json
 import math
 import re
+import time
 import urllib.parse
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -225,30 +226,57 @@ class OverpassClient(Protocol):
 
 @dataclass(frozen=True)
 class HttpOverpassClient:
-    """The default client. Tries each mirror in turn.
+    """The default client. Tries each mirror in turn, then waits and tries again.
 
     Overpass mirrors return 504 under load often enough that a single endpoint is not
     dependable — the Cyprus B9 fetch failed on the primary and succeeded on a mirror.
+
+    **One pass over the mirrors is not enough, and giving up costs more than it looks.**
+    A failed fetch does not fail the run: the pipeline degrades and fits whatever
+    factors it still has. So a busy minute does not produce an error somebody notices,
+    it produces a *different model*. The A50 east of Marseille was run twice minutes
+    apart, lost different factors to timeouts each time, and fitted ``grade_pct`` at
+    +0.469 and +0.392 — both reporting success.
+
+    Overpass 504s are load-shedding and clear in seconds, so the answer is to wait. Each
+    attempt walks every mirror; between attempts the client backs off, doubling. On the
+    defaults that is three passes over the mirror list across about fifteen seconds,
+    which turns most transient outages into a slower run rather than a quieter answer.
     """
 
     endpoints: tuple[str, ...] = OVERPASS_ENDPOINTS
     timeout_s: float = 90.0
+    #: Passes over the full mirror list. One is the behaviour this replaced.
+    attempts: int = 3
+    #: Seconds before the second pass, doubling after. Overpass sheds load for seconds
+    #: rather than minutes, so a short wait recovers most of it.
+    backoff_s: float = 5.0
+    #: Injected so tests do not sleep. Nothing else should pass this.
+    sleep: Callable[[float], None] = time.sleep
 
     def __call__(self, query: str) -> dict[str, Any]:
         failures: list[str] = []
-        for endpoint in self.endpoints:
-            try:
-                data = urllib.parse.urlencode({"data": query}).encode()
-                request = urllib.request.Request(
-                    endpoint, data=data, headers={"User-Agent": USER_AGENT}
-                )
-                with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
-                    return json.loads(response.read().decode())
-            except Exception as exc:  # noqa: BLE001 - try the next mirror
-                failures.append(f"{endpoint}: {type(exc).__name__}")
+        attempts = max(self.attempts, 1)
+        for attempt in range(attempts):
+            if attempt:
+                self.sleep(self.backoff_s * (2 ** (attempt - 1)))
+            for endpoint in self.endpoints:
+                try:
+                    data = urllib.parse.urlencode({"data": query}).encode()
+                    request = urllib.request.Request(
+                        endpoint, data=data, headers={"User-Agent": USER_AGENT}
+                    )
+                    with urllib.request.urlopen(
+                        request, timeout=self.timeout_s
+                    ) as response:
+                        return json.loads(response.read().decode())
+                except Exception as exc:  # noqa: BLE001 - try the next mirror
+                    failures.append(
+                        f"{endpoint}: {type(exc).__name__} (attempt {attempt + 1})"
+                    )
 
         raise CorridorError(
-            "every Overpass mirror failed — "
+            f"every Overpass mirror failed on all {attempts} attempt(s) — "
             + "; ".join(failures)
             + ". Mirrors return 504 under load; retry, or export the road manually "
             "(run `roadrisk centreline-help`)."

@@ -895,7 +895,14 @@ class TestPipelineIntegration:
 
         assert "curve_radius_min" in built.panel.columns
         assert "speed_limit" not in built.panel.columns
-        assert any("OSM attribute fetch failed" in note for note in built.warnings)
+        # Structured, because the run still succeeds: a reader who was not watching the
+        # console has no other way to know the specification was decided by server load
+        # rather than by the road.
+        assert [f.source for f in built.source_failures] == ["OpenStreetMap (Overpass)"]
+        assert "OSM-derived" in built.source_failures[0].covers
+        assert any(
+            "do not compare this run with another" in note for note in built.warnings
+        )
 
     def test_provenance_reaches_the_corridor_panel(self) -> None:
         built = build_corridor_panel(
