@@ -45,12 +45,34 @@ sheet**: all ten checks pass, both cross-validation schemes calibrate, no CURE d
 no material limitation on the page.
 
 The A50 that followed it produced two more, both about a run quietly becoming a different
-run:
+run, and the pair together produced two more again:
 
 | Commit | Defect | How it surfaced |
 |---|---|---|
 | `6b6ea03` | A source outage changed the specification and still reported success | Two runs minutes apart fitting the same factor at +0.469 and +0.392 |
 | `e760f22` | The client hung up after 90s on a query asking the server for 180s | Nine timeouts on three mirrors, while a *larger* query succeeded beside it |
+| `c01deee` | Two measurements of one geometry fitted together, neither identifiable | `curve_density` reading −0.081 beside its partner and +0.006 without it |
+| `ea8cd2f` | Every wrong sign was material, however weak the estimate | `speed_limit` at p = 0.95 raising a corridor's most serious heading |
+
+### Where the two corridors finished
+
+| | A3 Paris | A50 Marseille |
+|---|---|---|
+| Checks | **10 / 10 pass** | 10 / 10 pass |
+| Validation | **passes**, contiguous 1.083 | passes, contiguous 1.134 |
+| CURE drift | **none** | none |
+| Source failures | **none** | none |
+| **Material limitations** | **none** | `specification_reduced`, `sign_contradiction` |
+| Best AIC | 4660.6 → **4651.4** | 4189.8 → **3948.9** |
+
+The A50 keeps two material headings and should: it holds 678 crashes against the 700
+A-full needs, and its `speed_limit` contradiction is significant at p = 10⁻²⁶, which is a
+real specification problem rather than a coin flip.
+
+**`access_density` on the A3 survived all nine specifications** these fixes moved it
+through — +0.44, +0.33, +0.30, +0.39, +0.40, +0.37, +0.36 — never once changing sign,
+while almost everything around it was rebuilt. That is the strongest thing that can be
+said for a finding: the answer did not move while the machinery under it did.
 
 ---
 
@@ -172,6 +194,60 @@ A6/A82 pair, because those differ in road type and country and these do not.
 `speed_limit` at −5.6 is itself a contradiction against a declared `+`, and a large,
 significant one: on this corridor the low-limit sections are the congested urban ones. It
 is flagged material and left in, which is the correct outcome and not a comfortable one.
+
+### The bends, checked across all four fitted corridors
+
+Reported here earlier as "curvature fits against expectation on three roads, and that
+looks like a pattern". **It was not one, and the claim was made by reading one factor on
+some corridors and the other on the rest.** `curve_radius_min` agrees with the literature
+on three of the four, and on one it is the strongest result the project has:
+
+| Corridor | `curve_radius_min` (expects −) | `curve_density` (expects +) |
+|---|---|---|
+| A6 Derby–Buxton | **−0.4872, p = 4.7 × 10⁻⁷** ✓ | −0.048 ✗ |
+| A82 Lomond–Glencoe | −0.087 ✓ | −0.205 ✗ |
+| A3 Paris | +0.090 ✗ | +0.015 ✓ |
+| A50 Marseille | −0.148 ✓ | −0.081 ✗ |
+
+They flip together, in opposite directions, because they are not independent:
+`corr(ln radius, curves per km)` is **−0.536** on the A3 and **−0.739** on the A50. A
+stretch with tight bends is a stretch with many of them.
+
+Fitting one at a time proves it is the specification and not the road. On the A50,
+`curve_density` reads −0.081 beside its partner and **+0.006 alone** — same road, same
+crashes, opposite conclusions about the sign.
+
+*Fixed* (`c01deee`): a factor may declare `measures`, and only one member of a construct
+is fitted — the one carrying a published weight, decided in advance rather than by which
+term fits the corridor in front of us. That rule matters here because evidence and
+keep-order disagree: `curve_density` holds `drop_priority` 85 against `curve_radius_min`'s
+55, so the **uncited** term was winning the seat.
+
+One genuine road difference survives underneath the artefact. Univariately, with nothing
+else in the model, the A3 has both curvature measures agreeing with the literature
+(−0.157 and +0.273) and the A50 has both disagreeing (+0.149 and −0.183). On the A50 the
+bendy stretches are the rural hills and the straight ones are the congested approach to
+Marseille, so curvature there is a proxy for distance from the city — which is the same
+story `speed_limit` tells at p = 10⁻²⁶ from the other side.
+
+### An insignificant sign is not a finding
+
+Applying the construct rule cost the A3 the clean sheet it had just earned. `speed_limit`
+moved from +0.032 to −0.037 — p = 0.95 either side, noise either side — and the second of
+those raised a **material** heading because every unexplained contradiction did.
+
+**A coefficient that cannot be told apart from zero has no sign to contradict with.** A
+corridor's most serious warning was turning on which side of zero a coin landed.
+
+*Fixed* (`ea8cd2f`): materiality follows significance. A firm estimate pointing the wrong
+way stays material and is a specification problem. An insignificant one becomes
+`sign_contradiction_uncertain` at caveat severity, still saying the corridor failed to
+reproduce an effect the literature expects — which is worth knowing — but saying plainly
+that the sign is not information.
+
+The discrimination is what makes this a correction rather than a softening. `speed_limit`
+fits −0.112 at p = 0.84 on the A3 and −5.603 at p = 10⁻²⁶ on the A50; the first is now a
+caveat and the second is still material.
 
 ---
 
