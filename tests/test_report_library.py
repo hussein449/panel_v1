@@ -69,6 +69,45 @@ def test_the_library_and_the_entries_both_exist() -> None:
     assert (ENTRIES / "mount.tsx").is_file()
 
 
+class TestTheVerdictGradesTheAssessment:
+    """The closing judgement, and the line it must not cross.
+
+    A safety letter over a corridor would need corridors scored against each other on a
+    common scale, and this engine fits one road at a time from that road's own crashes.
+    Two runs are not comparable quantities, so a grade over them would be invented — and
+    it would be the most quotable number in the document.
+    """
+
+    def source(self) -> str:
+        return (LIBRARY / "verdict.ts").read_text(encoding="utf-8")
+
+    def test_it_exists_and_the_report_uses_it(self) -> None:
+        assert (LIBRARY / "verdict.ts").is_file()
+        assert "VerdictSection" in (LIBRARY / "Report.tsx").read_text(encoding="utf-8")
+
+    def test_it_grades_the_assessment_and_says_so(self) -> None:
+        text = self.source()
+        assert "assessment standing" in (LIBRARY / "sections.tsx").read_text(
+            encoding="utf-8"
+        )
+        assert "grades the assessment, not the road" in text
+
+    def test_mode_b_gets_its_own_standing_rather_than_a_poor_grade(self) -> None:
+        """Calling it "provisional" would imply more of the same evidence promotes it."""
+        assert '"ranking"' in self.source()
+
+    def test_it_recomputes_no_statistics(self) -> None:
+        """Every number is read off the run, so the verdict cannot drift from the
+        sections above it. A verdict that did its own arithmetic could disagree with
+        the table a reader had just looked at."""
+        text = self.source()
+        for forbidden in ("Math.log", "Math.exp", "Math.sqrt", "reduce((sum"):
+            assert forbidden not in text, f"verdict.ts should not compute: {forbidden}"
+
+    def test_significance_decides_what_counts_as_a_finding(self) -> None:
+        assert "p_value < 0.05" in self.source()
+
+
 def test_there_is_exactly_one_report_component() -> None:
     """The whole basis of "the app renders the same component tree".
 

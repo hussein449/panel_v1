@@ -7,8 +7,18 @@ import {
   SegmentReadout,
   SplineCurve,
 } from "./figures";
-import { count, decimal, extent, percent, shorten, signed, significant } from "./format";
+import {
+  ABSENT,
+  count,
+  decimal,
+  extent,
+  percent,
+  shorten,
+  signed,
+  significant,
+} from "./format";
 import { segmentHandlers, useSegmentFocus } from "./focus";
+import { buildVerdict, standingLabel } from "./verdict";
 
 /** A titled block. Every section is one, so the print rules have one thing to target. */
 export function Section({
@@ -78,46 +88,156 @@ export function Receipts({ assessment }: { assessment: Assessment }) {
   );
 }
 
-/** The four numbers a reader wants before anything else. */
-export function Headline({ run }: { run: Run }) {
+/**
+ * Everything a reader needs before the first table, in one block.
+ *
+ * This replaces four separate cards — headline tiles, panel facts, the snapping table
+ * and the check roll-up — that between them repeated the crash count three times and
+ * spread the corridor's basic dimensions over two screens. A reader arriving at a
+ * report wants to know how long the road is, how many crashes are on it, how many
+ * landed, and whether anything failed; none of that needs a section of its own.
+ */
+export function SummarySection({ run }: { run: Run }) {
   const { assessment, corridor } = run;
-  const worst = assessment.ranking?.units[0];
+  const snap = corridor?.snap;
+  const failed = assessment.checks.filter((c) => c.status === "failed");
 
-  const tiles: { label: string; value: string; note?: string }[] = [
+  const stats: { label: string; value: string; note?: string }[] = [
     {
       label: "Corridor",
-      value: corridor ? `${decimal(corridor.corridor.length_km, 2)} km` : "—",
-      note: corridor?.corridor.name,
+      value: corridor ? `${decimal(corridor.corridor.length_km, 2)} km` : ABSENT,
+      note: `${count(assessment.panel.units)} segments`,
     },
     {
-      label: "Segments",
-      value: count(assessment.panel.units),
-      note: corridor
-        ? `${count(Math.round(corridor.segmentation.target_length_m))} m target`
-        : undefined,
-    },
-    {
-      label: "Crashes",
+      label: "Crashes placed",
       value: count(assessment.panel.total_crashes),
-      note: `${percent(assessment.panel.zero_crash_share)} of rows are zero-crash`,
+      note: snap
+        ? `${percent(snap.snap_rate, 1)} of ${count(snap.n_supplied)} supplied`
+        : `over ${count(assessment.panel.periods)} periods`,
     },
     {
-      label: "Worst segment",
-      value: worst ? worst.unit_id : "—",
-      note: worst ? `rank 1 of ${count(assessment.ranking!.n_units)}` : undefined,
+      label: "Panel",
+      value: `${count(assessment.panel.rows)} rows`,
+      note: `${percent(assessment.panel.zero_crash_share)} zero-crash`,
+    },
+    {
+      label: "Checks",
+      value: `${assessment.checks.length - failed.length} / ${assessment.checks.length}`,
+      note: failed.length === 0 ? "all passed" : `${failed.length} failed`,
     },
   ];
 
   return (
-    <div className="tiles">
-      {tiles.map((tile) => (
-        <div className="tile" key={tile.label}>
-          <div className="tile__label">{tile.label}</div>
-          <div className="tile__value">{tile.value}</div>
-          {tile.note ? <div className="tile__note">{tile.note}</div> : null}
-        </div>
-      ))}
+    <div className="summary">
+      <dl className="summary__stats">
+        {stats.map((stat) => (
+          <div className="stat" key={stat.label}>
+            <dt>{stat.label}</dt>
+            <dd>{stat.value}</dd>
+            {stat.note ? <p className="stat__note">{stat.note}</p> : null}
+          </div>
+        ))}
+      </dl>
+      {snap && Object.keys(snap.dropped_reasons).length > 0 ? (
+        <p className="summary__drops">
+          Not placed:{" "}
+          {Object.entries(snap.dropped_reasons)
+            .map(([reason, n]) => `${count(n)} ${reason.replace(/_/g, " ")}`)
+            .join(" · ")}
+          . Every drop is counted and has a reason.
+        </p>
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * The closing judgement.
+ *
+ * **It grades the assessment, not the road**, for the reason set out in `verdict.ts`:
+ * one corridor fitted from its own crashes is not on a scale with any other, so a
+ * safety letter over it would be invented, and it would be the most quotable number
+ * here. What it does state is what the run is worth, what it found, and where the
+ * crashes actually are — the last of which needs no model to be true.
+ */
+export function VerdictSection({ run }: { run: Run }) {
+  const verdict = buildVerdict(run);
+  const { where, finding } = verdict;
+
+  return (
+    <Section
+      id="verdict"
+      title="In summary"
+      lead="What this assessment is worth, what it found, and where to send somebody. Every number below is read off the sections above rather than recomputed."
+    >
+      <div className={`verdict verdict--${verdict.standing}`}>
+        <div className="verdict__grade">
+          <span className="verdict__standing">{standingLabel(verdict.standing)}</span>
+          <span className="verdict__scope">assessment standing</span>
+        </div>
+        <div className="verdict__body">
+          <p className="verdict__headline">{verdict.headline}</p>
+          <ul className="verdict__because">
+            {verdict.because.map((clause) => (
+              <li key={clause}>{clause}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="verdict__panes">
+        <div className="pane">
+          <h3>What it found</h3>
+          {finding ? (
+            <p>
+              More <span className="mono">{finding.factor}</span> goes with{" "}
+              {finding.estimate > 0 ? "more" : "fewer"} crashes on this corridor —{" "}
+              {signed(finding.estimate)} at p = {significant(finding.p_value, 2)}, the
+              most confident term in the model. It is an association measured on this
+              road, not a prediction of what changing it would do.
+            </p>
+          ) : (
+            <p>
+              No factor both cleared significance and agreed with the direction the
+              literature expects. That is a finding rather than a gap: the terms the
+              model could carry do not separate the segments where crashes happened from
+              the ones where they did not.
+            </p>
+          )}
+        </div>
+
+        <div className="pane">
+          <h3>Where to look</h3>
+          {where ? (
+            <p>
+              <span className="mono">{where.label}</span>
+              {where.shareOfCrashes !== null && where.shareOfLength !== null ? (
+                <>
+                  {" "}
+                  carries {percent(where.shareOfCrashes)} of the corridor's crashes on{" "}
+                  {percent(where.shareOfLength)} of its length.
+                </>
+              ) : (
+                " is the worst-ranked stretch."
+              )}{" "}
+              A site inspection decides what to do about it; this report decides where to
+              send one.
+            </p>
+          ) : (
+            <p>
+              No blackspot stood out from the rest of the corridor, so there is no single
+              place to send an inspection ahead of any other.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {verdict.next ? (
+        <p className="verdict__next">
+          <strong>What would strengthen this:</strong> {verdict.next}
+        </p>
+      ) : null}
+    </Section>
   );
 }
 
@@ -402,154 +522,137 @@ export function ModelSection({ assessment }: { assessment: Assessment }) {
  *
  * The promise the whole product rests on: nothing in this report is untraceable.
  */
-export function FactorsSection({ corridor }: { corridor: Corridor }) {
-  if (corridor.provenance.length === 0) return null;
-
-  return (
-    <Section
-      id="factors"
-      title="Where every number came from"
-      lead="One row per factor. Tier A is measured from the corridor or from open data; Tier B is inferred. Confidence is the share of segments where the value was measured rather than carried."
-    >
-      <table className="table table--provenance">
-        <thead>
-          <tr>
-            <th>Factor</th>
-            <th>Source</th>
-            <th>Tier</th>
-            <th>Licence</th>
-            <th className="num">Coverage</th>
-            <th className="num">High confidence</th>
-            <th>Contested by</th>
-          </tr>
-        </thead>
-        <tbody>
-          {corridor.provenance.map((row) => (
-            <tr key={row.column}>
-              <td className="mono">{row.factor}</td>
-              <td className="cite" title={row.source}>
-                {shorten(row.source, 70)}
-              </td>
-              <td>
-                <span className={`tag tag--tier-${row.tier.toLowerCase()}`}>
-                  {row.tier}
-                </span>
-              </td>
-              <td className="nowrap">{row.licence}</td>
-              <td className="num">{percent(row.coverage)}</td>
-              <td className="num">{percent(row.confidence_high)}</td>
-              <td>{row.contested_by || "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {corridor.contested.length > 0 ? (
-        <p className="footnote">
-          {corridor.contested.length} factor(s) were resolved by more than one source, so
-          fusion had to choose. Where sources disagreed, the disagreement is scored rather
-          than hidden.
-        </p>
-      ) : null}
-    </Section>
-  );
-}
-
-/** The gate checks, in the order they ran. */
+/**
+ * The gate checks.
+ *
+ * **Compact by default, because a passing check is not news.** Ten rows of prose
+ * explaining that everything was fine trains a reader to skip the block entirely, and
+ * then a failure in it goes past unread. So the passes collapse to a row of named
+ * ticks and only the failures and skips keep their sentence — which is where the
+ * reader's attention is worth spending.
+ */
 export function ChecksSection({ assessment }: { assessment: Assessment }) {
+  const notable = assessment.checks.filter((c) => c.status !== "passed");
+  const passed = assessment.checks.filter((c) => c.status === "passed");
+
   return (
     <Section
       id="checks"
       title="What was checked before anything was fitted"
-      lead="Nine checks decide whether a model may run at all. A hard failure refuses Mode A outright; a soft failure steps the model down a rung."
+      lead="Nine gates decide whether a model may run at all. A hard failure refuses Mode A outright; a soft failure steps it down a rung."
     >
-      <table className="table table--checks">
-        <thead>
-          <tr>
-            <th className="num">#</th>
-            <th>Check</th>
-            <th>Result</th>
-            <th>What it means</th>
-          </tr>
-        </thead>
-        <tbody>
-          {assessment.checks.map((check) => (
-            <tr key={`${check.number}-${check.name}`}>
-              <td className="num">{check.number}</td>
-              <td>{check.name}</td>
-              <td>
+      <ul className="checkstrip">
+        {assessment.checks.map((check, index) => (
+          <li
+            className={`checkstrip__item checkstrip__item--${check.status.toLowerCase()}`}
+            key={`${check.number}-${index}`}
+            title={`${check.number}. ${check.name} — ${check.message}`}
+          >
+            <span className="checkstrip__mark" aria-hidden="true" />
+            <span className="checkstrip__name">{check.name}</span>
+          </li>
+        ))}
+      </ul>
+
+      {notable.length > 0 ? (
+        <dl className="checkdetail">
+          {notable.map((check, index) => (
+            <div key={`${check.number}-${index}`}>
+              <dt>
                 <span className={`tag tag--${check.status.toLowerCase()}`}>
                   {check.status}
-                </span>
-              </td>
-              <td className="small">{check.message}</td>
-            </tr>
+                </span>{" "}
+                {check.number}. {check.name}
+              </dt>
+              <dd>{check.message}</dd>
+            </div>
           ))}
-        </tbody>
-      </table>
+        </dl>
+      ) : (
+        <p className="footnote">
+          All {count(passed.length)} checks passed. Each one's detail is on its tick.
+        </p>
+      )}
     </Section>
   );
 }
 
-/** The panel, and what the crash snapping did to build it. */
-export function PanelSection({ run }: { run: Run }) {
-  const { assessment, corridor } = run;
-  const snap = corridor?.snap;
+/**
+ * Where every number came from, and what is owed for using it.
+ *
+ * Provenance and licensing were two sections asking a reader to hold the same list of
+ * factors in mind twice. They are one table and a credits line here: the licence a
+ * factor arrived under belongs in the row that names the factor, not in a second table
+ * further down keyed by licence.
+ */
+export function SourcesSection({ corridor }: { corridor: Corridor }) {
+  const attribution = corridor.attribution;
+  if (corridor.provenance.length === 0 && attribution.obligations.length === 0) {
+    return null;
+  }
 
   return (
     <Section
-      id="panel"
-      title="The data this rests on"
-      lead="The panel is built from geography, not from crashes: every segment appears in every period whether or not anything happened there. Zero rows are structural, which is what makes a count model legitimate."
+      id="sources"
+      title="Where every number came from"
+      lead="One row per factor. Tier A is measured from the corridor or from open data; Tier B is inferred. Confidence is the share of segments where the value was measured rather than carried from a neighbour."
     >
-      <dl className="facts">
-        <div>
-          <dt>Panel rows</dt>
-          <dd>{count(assessment.panel.rows)}</dd>
-        </div>
-        <div>
-          <dt>Segments × periods</dt>
-          <dd>
-            {count(assessment.panel.units)} × {count(assessment.panel.periods)}
-          </dd>
-        </div>
-        <div>
-          <dt>Zero-crash rows</dt>
-          <dd>
-            {count(assessment.panel.zero_crash_rows)} (
-            {percent(assessment.panel.zero_crash_share)})
-          </dd>
-        </div>
-        <div>
-          <dt>Factor registry</dt>
-          <dd>v{assessment.registry_version}</dd>
-        </div>
-      </dl>
-
-      {snap ? (
-        <>
-          <h3>Crash snapping</h3>
-          <p>
-            {count(snap.n_snapped)} of {count(snap.n_supplied)} supplied crashes landed on
-            the corridor ({percent(snap.snap_rate, 1)}). Every drop is counted and has a
-            reason.
-          </p>
-          <table className="table table--narrow">
-            <thead>
-              <tr>
-                <th>Reason a crash was dropped</th>
-                <th className="num">Crashes</th>
+      {corridor.provenance.length > 0 ? (
+        <table className="table table--provenance">
+          <thead>
+            <tr>
+              <th>Factor</th>
+              <th>Source</th>
+              <th>Tier</th>
+              <th>Licence</th>
+              <th className="num">Coverage</th>
+              <th className="num">Measured</th>
+            </tr>
+          </thead>
+          <tbody>
+            {corridor.provenance.map((row) => (
+              <tr key={row.column}>
+                <td className="mono">{row.factor}</td>
+                <td className="cite" title={row.source}>
+                  {shorten(row.source, 64)}
+                </td>
+                <td>
+                  <span className={`tag tag--tier-${row.tier.toLowerCase()}`}>
+                    {row.tier}
+                  </span>
+                </td>
+                <td className="nowrap small">{row.licence}</td>
+                <td className="num">{percent(row.coverage)}</td>
+                <td className="num">{percent(row.confidence_high)}</td>
               </tr>
-            </thead>
-            <tbody>
-              {Object.entries(snap.dropped_reasons).map(([reason, n]) => (
-                <tr key={reason}>
-                  <td>{reason.replace(/_/g, " ")}</td>
-                  <td className="num">{count(n)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+
+      {corridor.contested.length > 0 ? (
+        <p className="footnote">
+          {count(corridor.contested.length)} factor(s) were resolved by more than one
+          source, so fusion had to choose. Where sources disagreed, the disagreement is
+          scored rather than hidden.
+        </p>
+      ) : null}
+
+      {attribution.credit_lines.length > 0 ? (
+        <p className="credits-line">
+          <strong>Credit required:</strong> {attribution.credit_lines.join(" · ")}
+        </p>
+      ) : null}
+
+      {attribution.database_warning ? (
+        <p className="caveat caveat--strong">{attribution.database_warning}</p>
+      ) : null}
+
+      {attribution.unrecognised.length > 0 ? (
+        <p className="caveat caveat--strong">
+          Unrecognised licence(s): {attribution.unrecognised.join(", ")}. Check their
+          terms before this report is shared.
+        </p>
       ) : null}
     </Section>
   );
@@ -648,57 +751,6 @@ export function ReferenceSection({ assessment }: { assessment: Assessment }) {
           <SplineCurve shape={shape} key={shape.factor} />
         ))}
       </div>
-    </Section>
-  );
-}
-
-/** Credits, and the sentence a client redistributing the panel needs to have read. */
-export function AttributionSection({ corridor }: { corridor: Corridor }) {
-  const attribution = corridor.attribution;
-  if (attribution.obligations.length === 0) return null;
-
-  return (
-    <Section id="attribution" title="Credits and licensing">
-      {attribution.credit_lines.length > 0 ? (
-        <>
-          <h3>Credit these sources</h3>
-          <ul className="credits">
-            {attribution.credit_lines.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-
-      {attribution.database_warning ? (
-        <p className="caveat caveat--strong">{attribution.database_warning}</p>
-      ) : null}
-
-      {attribution.unrecognised.length > 0 ? (
-        <p className="caveat caveat--strong">
-          Unrecognised licence(s): {attribution.unrecognised.join(", ")}. Check their
-          terms before this report is shared.
-        </p>
-      ) : null}
-
-      <table className="table table--narrow">
-        <thead>
-          <tr>
-            <th>Licence</th>
-            <th>Applies to</th>
-            <th>What it requires</th>
-          </tr>
-        </thead>
-        <tbody>
-          {attribution.obligations.map((obligation) => (
-            <tr key={obligation.licence}>
-              <td className="nowrap">{obligation.licence}</td>
-              <td className="small">{obligation.factors.join(", ")}</td>
-              <td className="small">{obligation.note}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </Section>
   );
 }

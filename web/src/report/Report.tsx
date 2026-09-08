@@ -1,16 +1,15 @@
 import {
-  AttributionSection,
   ChecksSection,
-  FactorsSection,
-  Headline,
   LimitationsSection,
   ModeBanner,
   ModelSection,
-  PanelSection,
   RankingSection,
   Receipts,
   ReferenceSection,
+  SourcesSection,
+  SummarySection,
   ValidationSection,
+  VerdictSection,
 } from "./sections";
 import type { Run } from "./types";
 import { SegmentFocusProvider } from "./focus";
@@ -87,17 +86,21 @@ export default function Report({ run }: { run: Run }) {
         </p>
       </header>
 
-      <Headline run={run} />
+      <SummarySection run={run} />
       <Receipts assessment={assessment} />
 
       {ranking ? <RankingSection ranking={ranking} corridor={corridor} /> : null}
       <ModelSection assessment={assessment} />
       <ValidationSection assessment={assessment} />
-      {corridor ? <FactorsSection corridor={corridor} /> : null}
-      <PanelSection run={run} />
       <ChecksSection assessment={assessment} />
-      {corridor ? <AttributionSection corridor={corridor} /> : null}
+      {corridor ? <SourcesSection corridor={corridor} /> : null}
       <ReferenceSection assessment={assessment} />
+
+      {/* Last thing before the limitations, so a reader who stops here stops on a
+          judgement rather than on a licensing table — and after everything it draws
+          on, so nothing in it is a claim the reader has not already seen supported. */}
+      <VerdictSection run={run} />
+
       {/* No condition, no prop that empties it, and last so it is where a
           reader looks for it. Removing this line is a code change with a
           failing test attached. */}

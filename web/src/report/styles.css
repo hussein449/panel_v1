@@ -7,19 +7,33 @@
  * The paged-media rules that turn this into a PDF arrive at step 4.5.
  */
 
+/*
+ * One cool neutral ramp plus four semantic hues, deliberately narrow. A document a
+ * client prints, forwards and quotes from should look as though one hand set it: every
+ * rule, heading and table edge below comes from the same five greys, so nothing needs a
+ * decision at the point of use.
+ *
+ * The four semantic hues carry meaning only — a status, a severity, a verdict — and
+ * never decoration. That is what keeps a red on this page worth stopping for.
+ */
 :root {
-  --ink: #16191d;
-  --ink-soft: #4a5158;
-  --ink-faint: #767d85;
-  --rule: #dfe3e8;
-  --rule-soft: #eef1f4;
+  --ink: #12161b;
+  --ink-soft: #454e59;
+  --ink-faint: #78828e;
+  --rule: #d8dee6;
+  --rule-soft: #eef1f5;
   --page: #ffffff;
-  --shell: #f4f6f8;
-  --accent: #1c4e80;
-  --good: #1a7f4b;
-  --warn: #9a6300;
-  --bad: #a32b2b;
-  --measure: 62rem;
+  --shell: #e9edf2;
+  --accent: #14456f;
+  --accent-soft: #eaf0f6;
+  --good: #16704a;
+  --good-soft: #e9f3ee;
+  --warn: #8a5a00;
+  --warn-soft: #fbf3e2;
+  --bad: #97272b;
+  --bad-soft: #f9eeee;
+  --measure: 60rem;
+  --radius: 3px;
 }
 
 * {
@@ -32,20 +46,21 @@ html {
 
 body {
   margin: 0;
-  padding: 2rem 1.25rem 4rem;
+  padding: 1.5rem 1rem 3rem;
   background: var(--shell);
   color: var(--ink);
-  font: 400 16px/1.6 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font: 400 15.5px/1.55 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
 }
 
 .report,
 .loader {
   max-width: var(--measure);
   margin: 0 auto;
-  padding: 3rem clamp(1.25rem, 4vw, 3.5rem) 3rem;
+  padding: 2.25rem clamp(1.1rem, 3.5vw, 2.75rem) 2.25rem;
   background: var(--page);
   border: 1px solid var(--rule);
-  border-radius: 4px;
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgb(18 22 27 / 6%), 0 8px 24px -12px rgb(18 22 27 / 12%);
 }
 
 /* ---- headings ------------------------------------------------------------ */
@@ -54,32 +69,37 @@ h1,
 h2,
 h3 {
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-  line-height: 1.25;
+  line-height: 1.22;
   color: var(--ink);
 }
 
 h1 {
-  font-size: 1.9rem;
+  font-size: 1.7rem;
   font-weight: 650;
-  margin: 1.25rem 0 0.35rem;
-  letter-spacing: -0.01em;
+  margin: 0.9rem 0 0.3rem;
+  letter-spacing: -0.015em;
 }
 
+/*
+ * A hairline under a heading, not a heavy rule. The old 2px black bar drew more
+ * attention than the words above it and stacked ten times down the page.
+ */
 h2 {
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   font-weight: 650;
   margin: 0 0 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 2px solid var(--ink);
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--rule);
+  letter-spacing: -0.005em;
 }
 
 h3 {
-  font-size: 0.95rem;
-  font-weight: 650;
-  margin: 1.75rem 0 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin: 1.25rem 0 0.5rem;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-soft);
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
 }
 
 p {
@@ -137,44 +157,261 @@ p {
   margin-bottom: 2rem;
 }
 
-/* ---- headline tiles ------------------------------------------------------ */
+/* ---- the one summary block ----------------------------------------------- */
 
-.tiles {
+.summary {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--rule-soft);
+  margin-bottom: 2rem;
+}
+
+.summary__stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
   gap: 1px;
   background: var(--rule);
-  border: 1px solid var(--rule);
-  margin-bottom: 2.5rem;
+  margin: 0;
 }
 
-.tile {
+.stat {
   background: var(--page);
-  padding: 0.9rem 1rem;
+  padding: 0.8rem 1rem 0.85rem;
+  margin: 0;
 }
 
-.tile__label {
+.stat dt {
   font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.08em;
   color: var(--ink-faint);
+  font-weight: 600;
 }
 
-.tile__value {
+.stat dd {
   font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 1.4rem;
-  overflow-wrap: anywhere;
+  font-size: 1.3rem;
   font-weight: 650;
-  line-height: 1.2;
-  margin-top: 0.15rem;
+  line-height: 1.15;
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
 
-.tile__note {
-  font-size: 0.78rem;
+.stat__note {
+  font-size: 0.76rem;
   color: var(--ink-faint);
-  margin-top: 0.15rem;
+  margin: 0.15rem 0 0;
+}
+
+.summary__drops {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  border-top: 1px solid var(--rule);
+}
+
+/* ---- the verdict --------------------------------------------------------- */
+
+.verdict {
+  display: flex;
+  gap: 1.25rem;
+  align-items: stretch;
+  border: 1px solid var(--rule);
+  border-left: 5px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--page);
+  padding: 1.1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.verdict--strong {
+  border-left-color: var(--good);
+  background: var(--good-soft);
+}
+.verdict--qualified {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+.verdict--provisional {
+  border-left-color: var(--warn);
+  background: var(--warn-soft);
+}
+.verdict--ranking {
+  border-left-color: var(--ink-faint);
+  background: var(--rule-soft);
+}
+
+.verdict__grade {
+  flex: 0 0 auto;
+  max-width: 11rem;
+  padding-right: 1.25rem;
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.verdict__standing {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.verdict--strong .verdict__standing {
+  color: var(--good);
+}
+.verdict--qualified .verdict__standing {
+  color: var(--accent);
+}
+.verdict--provisional .verdict__standing {
+  color: var(--warn);
+}
+.verdict--ranking .verdict__standing {
+  color: var(--ink-soft);
+}
+
+.verdict__scope {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-faint);
+  margin-top: 0.25rem;
+}
+
+.verdict__body {
+  min-width: 0;
+}
+
+.verdict__headline {
+  margin: 0 0 0.5rem;
+  font-size: 1.02rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.verdict__because {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.verdict__because li {
+  margin: 0.2rem 0;
+}
+
+.verdict__panes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.pane {
+  background: var(--page);
+  padding: 0.9rem 1.1rem 1rem;
+}
+
+.pane h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+}
+
+.pane p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.verdict__next {
+  margin: 1rem 0 0;
+  padding: 0.7rem 1rem;
+  font-size: 0.88rem;
+  background: var(--rule-soft);
+  border-left: 3px solid var(--ink-faint);
+  border-radius: var(--radius);
+}
+
+/* ---- the check strip ----------------------------------------------------- */
+
+.checkstrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.55rem;
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+
+.checkstrip__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.74rem;
+  padding: 0.22rem 0.55rem 0.22rem 0.4rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--page);
+  color: var(--ink-soft);
+}
+
+.checkstrip__mark {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--good);
+  flex: 0 0 auto;
+}
+
+.checkstrip__item--failed {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad);
+  font-weight: 600;
+}
+.checkstrip__item--failed .checkstrip__mark {
+  background: var(--bad);
+}
+
+.checkstrip__item--skipped {
+  border-color: var(--rule);
+  background: var(--rule-soft);
+  color: var(--ink-faint);
+}
+.checkstrip__item--skipped .checkstrip__mark {
+  background: var(--ink-faint);
+}
+
+.checkdetail {
+  margin: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.checkdetail dt {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.checkdetail dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.87rem;
+  color: var(--ink-soft);
+}
+
+.credits-line {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-top: 1rem;
 }
 
 /* ---- receipts ------------------------------------------------------------ */
@@ -214,13 +451,14 @@ p {
 /* ---- sections and tables ------------------------------------------------- */
 
 .section {
-  margin-bottom: 3rem;
+  margin-bottom: 2rem;
 }
 
 .lead {
   color: var(--ink-soft);
-  font-size: 0.95rem;
-  margin-bottom: 1.2rem;
+  font-size: 0.88rem;
+  margin-bottom: 0.9rem;
+  max-width: 46rem;
 }
 
 .table {
