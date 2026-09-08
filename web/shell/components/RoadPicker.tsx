@@ -27,19 +27,28 @@ const RoadPickerCanvas = dynamic(() => import("./RoadPickerCanvas"), {
 /**
  * The front door: find a road, pick it, add crashes if you have them, assess.
  *
- * **What this screen is for.** Assessing one road used to be five screens — a project, a
- * corridor typed as a reference and four decimal bounding-box numbers, a job form of ten
- * fields, a poll, and then a hunt for the run. Every one of those is a real object and
- * they all still exist under *Advanced*; none of them is a question somebody arriving
- * with a road in mind can answer.
+ * **The map is the page, and the controls are a strip under it.**
  *
- * **The reader is never asked for a bounding box.** It is the viewport, which they set by
- * framing the road they can see. That is stated on the page rather than left to be
- * discovered, because it is the input that decides how much road gets assessed.
+ * This was a 24rem sidebar of five numbered steps, and it did not work. Each step
+ * carried several paragraphs explaining why it mattered — all of it true, most of it
+ * worth saying once — and a narrow column is the worst possible place to put an essay.
+ * The result was a page you scrolled past a map you could barely see, to reach a button
+ * at the bottom of an argument. Squeezing a map to make room for prose about the map is
+ * the wrong trade in both directions.
  *
- * **The crash file is the one thing worth insisting on.** Without it the engine has no
- * counts to fit and the run can only be Mode B — a ranking, not a model. So the panel
- * says that where the file is chosen, not in a footnote afterwards.
+ * So: the map gets the full width, the two controls that belong *to* the map live on it
+ * — search, and what you picked — and everything the form needs is one row underneath.
+ *
+ * **The prose is not deleted, it is folded.** Every explanation that was shouting is
+ * behind a disclosure next to the control it explains. That distinction matters here
+ * more than on most screens, because some of this text is load-bearing: the extent
+ * verdict caught a run that assessed 1.83 km of a 2.95 km road and produced four
+ * segments, and nothing else on the page would have said so. So the verdict itself
+ * stays visible, on the map, in colour; the paragraph explaining how it is estimated
+ * folds away.
+ *
+ * **The reader is never asked for a bounding box.** It is the viewport, which they set
+ * by framing the road they can see.
  */
 export default function RoadPicker({
   basemap,
@@ -93,9 +102,7 @@ export default function RoadPicker({
       startSearching(async () => {
         setSearchProblem(null);
         try {
-          const response = await fetch(
-            `/api/places?q=${encodeURIComponent(text)}`,
-          );
+          const response = await fetch(`/api/places?q=${encodeURIComponent(text)}`);
           if (!response.ok) throw new Error(await response.text());
           setPlaces(await response.json());
         } catch (error) {
@@ -112,341 +119,195 @@ export default function RoadPicker({
 
   const ready = picked !== null && bbox !== null;
 
-  return (
-    <div className="shell-picker-layout">
-      <RoadPickerCanvas
-        basemap={basemap}
-        centre={centre}
-        picked={picked}
-        onPick={onPick}
-        onViewport={(viewport) => setBbox(viewport.bbox)}
-        onExtent={setExtent}
-        onFailure={setMapProblem}
-      />
+  /** What the map is currently telling the reader, in one line. */
+  const status = picked
+    ? null
+    : missed?.kind === "unlabelled" && !missed.zoomedEnough
+      ? "That is a road, but the map carries no name for it at this zoom. Zoom in and click again."
+      : missed?.kind === "unlabelled"
+        ? "That road has neither a reference nor a name in OpenStreetMap, so there is nothing to fetch it by. Try a larger road."
+        : missed?.kind === "nothing"
+          ? "No road there — click directly on the line."
+          : "Click a road on the map to begin.";
 
-      <form className="shell-picker-panel shell-form" action={action}>
-        {problem ? <p className="shell-problem">{problem}</p> : null}
-        {mapProblem ? (
-          <p className="shell-problem">
-            The map failed: {mapProblem} You can still assess a road by typing its
-            reference under <em>Advanced</em>.
-          </p>
+  return (
+    <form className="picker" action={action}>
+      {problem ? <p className="shell-problem">{problem}</p> : null}
+      {mapProblem ? (
+        <p className="shell-problem">
+          The map failed: {mapProblem} You can still assess a road by typing its
+          reference under <em>Advanced</em>.
+        </p>
+      ) : null}
+
+      <div className="picker__stage">
+        <RoadPickerCanvas
+          basemap={basemap}
+          centre={centre}
+          picked={picked}
+          onPick={onPick}
+          onViewport={(viewport) => setBbox(viewport.bbox)}
+          onExtent={setExtent}
+          onFailure={setMapProblem}
+        />
+
+        {/* Search belongs to the map, so it sits on it. It was in the sidebar, two
+            scroll positions away from the thing it moves. */}
+        {searchEnabled ? (
+          <div className="picker__search">
+            <input
+              type="search"
+              value={query}
+              placeholder="Search a town, region or address…"
+              aria-label="Search for a place"
+              onChange={(event) => runSearch(event.target.value)}
+            />
+            {searching ? <p className="picker__searching">Searching…</p> : null}
+            {searchProblem ? (
+              <p className="picker__search-problem">{searchProblem}</p>
+            ) : null}
+            {places.length > 0 ? (
+              <ul className="picker__places">
+                {places.map((place) => (
+                  <li key={place.label}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCentre(place.bbox);
+                        setPlaces([]);
+                        setQuery(place.label);
+                      }}
+                    >
+                      {place.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         ) : null}
 
-        <section className="shell-step">
-          <h2>
-            <span className="shell-step__n">1</span> Find the road
-          </h2>
-          {searchEnabled ? (
-            <>
-              <label>
-                <span className="shell-visually-hidden">Search for a place</span>
-                <input
-                  type="search"
-                  value={query}
-                  placeholder="A town, a region, an address…"
-                  onChange={(event) => runSearch(event.target.value)}
-                />
-              </label>
-              {searching ? <p className="shell-note">Searching…</p> : null}
-              {searchProblem ? (
-                <p className="shell-problem">{searchProblem}</p>
-              ) : null}
-              {places.length > 0 ? (
-                <ul className="shell-places">
-                  {places.map((place) => (
-                    <li key={place.label}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCentre(place.bbox);
-                          setPlaces([]);
-                          setQuery(place.label);
-                        }}
-                      >
-                        {place.label}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </>
-          ) : (
-            <p className="shell-note">
-              Place search is switched off in this deployment. Pan and zoom the map to
-              the road.
-            </p>
-          )}
-        </section>
-
-        <section className="shell-step">
-          <h2>
-            <span className="shell-step__n">2</span> Click the road
-          </h2>
-
+        {/* What you picked, over the road you picked. The extent verdict is here rather
+            than folded away because it is the one thing on this screen that has already
+            caught a bad run before it happened. */}
+        <div className={`picker__chip${picked ? " picker__chip--picked" : ""}`}>
           {picked ? (
-            <div className="shell-picked">
-              <p className="shell-picked__name">{picked.label}</p>
-              <p className="shell-note">
-                Identified by its OSM{" "}
-                {picked.key === "ref" ? "reference" : "name"}{" "}
+            <>
+              <div className="picker__chip-head">
+                <strong>{picked.label}</strong>
+                <button
+                  type="button"
+                  className="picker__clear"
+                  onClick={() => {
+                    setPicked(null);
+                    setExtent(null);
+                  }}
+                >
+                  Change
+                </button>
+              </div>
+              <p className="picker__chip-note">
+                OSM {picked.key === "ref" ? "reference" : "name"}{" "}
                 <code>{picked.value}</code>
                 {picked.highway ? ` · ${picked.highway}` : null}
               </p>
-              {picked.key === "name" ? (
-                <p className="shell-note">
-                  This road carries no reference, so it is fetched by name. A name is
-                  not unique the way a reference is — if the area below holds two roads
-                  of this name, the fetch is refused rather than welding them together.
+              {extent ? (
+                <p className={`picker__extent picker__extent--${extent.verdict}`}>
+                  ≈ {describeLength(extent.metres)} in view · {extent.segments} segment
+                  {extent.segments === 1 ? "" : "s"}
+                  {extent.verdict === "too-short" ? (
+                    <span> — too short to assess well. Zoom out.</span>
+                  ) : extent.verdict === "thin" ? (
+                    <span> — workable but thin. Zoom out if there is more road.</span>
+                  ) : (
+                    <span> — enough to separate.</span>
+                  )}
                 </p>
               ) : null}
-
-              {/* The number the first real run of this page needed and did not have. It
-                  assessed 1.83 km of a 2.95 km road, produced four segments, and the
-                  collinearity check returned infinity — all decided by a zoom level,
-                  before the button was pressed, with nothing on screen saying so. */}
-              {extent ? (
-                <div className={`shell-extent shell-extent--${extent.verdict}`}>
-                  <p className="shell-extent__figure">
-                    ≈ {describeLength(extent.metres)} in view ·{" "}
-                    <strong>
-                      about {extent.segments} segment
-                      {extent.segments === 1 ? "" : "s"}
-                    </strong>
-                  </p>
-                  {extent.verdict === "too-short" ? (
-                    <p className="shell-extent__verdict">
-                      <strong>Too short to assess well.</strong> Below about ten
-                      segments there are more factors than observations: the
-                      collinearity check returns infinity, most factors stop varying,
-                      and the ranking spreads across a fraction of its own scale.{" "}
-                      <strong>Zoom out</strong> to take in more of the road.
-                    </p>
-                  ) : extent.verdict === "thin" ? (
-                    <p className="shell-extent__verdict">
-                      Workable, but thin. Twenty segments or more is where the ranking
-                      separates properly — zoom out if there is more of this road.
-                    </p>
-                  ) : (
-                    <p className="shell-extent__verdict">
-                      Enough road for the ranking to separate and the checks to mean
-                      something.
-                    </p>
-                  )}
-                  <p className="shell-note">
-                    Estimated from the map’s own geometry, which is simplified as you
-                    zoom out — the real fetch decides the length. Read it as the
-                    difference between four segments and forty, not as a measurement.
-                  </p>
-                </div>
-              ) : null}
-
-              <button
-                type="button"
-                className="shell-button shell-button--quiet"
-                onClick={() => {
-                  setPicked(null);
-                  setExtent(null);
-                }}
-              >
-                Choose a different road
-              </button>
-            </div>
-          ) : missed?.kind === "unlabelled" && !missed.zoomedEnough ? (
-            // The distinction that stops this screen saying something false. The tiles
-            // carry no road identity at all below about zoom 12, so at this zoom
-            // "that road has no name" would be a statement about the map, dressed up
-            // as a statement about the road.
-            <p className="shell-note">
-              That is a road, but at this zoom the map carries no name or reference for
-              it. <strong>Zoom in and click it again.</strong>
-            </p>
-          ) : missed?.kind === "unlabelled" ? (
-            <p className="shell-problem">
-              That road carries neither a reference nor a name in OpenStreetMap, so
-              there is nothing to fetch it by. Try a larger road — or add the tag in
-              OSM, and it will be selectable here.
-            </p>
-          ) : missed?.kind === "nothing" ? (
-            <p className="shell-note">
-              No road there. Click directly on the line of the road you want.
-            </p>
+            </>
           ) : (
-            <p className="shell-note">
-              Click a road on the map. Motorways, trunk and primary roads almost always
-              carry a reference; smaller streets are matched by name.
-            </p>
+            <p className="picker__chip-note">{status}</p>
           )}
+        </div>
+      </div>
 
-          <p className="shell-note">
-            <strong>The map view is the search area.</strong> The road is fetched from
-            OpenStreetMap inside whatever the map is showing, so frame the stretch you
-            want assessed — a wider view assesses more road and takes longer.
-          </p>
-        </section>
+      {/* One row. Everything the run needs, and nothing that only explains it. */}
+      <div className="picker__controls">
+        <label className="control">
+          <span className="control__label">Road type</span>
+          <select name="facility_type" defaultValue="any">
+            <option value="any">Not declared</option>
+            <option value="rural_two_lane">Rural two-lane</option>
+            <option value="rural_multilane">Rural multilane</option>
+            <option value="urban_arterial">Urban arterial</option>
+            <option value="motorway">Motorway</option>
+          </select>
+        </label>
 
-        <section className="shell-step">
-          <h2>
-            <span className="shell-step__n">3</span> What kind of road
-            <span className="shell-step__optional">recommended</span>
-          </h2>
-          <p className="shell-note">
-            <strong>This decides how much published evidence is admissible.</strong> A
-            weight is a number plus the context it is valid in, and one whose scope does
-            not match this corridor is inadmissible rather than approximate. Left
-            undeclared, only weights that state no scope at all can be used — on a real
-            run that meant <strong>eleven factors measured and one scored</strong>.
-          </p>
+        <label className="control">
+          <span className="control__label">Region</span>
+          <select name="region" defaultValue="global">
+            <option value="global">Not declared</option>
+            <option value="north_america">North America</option>
+            <option value="europe">Europe</option>
+            <option value="australasia">Australasia</option>
+            <option value="asia">Asia</option>
+            <option value="africa">Africa</option>
+            <option value="middle_east">Middle East</option>
+            <option value="latin_america">Latin America</option>
+          </select>
+        </label>
 
-          <label>
-            Road type
-            <select name="facility_type" defaultValue="any">
-              <option value="any">Not declared — unrestricted weights only</option>
-              <option value="rural_two_lane">Rural two-lane</option>
-              <option value="rural_multilane">Rural multilane</option>
-              <option value="urban_arterial">Urban arterial</option>
-              <option value="motorway">Motorway</option>
-            </select>
-            <span className="shell-hint">
-              Declaring <strong>motorway</strong> admits fewer weights than the others,
-              not more — no published weight in the registry is scoped to one yet. It is
-              here so a motorway need not be declared as a rural two-lane road, which
-              would admit driveway-density evidence for a road that has no driveways.
-            </span>
-          </label>
+        <label className="control">
+          <span className="control__label">Crashes counted</span>
+          <select name="severity" defaultValue="all">
+            <option value="all">All crashes</option>
+            <option value="injury">Injury</option>
+            <option value="fsi">Fatal and serious</option>
+            <option value="fatal">Fatal only</option>
+          </select>
+        </label>
 
-          <label>
-            Region
-            <span className="shell-hint">
-              A mismatch is reported, never refused — most published weights are North
-              American and refusing them would leave nothing usable elsewhere.
-            </span>
-            <select name="region" defaultValue="global">
-              <option value="global">Not declared</option>
-              <option value="north_america">North America</option>
-              <option value="europe">Europe</option>
-              <option value="australasia">Australasia</option>
-              <option value="asia">Asia</option>
-              <option value="africa">Africa</option>
-              <option value="middle_east">Middle East</option>
-              <option value="latin_america">Latin America</option>
-            </select>
-          </label>
+        <div className="control control--wide">
+          <span className="control__label">Also measure</span>
+          <div className="control__toggles">
+            <label title="Gradient from the Copernicus 30 m elevation model and built-up share from ESA WorldCover. Gradient carries a cited weight. Adds about a minute.">
+              <input type="checkbox" name="fetch_rasters" />
+              <span>Hills &amp; land use</span>
+            </label>
+            <label title="Betweenness centrality over the surrounding network. Never called AADT and carries no volume units. The slowest option: several minutes.">
+              <input type="checkbox" name="fetch_traffic" />
+              <span>Traffic proxy</span>
+            </label>
+            <label title="Poles, sign supports and bollards from Mapillary's published detections. No cited weight yet, so it appears in provenance and not in the score.">
+              <input type="checkbox" name="fetch_mapillary" />
+              <span>Roadside objects</span>
+            </label>
+            <label title="Looks for street-level photographs along the corridor. A recent one is direct evidence the road was passable; finding none is weak evidence of anything.">
+              <input type="checkbox" name="check_imagery" />
+              <span>Driven check</span>
+            </label>
+          </div>
+        </div>
 
-          <label>
-            Which crashes were counted
-            <span className="shell-hint">
-              Match this to your crash file. A fatal-crash weight never scores an
-              injury panel.
-            </span>
-            <select name="severity" defaultValue="all">
-              <option value="all">All crashes</option>
-              <option value="injury">Injury</option>
-              <option value="fsi">Fatal and serious injury</option>
-              <option value="fatal">Fatal only</option>
-            </select>
-          </label>
-        </section>
-
-        <section className="shell-step">
-          <h2>
-            <span className="shell-step__n">4</span> What else to measure
-            <span className="shell-step__optional">optional</span>
-          </h2>
-          <p className="shell-note">
-            OpenStreetMap is always fetched — it is one request and it carries most of
-            the road. These are the other sources, each its own fetch, each off until
-            asked for. <strong>Every one of them adds factors the assessment would
-            otherwise report as absent.</strong>
-          </p>
-
-          <label className="shell-check">
-            <input type="checkbox" name="fetch_rasters" />
-            <span>Hills and land use</span>
-          </label>
-          <p className="shell-note">
-            Gradient from the Copernicus 30 m elevation model and built-up share from ESA
-            WorldCover, both read as windows over the corridor rather than downloaded
-            whole. Gradient is one of only eight factors in the registry that carries a
-            cited weight, so leaving this off costs a scored factor rather than a
-            decorative one. Adds about a minute.
-          </p>
-
-          <label className="shell-check">
-            <input type="checkbox" name="fetch_traffic" />
-            <span>Traffic proxy</span>
-          </label>
-          <p className="shell-note">
-            Betweenness centrality over the surrounding road network — how much through
-            traffic the shape of the network sends down this road. <strong>It is never
-            called AADT and carries no volume units.</strong> It is withheld entirely if
-            it turns out to be measuring the analysis window rather than the road. The
-            slowest option here: a wide network fetch, several minutes.
-          </p>
-
-          <label className="shell-check">
-            <input type="checkbox" name="fetch_mapillary" />
-            <span>Roadside objects</span>
-          </label>
-          <p className="shell-note">
-            Poles, sign supports and bollards counted from Mapillary&rsquo;s published
-            detections. Carries no cited weight yet, so it appears in the provenance
-            table and not in the score.
-          </p>
-
-          <label className="shell-check">
-            <input type="checkbox" name="check_imagery" />
-            <span>Check whether anybody has driven this road</span>
-          </label>
-          <p className="shell-note">
-            Looks for street-level photographs along the corridor. A recent one is
-            direct evidence a vehicle was here and the road was passable; finding none
-            is <strong>weak</strong> evidence of anything, because photo coverage is
-            absent across whole regions, and the report says so either way. The road is
-            already refused outright if OpenStreetMap tags it as under construction —
-            this is a second opinion on that tag, not a replacement for it.
-          </p>
-
-          <p className="shell-note">
-            Each of these can be unavailable where this is deployed — the last two need a
-            free Mapillary token, and hills and land use need the <code>raster</code>
-            extra, which carries GDAL. When one is missing it is skipped with a note
-            saying so, the other factors are unaffected, and nothing about the run is
-            silently different.
-          </p>
-        </section>
-
-        <section className="shell-step">
-          <h2>
-            <span className="shell-step__n">5</span> Crashes
-            <span className="shell-step__optional">optional</span>
-          </h2>
-          <label>
-            <span className="shell-hint">
-              A CSV with <code>latitude</code>, <code>longitude</code> and{" "}
-              <code>period</code>. One row per crash.
-            </span>
-            <input
-              type="file"
-              name="crashes"
-              accept=".csv,text/csv"
-              onChange={(event) =>
-                setCrashFile(event.target.files?.[0]?.name ?? null)
-              }
-            />
-          </label>
-          {crashFile ? (
-            <p className="shell-note">
+        <label className="control control--wide">
+          <span className="control__label">
+            Crash table <span className="control__hint">CSV · optional</span>
+          </span>
+          <input
+            type="file"
+            name="crashes"
+            accept=".csv,text/csv"
+            onChange={(event) => setCrashFile(event.target.files?.[0]?.name ?? null)}
+          />
+          <span className="control__state">
+            {crashFile ? (
               <code>{crashFile}</code>
-            </p>
-          ) : null}
-          <p className="shell-note">
-            <strong>This is what decides how much the assessment can say.</strong> With
-            a crash table the engine can fit a model and report expected counts with
-            intervals. Without one it scores a ranking from published weights and says
-            so on every screen — never a prediction, and never a count.
-          </p>
-        </section>
+            ) : (
+              "Without one this is a ranking, not a model."
+            )}
+          </span>
+        </label>
 
         {/* The picked road and the viewport travel as hidden fields so the form is a
             plain POST. Everything above is a client component because a map is; the
@@ -459,22 +320,70 @@ export default function RoadPicker({
         <input type="hidden" name="north" value={bbox?.[2] ?? ""} />
         <input type="hidden" name="east" value={bbox?.[3] ?? ""} />
 
-        <button type="submit" className="shell-button" disabled={!ready}>
+        <button type="submit" className="picker__go" disabled={!ready}>
           {ready ? `Assess ${picked.label}` : "Pick a road first"}
         </button>
+      </div>
 
-        <p className="shell-note">
-          The road is fetched from OpenStreetMap and cut into 500 m segments. A cold
-          fetch takes under a minute; the next road in the same region is seconds.
-        </p>
-
-        {geocoderCredit ? (
-          <p
-            className="shell-credit"
-            dangerouslySetInnerHTML={{ __html: geocoderCredit }}
-          />
-        ) : null}
-      </form>
-    </div>
+      {/* Everything that was shouting from the sidebar, kept and folded. A reader who
+          wants to know why a field matters is one click away; a reader who does not is
+          not scrolling past it to reach the button. */}
+      <details className="picker__more">
+        <summary>What these choices do</summary>
+        <div className="picker__more-body">
+          <p>
+            <strong>The map view is the search area.</strong> The road is fetched from
+            OpenStreetMap inside whatever the map is showing, so frame the stretch you
+            want assessed — a wider view assesses more road and takes longer. The length
+            readout on the map is estimated from the map&rsquo;s own geometry, which is
+            simplified as you zoom out; read it as the difference between four segments
+            and forty, not as a measurement.
+          </p>
+          <p>
+            <strong>Road type decides how much published evidence is admissible.</strong>{" "}
+            A weight is a number plus the context it is valid in, and one whose scope does
+            not match this corridor is inadmissible rather than approximate. Left
+            undeclared, only weights that state no scope at all can be used — on a real
+            run that meant eleven factors measured and one scored. Declaring{" "}
+            <strong>motorway</strong> admits fewer weights than the others, not more: it
+            is there so a motorway need not be declared as a rural two-lane road, which
+            would admit driveway-density evidence for a road that has no driveways.
+          </p>
+          <p>
+            <strong>Region mismatches are reported, never refused.</strong> Most published
+            weights are North American, and refusing them would leave nothing usable
+            elsewhere. Match <strong>crashes counted</strong> to your file — a
+            fatal-crash weight never scores an injury panel.
+          </p>
+          <p>
+            <strong>OpenStreetMap is always fetched</strong> — one request, and it carries
+            most of the road. The four toggles are the other sources, each its own fetch,
+            each off until asked for, and each adds factors the assessment would otherwise
+            report as absent. Any of them can be unavailable where this is deployed: the
+            last two need a free Mapillary token, and hills and land use need the{" "}
+            <code>raster</code> extra. When one is missing it is skipped with a note, the
+            other factors are unaffected, and nothing about the run is silently different.
+          </p>
+          <p>
+            <strong>The crash table decides how much the assessment can say.</strong> A
+            CSV with <code>latitude</code>, <code>longitude</code> and{" "}
+            <code>period</code>, one row per crash. With it the engine fits a model and
+            reports expected counts with intervals. Without it it scores a ranking from
+            published weights and says so on every screen — never a prediction, never a
+            count. The engine picks the mode; nothing on this page overrules it.
+          </p>
+          <p className="shell-note">
+            The road is cut into 500 m segments. A cold fetch takes under a minute; the
+            next road in the same region is seconds.
+          </p>
+          {geocoderCredit ? (
+            <p
+              className="shell-credit"
+              dangerouslySetInnerHTML={{ __html: geocoderCredit }}
+            />
+          ) : null}
+        </div>
+      </details>
+    </form>
   );
 }

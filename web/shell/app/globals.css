@@ -537,26 +537,280 @@ body {
   color: var(--ink-soft);
 }
 
-.shell-picker-layout {
+/* ---- the picker: map above, one row of controls below --------------------- */
+
+/*
+ * This replaced a 24rem sidebar of five numbered steps. The sidebar failed for a reason
+ * worth writing down: each step carried several paragraphs explaining why it mattered,
+ * and a narrow column is the worst place to put an essay. The map got squeezed to make
+ * room for prose about the map, which is the wrong trade in both directions.
+ *
+ * So the map takes the width, the two controls that belong to it sit on it, and the
+ * form is one wrapping row underneath.
+ */
+
+.picker {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 24rem;
-  gap: 1.25rem;
-  align-items: start;
+  gap: 0.75rem;
 }
 
-/* One column below this, and the map stays first: it is what the panel talks about, and
-   a list of steps above a map the reader cannot see yet explains nothing. */
-@media (max-width: 60rem) {
-  .shell-picker-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.picker__stage {
+  position: relative;
 }
 
-.shell-picker-panel {
+.picker__stage .shell-map {
+  height: min(62vh, 34rem);
+}
+
+/* Search is a map control, so it lives on the map. It used to be in the sidebar, two
+   scroll positions away from the thing it moves. */
+.picker__search {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  width: min(22rem, calc(100% - 5rem));
+  z-index: 2;
+}
+
+.picker__search input {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  font: inherit;
+  font-size: 0.88rem;
   border: 1px solid var(--rule);
   border-radius: 3px;
-  padding: 1.1rem 1.15rem 1.25rem;
   background: var(--page);
+  box-shadow: 0 1px 3px rgb(18 22 27 / 14%);
+}
+
+.picker__searching,
+.picker__search-problem {
+  margin: 0.3rem 0 0;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.78rem;
+  background: var(--page);
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgb(18 22 27 / 14%);
+}
+
+.picker__search-problem {
+  color: var(--bad);
+}
+
+.picker__places {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  background: var(--page);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgb(18 22 27 / 16%);
+}
+
+.picker__places button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.picker__places li + li button {
+  border-top: 1px solid var(--rule-soft);
+}
+
+.picker__places button:hover,
+.picker__places button:focus-visible {
+  background: var(--rule-soft);
+}
+
+/* What you picked, over the road you picked. */
+.picker__chip {
+  position: absolute;
+  left: 0.6rem;
+  bottom: 0.6rem;
+  max-width: min(30rem, calc(100% - 1.2rem));
+  padding: 0.5rem 0.7rem;
+  background: var(--page);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--ink-faint);
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgb(18 22 27 / 14%);
+  z-index: 2;
+}
+
+.picker__chip--picked {
+  border-left-color: var(--accent);
+}
+
+.picker__chip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.95rem;
+}
+
+.picker__clear {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.picker__chip-note {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+/* The verdict stays visible and in colour. It is the one thing on this screen that has
+   already caught a bad run before it happened — 1.83 km of a 2.95 km road, four
+   segments, and a collinearity check that returned infinity. */
+.picker__extent {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.picker__extent--good {
+  color: var(--good);
+}
+.picker__extent--thin {
+  color: var(--warn);
+}
+.picker__extent--too-short {
+  color: var(--bad);
+}
+
+.picker__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--page);
+}
+
+.control {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 9rem;
+}
+
+.control--wide {
+  flex: 1 1 16rem;
+}
+
+.control__label {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.control__hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.control select,
+.control input[type="file"] {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--page);
+  max-width: 100%;
+}
+
+.control__toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+}
+
+.control__toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  cursor: help;
+}
+
+.control__state {
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+
+.picker__go {
+  margin-left: auto;
+  padding: 0.6rem 1.2rem;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.picker__go:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.picker__more {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--page);
+}
+
+.picker__more summary {
+  padding: 0.55rem 1rem;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.picker__more-body {
+  padding: 0 1rem 0.9rem;
+  max-width: 52rem;
+  font-size: 0.87rem;
+  color: var(--ink-soft);
+}
+
+.picker__more-body p {
+  margin: 0 0 0.7rem;
+}
+
+@media (max-width: 46rem) {
+  .picker__go {
+    margin-left: 0;
+    width: 100%;
+  }
+  .picker__search {
+    width: calc(100% - 5rem);
+  }
 }
 
 .shell-step {
