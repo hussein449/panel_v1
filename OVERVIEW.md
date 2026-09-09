@@ -3,17 +3,38 @@
 *A single-file account of the whole system: the problem, the flow, what is built,
 what is not, and an explicit brief for drawing it as one figure.*
 
-Status as of **2026-08-27**. Sources for every claim here: [`STEPS.md`](STEPS.md) (the
-plan), [`IMPLEMENTED.md`](IMPLEMENTED.md) (the build log), [`README.md`](README.md) (the
-user-facing description).
+Status as of **2026-09-08**. Sources for every claim here: [`STEPS.md`](STEPS.md) (the
+plan), [`IMPLEMENTED.md`](IMPLEMENTED.md) (the build log), [`TESTS.md`](TESTS.md) (every
+real road it has been run against), [`README.md`](README.md) (the user-facing description).
 
-**What changed since the last revision of this file (2026-08-19).** Stage 3 closed —
-registry weights enter as priors, a Leroux spatial field is fitted and reported, and every
-run is validated out of sample by default. Stage 4 closed — the report and its
-non-disableable limitations page exist, as one React component that is both the screen and
-the PDF. Stage 5 is most of the way through: runs are stored in Postgres, served over
-HTTP, and there is now a website over it. **The critical path has not moved**: every
-corridor run to date still uses synthetic crashes.
+**What changed since the last revision of this file (2026-08-27).** One thing, and it is
+the thing every previous revision of this file was waiting for.
+
+> ### 🟢 The critical path is closed
+>
+> Every earlier version of this document ended its status line by saying that **every
+> corridor run to date used synthetic crashes**. Between 2026-08-28 and 2026-09-07,
+> **seven real corridors** were assessed across Cyprus, England, Scotland and France —
+> four of them against real police crash tables, UK STATS19 and French BAAC, both open.
+>
+> The A6 through Derbyshire produced **the first fitted model in the project's history**
+> on 284 real collisions. The A82 through Glen Coe ran the same method on a comparable
+> road and **reached the opposite answer**, which is the argument for Mode A stated as a
+> measurement rather than as a design principle. The A3 through Paris was the first
+> corridor with enough crashes to reach **A-full**, at 1,403, and finished with all ten
+> checks passing, both cross-validation schemes calibrated, and no material limitation.
+>
+> **And the reason for putting real data ahead of everything else held.** These roads
+> found **fourteen defects** in code that was already written, already tested, already
+> reviewed and already shipping confident numbers. Most of them were invisible from a
+> synthetic panel by construction — a synthetic panel has no tied values, no busy
+> Overpass mirror, no motorway and no national crash extract that is mostly somewhere
+> else. §8 has the list.
+
+Everything else in Stage 5 also closed: 5.3d and 5.3e finished the website, and an
+unplanned 5.3f rebuilt the front page around what running it on real roads revealed. The
+report gained a **verdict**. What remains anywhere is a spend cap, per-tenant secrets,
+identities, and deployment.
 
 ---
 
@@ -39,8 +60,10 @@ segments, builds an empty panel from the **geography** rather than from the cras
 fills that panel from free open data, checks whether the data can support a fitted
 statistical model, chooses its own mode accordingly, fits or scores, checks its own
 answers for contradictions, and returns a ranked list of dangerous segments where every
-number can be traced to a named source. It writes that up as a report whose limitations
-page is assembled from what the run actually did and which no setting removes, keeps the
+number can be traced to a named source. It writes that up as a report that ends on a
+verdict about what the assessment is worth — never a grade for the road — and whose
+limitations page is assembled from what the run actually did and which no setting removes,
+keeps the
 run so it re-renders years later without a refit, and serves the whole thing over HTTP and
 on a website. The model is the easy part. The product is the **path** from *a road, a crash
 table and open data* to *a defensible ranked assessment* — in places that have no AADT, no
@@ -62,7 +85,7 @@ are unavailable on the roads where the death rate is highest.
 |---|---|
 | No survey vehicle | Free maps, free satellite rasters, free street-level imagery. Tier A and Tier B replace the van. |
 | No AADT | A graph-centrality **traffic proxy**, never called AADT, never dressed as a volume. |
-| No inventory | The registry declares 22 factors; adapters fill what open data can support and **report by name** everything it cannot. |
+| No inventory | The registry declares 23 factors; adapters fill what open data can support and **report by name** everything it cannot. |
 
 **And one failure mode dominates the field.** A count model built only on the rows where
 crashes happened cannot estimate a rate — it can only redescribe the crash table. It will
@@ -81,18 +104,18 @@ coords → route → segment → panel skeleton → adapter fan-out → fuse
 
 | # | Step | What happens | State |
 |---|---|---|---|
-| 1 | **Resolve the corridor** | Fetch by road `ref` from OSM (never by routing — a router returns the *fastest* path and silently leaves the road you asked about). Stitch fragments, bridge gaps, detect divided carriageways, project to UTM, build a linear reference: chainage 0 → N km. | **Built** |
+| 1 | **Resolve the corridor** | Fetch by road `ref` or name from OSM (never by routing — a router returns the *fastest* path and silently leaves the road you asked about). Match the reference by national spelling, stitch fragments, bridge the gaps at junctions, detect divided carriageways, **refuse a road that is not built**, project to UTM, build a linear reference: chainage 0 → N km. | **Built** |
 | 2 | **Segment** | Cut into fixed-length units. Chainage continuous and exhaustive, no gaps, no overlaps, trailing runt merged. | **Built** |
 | 3 | **Build the panel skeleton** | Cross `unit_id × period × time_slot`. `n_crashes` initialised to **0** everywhere. *This is where zero-crash rows are born — from geography, never from the crash table.* | **Built** |
-| 4 | **Fan out the adapters** | One Overpass call along the corridor, two cloud-optimised raster windows, pure geometry, plus optional Tier B compute. Each adapter returns value + source + tier + licence. | **Built** (12 Tier A, 2 Tier B) |
+| 4 | **Fan out the adapters** | One Overpass call along the corridor, two cloud-optimised raster windows, pure geometry, plus optional Tier B compute and a street-level imagery check. Each adapter returns value + source + tier + licence, and a *failure* returns a structured record that raises a material limitation rather than quietly changing the model. | **Built** (16 Tier A columns, 2 Tier B) |
 | 5 | **Fuse and score agreement** | One value per factor per unit; the registry's ordered adapter chain decides the winner. Where two sources overlap, score agreement. Emit a **confidence tier per factor per unit**. | **Built** |
-| 6 | **Snap the crashes** | Project each crash to the centreline within tolerance; chainage → `unit_id`, timestamp → `period` + `time_slot`. Every drop counted **with a reason**. | **Built** |
+| 6 | **Snap the crashes** | Project each crash to the centreline within tolerance; chainage → `unit_id`, timestamp → `period` + `time_slot`. Every drop counted **with a reason** — and past 500 m a crash is not a near miss, it is somewhere else, so *missed the carriageway* and *was never on this road* are counted apart. | **Built** |
 | 7 | **Validation gates** | Nine checks before anything is fitted: required columns, **zero-crash rows present**, exposure positive, crashes-per-parameter, temporal resolution, snap rate, VIF, variance-to-mean, convergence. Each returns HARD / SOFT / INFO. | **Built** |
-| 8 | **Choose the mode — automatically** | Walk the ladder `A-full → A-reduced → A-minimal → B`, take the highest rung that passes every check. **The user has no override.** Every descent names the failed check and the dropped terms. | **Built** |
+| 8 | **Choose the mode — automatically** | Walk the ladder `A-full → A-reduced → A-minimal → B`, take the highest rung that passes every check. **The user has no override.** Every descent names the failed check and the dropped terms — and a term can leave for four distinct reasons, kept apart: nobody supplied it, the road does not have the feature, something better-evidenced measures the same thing, or it barely varies on this corridor. | **Built** |
 | 9 | **Fit or score** | Mode A: NB2 GLM with `ln(exposure)` offset, panel-clustered standard errors, optionally a Bayesian random-intercept GLMM. Mode B: crash-type-decomposed weighted index from cited weights — **ranked score only, never a count**. | **Built** |
-| 10 | **Sign guard and diagnostics** | Every coefficient checked against its declared `expected_sign`. On contradiction, auto-run four confounding diagnostics plus a **spline** that hunts the U-shape none of the other four can see. | **Built** |
-| 11 | **Validate out-of-sample** | Spatial cross-validation over contiguous stretches, CURE plots read against a measured design effect, calibration on held-out units — reported by default, including when bad. | **Built** |
-| 12 | **Rank and export** | Rank units, aggregate into blackspots, render an HTML report carrying method, mode, every factor with source/tier/licence/confidence, dropped terms, and a limitations page that cannot be disabled. The PDF is that page printed, not a second document. | **Built** |
+| 10 | **Sign guard and diagnostics** | Every coefficient checked against its declared `expected_sign`. On contradiction, auto-run five confounding diagnostics plus a **spline** that hunts the U-shape none of the others can see — then grade the finding: *suppressed by a named partner*, *too uncertain to have a sign*, or a real specification problem. | **Built** |
+| 11 | **Validate out-of-sample** | Spatial cross-validation over contiguous stretches, CURE plots read against a measured design effect and treated as a *distribution* wherever a factor has tied values, calibration on held-out units — reported by default, including when bad. | **Built** |
+| 12 | **Rank and export** | Rank units, aggregate into blackspots, render an HTML report carrying method, mode, every factor with source/tier/licence/confidence, dropped terms, a closing **verdict on what the assessment is worth**, and a limitations page that cannot be disabled. The PDF is that page printed, not a second document. | **Built** |
 
 **And then, optionally, three more.** They add reach, not credibility, and the sequencing
 rule in [`STEPS.md`](STEPS.md) says so plainly:
@@ -101,7 +124,7 @@ rule in [`STEPS.md`](STEPS.md) says so plainly:
 |---|---|---|---|
 | 13 | **Keep the run** | The whole payload into Postgres as `jsonb`, scoped to a tenant from the first migration, artefacts by reference. A stored run re-renders months later **without a refit**. | **Built** (5.1b) |
 | 14 | **Serve it** | `POST /jobs` → `202`, a runner behind it, `GET /runs/{id}`. A refusal is a result: a broken panel is a `422` naming the column, a Mode B descent is a `200` carrying its receipts, and infrastructure failing is a job status with a cause. | **Built** (5.1c–d) |
-| 15 | **A website over it** | Projects, corridors, jobs, runs, the registry — and the report itself as one of the screens, the same component the emailed file is built from. | **Built** (5.3a–b) |
+| 15 | **A website over it** | **The front page is a map**: find a road, click it, attach a crash CSV, press the button. Under that: projects, corridors, jobs, runs, the registry — and the report itself as one of the screens, the same component the emailed file is built from. | **Built** (5.3a–f) |
 
 **The two things that make it work, stated plainly:**
 
@@ -118,7 +141,7 @@ The whole product rests on one question per factor: **who pays to obtain it?**
 
 | Tier | Meaning | Cost | Provided by | Built? |
 |---|---|---|---|---|
-| **A** | Open, global, no key, pure script | Free | Us, automatically | **12 factors live** |
+| **A** | Open, global, no key, pure script | Free | Us, automatically | **16 factor columns live** |
 | **B** | Open, but needs vision models or graph compute | Compute time | Us, with real work | **2 of 4 live** |
 | **C** | Free-tier APIs, licence-limited | Free → paid | Us, opt-in only | Slots declared, none wired |
 | **D** | Cannot be derived, must be measured | Client's cost | Customer | **Client adapter live** |
@@ -130,14 +153,24 @@ The whole product rests on one question per factor: **who pays to obtain it?**
 | Source | Cost per corridor | Factors |
 |---|---|---|
 | Centreline geometry | arithmetic | `curve_radius_min`, `curve_density` |
-| OpenStreetMap — one Overpass call | one request | `speed_limit`, `lanes`, `lit`, `surface_paved`, `sidewalk_present`, `median_present`, `junction_density`, `access_density`, `ramp_density`, `poi_density`, `building_density` |
+| OpenStreetMap — one Overpass call | one request | `speed_limit`, `lanes`, `lane_width`, `lit`, `surface_paved`, `sidewalk_present`, `median_present`, `junction_density`, `access_density`, `ramp_density`, `poi_density`, `building_density` |
 | Copernicus DEM GLO-30, ESA WorldCover | COG window reads over HTTPS | `grade_pct`, `landuse_urban` |
 | OSM graph centrality, Mapillary detections *(Tier B)* | shortest paths, a free token | `traffic_proxy`, `roadside_object_density` |
 | Whatever the client measured *(Tier D)* | client's | any factor — enters as the **first** link in every chain |
 
-**22 factors are declared in the registry. 17 have adapters. On a real corridor 11–12
+**23 factors are declared in the registry. 18 have adapters. On a real corridor 12–14
 typically resolve** — the rest are refused on coverage and reported by name with the
-coverage that failed.
+coverage that failed. Measured on a short A6 stretch with every source enabled: **14
+delivered against 8** when only OSM was asked for.
+
+**And one source that fills no column at all.** The `imagery` check asks Mapillary whether
+a vehicle has ever driven the corridor with a camera, and answers in a sentence rather than
+a number. It exists because the construction gate reads a *tag*, and a tag is a label
+somebody typed — it can be wrong in both directions. The evidence is deliberately
+asymmetric: a photograph on the road is strong evidence it is open, no photograph is weak
+evidence of anything, because Mapillary's coverage is absent across whole regions and this
+product exists for the places with the worst data. A test asserts it never says the road
+does not exist.
 
 **Caching is by geography, not by corridor.** The strategic-network query is built from a
 half-degree grid cell, so two different roads through the same county produce a
@@ -166,6 +199,14 @@ parameter that creates one. Mode B's result type has **no field** capable of hol
 predicted count — the constraint is structural, not conventional.
 
 Terms are shed **by registry priority**, never by whichever happened to be significant.
+
+**Three things move a factor before priority is applied, and none of them looks at the
+outcome.** A factor the road cannot have is excluded outright (`not_applicable_on` — a
+motorway has no at-grade junctions). Where two factors measure one construct, only the one
+carrying a published weight is fitted. And a factor sitting on a single value across 80% or
+more of the units goes to the *back* of the keep order — demoted, never dropped, because a
+rung fits up to N terms. Promoting a factor because it correlates with crashes on this road
+would be the garden of forking paths, and it is deliberately not done.
 
 ### 5.2 The model stack — how the numbers are arrived at
 
@@ -245,7 +286,20 @@ They run *across* the whole flow, not at one point in it.
 | **A crash-type weight only moves its own crash type.** | Mode B decomposes by crash type and recombines with a cited distribution |
 | **The same segment measured twelve times is not twelve observations.** | Clustered SEs, printed beside the naive ones with the ratio |
 | **Below 20 units the correction is declined, not silently applied.** | The run says how wrong the uncorrected intervals are instead |
-| **A contradicted sign is flagged, never quietly reported.** | Five diagnostics fire automatically; verdict states the term is not interpretable as causal |
+| **A contradicted sign is flagged, never quietly reported.** | Six diagnostics fire automatically; verdict states the term is not interpretable as causal |
+| **Suppression by a named partner is not a contradiction.** | Classified as suppression only if the factor points the declared way *alone* **and** removing one other term restores it — removal, not a pairwise refit, because a two-term fit drops five terms' confounding and a bystander passes |
+| **A coefficient that cannot be told apart from zero has no sign to contradict with.** | Materiality follows significance; the same term at p = 0.95 raised a corridor's worst warning on one side of zero and nothing on the other |
+| **A term about a feature the road does not have is not fitted.** | `not_applicable_on` with a *required* reason — an exclusion nobody argued for is indistinguishable from one added to flatter a corridor. An undeclared facility type excludes nothing |
+| **Two views of one geometry are not fitted together.** | A `measures` construct fits one member, chosen by a standing rule — prefer the published weight — never by which term fits the road in front of us |
+| **A rung's seats do not go to a factor that is flat on this road.** | Above 80% modal share a factor is demoted to the back of the keep order, never dropped, and never promoted on its correlation with the outcome |
+| **A diagnostic reports the factor's shape, not the road's.** | CURE under ties is a distribution over 200 seeded orderings, with percentiles and a `tie_sensitive` flag |
+| **A check reports the model that shipped, not the one considered.** | The ladder re-runs the collinearity gate on the subset it is about to fit; exactly one result reaches the report and it names its design |
+| **A caveat is not printed on a run that never used the thing it qualifies.** | The crash-mix limitation is emitted only where an index exists, and names both road types where the measured facility disagrees |
+| **A source outage changes the model, so it is reported like one.** | `source_unavailable` at **material** severity — the same standing as a synthetic corridor, because the claim is *this run is not repeatable* |
+| **A client never hangs up on work the server was told it could still be doing.** | The Overpass client reads the timeout out of the query it carries and waits at least that long; a test walks every query the codebase ships |
+| **A crash somewhere else is not a failure of the crash table.** | Past 500 m, `not_on_this_corridor` — counted and named, never scored against the snap rate |
+| **The verdict grades the assessment, never the road.** | Two runs are not comparable quantities, so a letter grade over them would be invented — and it would be the most quotable number in the document |
+| **`region` records where a weight was estimated, not who published it.** | A Norwegian handbook reporting an international meta-analysis is declared `global`; the registry still holds zero Europe-scoped weights, and says so |
 | **An adapter cannot declare its own provenance.** | Tier and licence travel from the *registry*, not from the module |
 | **A cache never makes a run look fresher than it is.** | Every hit reported with its fetch date; past a fortnight, an instruction to clear |
 | **A derived quantity is refused when it is mostly a picture of the analysis window.** | The traffic proxy is tested against a symmetric parabola and withheld above 0.9 |
@@ -273,13 +327,16 @@ They run *across* the whole flow, not at one point in it.
 |---|---|---|
 | **0 — Foundations** | ✅ **Done** | Package layout, registry schema, input contract, transforms |
 | **1 — Engine core** | ✅ **Done** | Registry, contract, 9 gates, mode ladder, both modes, sign guard, run log, CLI. Mode B scores from context-aware weights sourced from AASHTO HSM, the Elvik Power Model and iRAP |
-| **2 — Geospatial pipeline** | ✅ **Done** | Corridor from OSM, linear referencing, segmentation, panel skeleton, crash snapping, 12 Tier A + 2 Tier B factors behind one adapter contract, fusion with per-unit confidence, geographic cache, and a run that knows where it is — the extent lifted from its centreline, so `GET /runs?bbox=` finds it. PostGIS itself is deliberately unbuilt: every spatial question the product asks is four comparisons, and a geometry column earns its extension when the hazard layers ask a real geometric one. **Two further Tier B factors remain unbuilt:** vision-model inference and the DEM viewshed |
-| **3 — Model depth** | ✅ **Done** | Panel-clustered SEs, GAM spline diagnostic, Bayesian random-intercept GLMM with credible intervals, registry weights as priors with a reported prior share, a Leroux spatial field, and out-of-sample validation reported by default |
-| **4 — Report and PDF** | ✅ **Done** | One React component rendered from `run.json` alone: mode banner, ranking, factors with source/tier/licence/confidence, receipts, SVG figures with no external request, and a limitations page assembled from the run that no flag removes. The PDF is that page printed |
-| **5 — Web layer** | 🟡 **Mostly done** | Layering rule as a test (5.0), payload contract frozen and TypeScript generated from it (5.1a), Postgres storage tenant-scoped from the first migration (5.1b), FastAPI with the refusal contract enforced by exception handler (5.1c), an in-process runner (5.1d), adapters fanning out as independently-failable branches and jobs on a Celery queue that separate workers drain — the unit of distribution being a job rather than an adapter, because spreading one assessment's fetches across machines spreads them across caches (5.2a), the report as an importable library (5.3a), a Next.js shell whose banner no route can omit (5.3b), and a map of the corridor over OpenStreetMap where clicking a segment gives the provenance of every number on it (5.3c) — the one screen that fetches from a third party, and it can be switched off — and a hover layer that links the strip, the map and the ranked table without taking the native SVG tooltips away from a reader with no JavaScript (5.3d). **Steps 5.1, 5.2a and 5.3 are complete. Outstanding:** cost model and cap (5.2b), per-tenant secrets (5.2c), auth and row-level policies (5.4) |
+| **2 — Geospatial pipeline** | ✅ **Done** | Corridor from OSM, linear referencing, segmentation, panel skeleton, crash snapping, 16 Tier A columns + 2 Tier B factors behind one adapter contract, fusion with per-unit confidence, geographic cache, and a run that knows where it is — the extent lifted from its centreline, so `GET /runs?bbox=` finds it. PostGIS itself is deliberately unbuilt: every spatial question the product asks is four comparisons, and a geometry column earns its extension when the hazard layers ask a real geometric one. **Then rebuilt in nine places by real roads** (2.10): a construction gate, national ref spellings, junction-gap bridging, the crash-distance split, `lane_width`, the imagery second opinion, and an Overpass client that waits as long as its own query asked for. **Two further Tier B factors remain unbuilt:** vision-model inference and the DEM viewshed |
+| **3 — Model depth** | ✅ **Done** | Panel-clustered SEs, GAM spline diagnostic, Bayesian random-intercept GLMM with credible intervals, registry weights as priors with a reported prior share, a Leroux spatial field, and out-of-sample validation reported by default. **Hardened by one real motorway** (3.5): CURE under ties, the collinearity check on the design that shipped, a low-variation screen before the rung slices, sign findings graded three ways, and a transform that was the identity function on the range it was used over |
+| **4 — Report and PDF** | ✅ **Done** | One React component rendered from `run.json` alone: mode banner, ranking, factors with source/tier/licence/confidence, receipts, SVG figures with no external request, a closing **verdict** on what the assessment is worth, and a limitations page assembled from the run that no flag removes. The PDF is that page printed |
+| **5 — Web layer** | 🟡 **Mostly done** | Layering rule as a test (5.0), payload contract frozen and TypeScript generated from it (5.1a), Postgres storage tenant-scoped from the first migration (5.1b), FastAPI with the refusal contract enforced by exception handler (5.1c), an in-process runner (5.1d), adapters fanning out as independently-failable branches and jobs on a Celery queue that separate workers drain — the unit of distribution being a job rather than an adapter, because spreading one assessment's fetches across machines spreads them across caches (5.2a), the report as an importable library (5.3a), a Next.js shell whose banner no route can omit (5.3b), and a map of the corridor over OpenStreetMap where clicking a segment gives the provenance of every number on it (5.3c) — the one screen that fetches from a third party, and it can be switched off — and a hover layer that links the strip, the map and the ranked table without taking the native SVG tooltips away from a reader with no JavaScript (5.3d), a landing flow where a real road goes from a click on a map to a downloaded Mode A report with no reference typed and no bounding box (5.3e), and a front page rebuilt around what running that on real roads revealed — the extent verdict, the weight context, and every working source reachable at last (5.3f). **Steps 5.1, 5.2a and the whole of 5.3 are complete. Outstanding:** cost model and cap (5.2b), per-tenant secrets (5.2c), auth and row-level policies (5.4) |
 | **6 — Deploy** | ⬜ **Not started** | Containers, hosting |
 
-**905 tests pass, 36 skipped. `ruff check` clean.**
+**1,108 tests pass, 42 skipped, in about four and a half minutes. `ruff check` clean.**
+The 42 are the whole Postgres store, and they stop skipping the moment
+`$ROADRISK_DATABASE_URL` points at a database — which CI does on every push, so the backend
+a deployment actually uses is not the one that never gets exercised.
 
 `core/` never imports the layers above it — and since 5.0 that is a test rather than a
 docstring, checked by parsing the source with `ast` because half the package sits behind
@@ -292,7 +349,53 @@ a web server nor a JavaScript toolchain.
 
 ## 8. Evidence — what has actually been run
 
-### Two real corridors, deliberately unalike
+### Seven real corridors, and what each one broke
+
+**This is the section that changed.** Full accounts, with every measurement and every
+mistaken diagnosis left in place beside what replaced it, are in [`TESTS.md`](TESTS.md).
+
+| # | Corridor | Date | Mode | Crashes | What it produced |
+|---|---|---|---|---|---|
+| 1 | Ελαιώνων (U274), Cyprus | 2026-08-28 | B | none | First real road through the new front page |
+| 2 | A10, Cyprus | 2026-08-29 | B | none | **The road is not built** — a construction gate, and `FacilityType.MOTORWAY` |
+| 3 | F929, Cyprus | 2026-08-30 | B | none | Confirmed the length and context fixes |
+| 4 | **A6 Derby–Buxton, England** | 2026-08-31 | **A** | **284 real** | **The first fitted model.** Curvature at p = 4.7e-07. Two fixes: the crash-distance split and junction-gap bridging |
+| 5 | **A82 Lomond–Glen Coe, Scotland** | 2026-08-31 | **A** | **162 real** | **The same method, the opposite answer.** Curvature explains nothing here. Every check passed, 120 of 120 crashes placed |
+| 6 | **A3 Paris, France** | 2026-09-04/05 | **A** | **1,403 real** | **The first A-full run.** Eight fixes, and the first clean sheet in the project |
+| 7 | **A50 Marseille–Aubagne, France** | 2026-09-07 | **A** | **773 real** | A dead lead killed properly, and four more fixes |
+
+**Fourteen defects, and the shape of them is the argument.** Every one was in code that was
+written, tested, reviewed and shipping confident numbers:
+
+| Found by | Defect |
+|---|---|
+| A6 | A snap check failing at 52.8% and calling a faithful panel unfaithful — because a national extract is mostly somewhere else by construction |
+| A6 | Two thirds of the road discarded, because a British A-road restarts across an unreffed roundabout and the bridging distance was tuned on Cyprus |
+| A3 | A gate that failed against a design that was never fitted — max VIF 1.8, reported as a failure at 5.4 |
+| A3 | A node ceiling counting raw OSM vertices instead of contracted junctions: an 18× overcount, refusing the traffic proxy on exactly the dense urban networks it is most useful on |
+| A3 | A rung's seat spent on a factor holding one value across 84% of the corridor |
+| A3 | CURE reporting the road's shape rather than the factor's — three unrelated factors drifting at 40.5%, 37.8%, 40.5% off one shared block of ties |
+| A3 | `ln1p` on a share of order 1e-3 being the identity function, so the term extrapolated linearly and one fold predicted 1,022 crashes against 311 |
+| A3 | Suppression and a genuine specification problem filed under one material heading |
+| A3 | A term about at-grade junctions fitted on a grade-separated motorway |
+| A3 | The suppression test itself — shipped wrong, testing pairs instead of removals, corrected two commits later |
+| A3 | A crash-mix caveat printed on a run that never used it, measured on the wrong kind of road |
+| A50 | A source outage changing the specification while still reporting `succeeded` — the same factor at +0.469 and +0.392 on identical inputs |
+| A50 | A client hanging up after 90 s on a query it had told the server to spend 180 s on |
+| A50 | Two measurements of one geometry fitted together, neither identifiable |
+| A3 + A50 | Every wrong sign material, however weak — a corridor's worst warning turning on which side of zero a coin landed |
+
+**Three dead ends, recorded as carefully as the findings.** The presence-flag transform was
+built to fix the CURE drift, made every metric worse and was reverted — and that failure is
+what revealed the drift was never about the factors. A z-score was fitted to rule out "the
+numbers are small" as the explanation for the traffic proxy, and changed nothing, which is
+what proved the problem was the *shape*. And a lead on gradient was argued twice in
+`TESTS.md` as promising — once as a pooled p = 0.019 described as nearly proven — before a
+corridor that could actually test it returned p = 0.702 with a *smaller* standard error.
+The three earlier runs had agreed because all three were missing the same block of factors.
+**Three broken models agreeing is not corroboration.**
+
+### And before them: two synthetic-crash corridors, deliberately unalike
 
 | | **Cyprus B9** (Troodos) | **Dutch N201** (polder) |
 |---|---|---|
@@ -311,8 +414,9 @@ The second corridor was **chosen by measurement, not off a map**: `access_densit
 an access and no ramp, 15 carry a ramp and no access. On B9 they cannot: one unit of fifty
 has a ramp anywhere near it.
 
-**The crash data for both roads is synthetic.** What these runs validate is the geometry
-and adapter path, not any road. This is stated three times in the run output. See §9.
+**The crash data for both roads is synthetic**, and it is stated three times in the run
+output. What these two runs validate is the geometry and adapter path, not any road — which
+is exactly why the seven above were worth the nine days they cost.
 
 ### Measured, not asserted
 
@@ -331,10 +435,17 @@ and adapter path, not any road. This is stated three times in the run output. Se
 | The screen and the emailed file are one document | The same run through both entry points: `article.report` **49,929 characters, identical hash** |
 | The banner is on every screen, not most | 11 of 11 routes fetched and checked; **11 of 11 fail** when it is taken out of the layout |
 | A website did not disturb the product | After the workspace move, `report.html` rebuilt **byte-identical** |
+| The same method reaches different answers on different roads | A6: curvature at **p = 4.7e-07**. A82, same country, same crash source, comparable road: **curvature explains nothing**. A3 vs A50: `access_density` p = 8e-07 against 0.53; `speed_limit` 0.95 against 2e-23 |
+| A tie-driven CURE excursion is not a finding | 2,000 permutations within ties: `junction_density` reported **0.432** against a median of **0.027**, and corridor order sat at the **100th percentile** of orderings |
+| The transform was the problem, not the scale | A z-score control changed calibration 0.674 → **0.656**; changing `ln1p` to `ln` changed it to **1.143** |
+| A source outage is a different model, not a slower one | Same road, same 773 crashes, minutes apart: five factors and four, `grade_pct` at **+0.469 and +0.392** — both runs reporting `succeeded` |
+| The node ceiling was measuring the wrong quantity | Paris at the refused window: 674,358 raw vertices, **37,935 contracted junctions**, betweenness in **25 s** |
+| A finding that survives its own machinery being rebuilt | `access_density` on the A3 across nine specifications: +0.44, +0.33, +0.30, +0.39, +0.40, +0.37, +0.36 — **never once changing sign** |
 
-### Defects the real data exposed, and what they cost
+### Defects the earlier real *geometry* exposed, and what they cost
 
-Recorded because they are the argument for validating on real roads at all:
+The fourteen above came from real crashes. These came before them, from real roads with
+synthetic crashes, and they are why the geometry path is trusted at all:
 
 - The default resample interval was set by guesswork.
 - A test fixture was manufacturing the signal it tested for.
@@ -364,18 +475,31 @@ Recorded because they are the argument for validating on real roads at all:
 
 ## 9. What is not built, and the critical path
 
-### 🔴 The critical path — one item
+### ✅ The item that was the critical path — done
 
-> **A real police crash extract.** Every corridor run so far uses synthetic crashes, which
-> validate the geometry and the adapter path and **nothing about any road**. A single real
-> extract is worth more than a third corridor.
+> ~~**A real police crash extract.**~~ **Spent, 2026-08-31 to 2026-09-07.** Seven real
+> corridors, four on real police extracts (UK STATS19, French BAAC), fourteen defects
+> found, the first fitted model and the first A-full run. §8 has the list. The prediction
+> that justified putting this first — that real roads would find what tests could not —
+> held, and it is the reason the two items below are now the top of the list rather than
+> the third and fourth entries on it.
 
-### Ordered, after that
+### 🔴 The critical path now — two items
+
+> **1. A region outside Europe.** All seven corridors are Cypriot, British or French, and
+> the call topic asks for at least three regions with region-level comparison. The
+> constraint is free crash data with coordinates, not geography.
+>
+> **2. Hazard layers — flood, fire, storm, snow.** Unstaged, and now the highest-value
+> unbuilt work in this repository: the adapter contract and raster windowing already fit
+> them exactly, and JRC river flood maps, EFFIS and ERA5 are all free.
+
+### Ordered, after those
 
 | # | Item | Why it is not built |
 |---|---|---|
-| 1 | **A third region, and primary *and* secondary roads** | The call topic asks for at least three regions with region-level comparison. Two corridors exist, both on synthetic crashes — which is the item above wearing a different hat |
-| 2 | **Hazard layers — flood, fire, storm, snow** (unstaged) | The cheapest quarter of the call topic available anywhere: the adapter contract and raster windowing already fit them exactly, and JRC river flood maps, EFFIS and ERA5 are free. **The highest-value unbuilt work in this repository after real crash data** |
+| 1 | **The information-gap experiment** | Rank displacement, predictive degradation and literature share per data condition. The machinery has existed since 3.3b; the experiment was never meaningful on synthetic crashes and now is, on four corridors' worth of real ones |
+| 2 | **Primary *and* secondary roads in the same region** | Six of the seven real corridors are primary or motorway. The pipeline has no known problem with secondary roads; nobody has run one with crashes on it |
 | 3 | **The branch-level chord** (deliberately unbuilt) | Jobs are on a queue and workers drain it, which is what 5.2a needed. Distributing one assessment's *adapters* is a different thing, and it would spread its fetches across per-machine caches — slower than the threads it replaced. **Waits on 6.2's object storage**, which is the only thing that makes it worth having |
 | 4 | **Cost model and spend cap** (5.2b) | Nothing counts spend anywhere. The only cost figure in the repository is the 50–150 USD per corridor recorded against the unbuilt `mapillary_vision`. A cap has to refuse *before* the call, and its refusal is a receipt like any other |
 | 5 | **Auth and row-level policies** (5.4a) | `X-Tenant-Id` scopes every read and proves nothing. The storage seam was built for this from the first migration; what is missing is identity and a database that refuses a cross-tenant read on its own |
@@ -415,6 +539,16 @@ WSL produced a file byte-identical to the one built on Windows.
 4. **Resolve `lanes`.** It is a volume proxy expecting `+` for total crashes, while iRAP
    prices lane count at `−` for head-on-overtaking crashes only. Two mechanisms in one
    column. The fix is separating the exposure role from the risk role, not picking a sign.
+5. **European evidence, if anybody can reach it.** The registry holds **zero weights
+   estimated in Europe**, so every European corridor — which is all seven of them —
+   reaches for North American or global evidence, and every report says so at length. A
+   sweep on 2026-09-01 found the evidence exists in quantity and is almost entirely
+   unreachable: PRACT catalogued 889 CMFs and 273 accident prediction models on European
+   infrastructure and **its repository is 404 on both http and https**. The harvest was
+   one weight, from the Norwegian handbook, and it is declared `global` rather than
+   `europe` because its own page says the figure pools 47 international studies. Full
+   survey in [`docs/EUROPEAN_EVIDENCE.md`](docs/EUROPEAN_EVIDENCE.md). **The honest route
+   out remains Mode A**, which does not need a weight at all.
 
 ---
 
@@ -575,12 +709,15 @@ Place five badges along it:
 
 **Bottom-right corner — a status strip:**
 
-`Stage 0 ✅ · Stage 1 ✅ · Stage 2 🟡 · Stage 3 ✅ · Stage 4 ✅ · Stage 5 🟡 · Stage 6 ⬜
-— 905 tests passing`
+`Stage 0 ✅ · Stage 1 ✅ · Stage 2 ✅ · Stage 3 ✅ · Stage 4 ✅ · Stage 5 🟡 · Stage 6 ⬜
+— 1,108 tests passing`
 
-**One more thing the figure must not flatter.** Wherever crashes enter the drawing, put a
-small red-outlined tag on them: **`synthetic on every corridor run to date`**. It is the
-single most important caveat in the system and the easiest one for a diagram to hide.
+**One thing the figure may now say, and one it still must not flatter.** Where crashes
+enter the drawing, the old brief called for a red-outlined tag reading *synthetic on every
+corridor run to date*. **That tag comes off** — four corridors have run on real police
+extracts. What replaces it is not a boast: tag the crash input
+**`7 real corridors · 4 with police data · all of them European`**, because the region
+limit is now the honest caveat, and it is the one a diagram would hide next.
 
 ### 10.2 Figure 2 — the recurring shape *(optional inset)*
 
@@ -711,7 +848,7 @@ flowchart LR
 src/roadrisk/
 ├── contract/                one description of the payload — the bottom of the layer order
 ├── core/                    plain library — no web, no network, no database
-│   ├── registry/            22 declarative factors (schema, loader, factors.yaml)
+│   ├── registry/            23 declarative factors (schema, loader, factors.yaml)
 │   ├── contract.py          the six required columns; exposure derivation
 │   ├── context.py           what kind of corridor, and what crashes were counted
 │   ├── crashmix.py          how total crashes split by type; the cited default
@@ -719,11 +856,11 @@ src/roadrisk/
 │   ├── transforms.py        ln / ln1p / identity / zscore, each guarded
 │   ├── diagnostics.py       VIF, correlation, dispersion
 │   ├── gates.py             the nine validation checks
-│   ├── ladder.py            A-full → A-reduced → A-minimal → B
+│   ├── ladder.py            A-full → A-reduced → A-minimal → B; and what loses a seat
 │   ├── gam.py               the rung 3 spline
 │   ├── models/              Poisson (reference), NB2 (shipped), Bayes, spatial, Mode B index
-│   ├── signguard.py         expected_sign enforcement and follow-up diagnostics
-│   ├── validation.py        spatial CV, CURE, calibration — reported even when bad
+│   ├── signguard.py         expected_sign: contradiction, suppression, or a coin flip
+│   ├── validation.py        spatial CV, CURE under ties, calibration — reported even when bad
 │   ├── runlog.py            append-only event log, reproducibility manifest
 │   └── engine.py            the one entry point
 ├── geo/                     geography → panel. Optional extra; core never imports it
@@ -731,10 +868,11 @@ src/roadrisk/
 │   ├── corridor.py          linear referencing and the structural gates
 │   ├── segmentation.py      fixed-length units, continuity asserted not assumed
 │   ├── panel.py             the skeleton — zero rows exist because road exists
-│   ├── snapping.py          crashes onto the corridor, every drop given a reason
+│   ├── snapping.py          crashes onto the corridor; a near miss and an elsewhere kept apart
 │   ├── geometry.py          curvature, computed from the centreline alone
-│   ├── osm.py               fetch a corridor by road ref; stitch, bridge, gate
-│   ├── adapters/            one factor, one source, one tier, one licence
+│   ├── osm.py               fetch by ref or name; stitch, bridge, gate, refuse a building site
+│   ├── adapters/            one factor, one source, one tier, one licence — plus imagery.py,
+│   │                        which fills no column and answers in a sentence
 │   ├── branches.py          adapters as independently-failable units, and the fan-out
 │   ├── cache.py             remember fetches by geography, and report their age
 │   └── pipeline.py          the orchestrator
@@ -756,9 +894,10 @@ src/roadrisk/
 └── cli.py                   mode banner, refusal receipt, descent receipt
 
 web/                         one report, imported three times. Nothing else renders it
-├── src/report/              the library — Report, sections, figures, styles, generated types
+├── src/report/              the library — Report, sections, figures, verdict, styles, types
 ├── src/entries/             the file:// bundle, and mountReport() for a host page
-└── shell/                   the website — routes, two layouts, and the banners in them
+└── shell/                   the website — a map for a front page, routes, two layouts,
+                             the banners in them, and the Nominatim proxy
 ```
 
 **The layering rule:** `core/` never imports the layers above it — `core → demo → geo →
@@ -778,7 +917,7 @@ roadrisk demo --crash-rows-only                 # watch Mode A be refused
 roadrisk demo --u-shape curve_density           # watch the sign guard and the spline
 roadrisk demo --units 40 --periods 12 --bayes   # credible intervals instead of p-values
 roadrisk corridor --demo --bayes --report out/  # coordinates to a readable report, one command
-roadrisk registry                               # the 22 factors and their weight status
+roadrisk registry                               # the 23 factors and their weight status
 roadrisk serve --tenant                         # the API, and a tenant to use it with
 
 python tools/validate_corridor.py               # the two real corridors

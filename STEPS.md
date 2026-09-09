@@ -9,9 +9,10 @@ know it is done. Status is tracked here; what was actually built is logged in
 **Sequencing rule, from the brief:** make the model defensible on two corridors → make it
 modular → then sell it. Stage 1 and Stage 3 are the credibility path. Stage 5 is not.
 
-**Where the build is, 2026-08-27.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
+**Where the build is, 2026-09-08.** Stages 0, 1, 2, 3 and 4 are complete: two coordinates
 in, a printed and sourced report out, with every number traceable and a limitations page
-nothing can remove. **Stage 5 has started.** 5.0 made the layering rule a test, before the
+nothing can remove. **Stage 5 is nearly done — 5.1, 5.2a and the whole of 5.3.** 5.0 made
+the layering rule a test, before the
 packages that could break it existed; 5.1a froze the payload contract and made
 `web/src/types.ts` a generated file; 5.1b put runs in Postgres, tenant-scoped from the
 first migration; 5.1c serves all of it over HTTP, with the refusal contract enforced by
@@ -28,11 +29,40 @@ of its numbers came from, with no basemap and no request unless somebody configu
 failing one costs a factor rather than the corridor, and jobs now go on a Celery queue
 that separate worker processes drain — so work in flight survives a deploy, and more than
 one machine can do it. The unit of distribution is a *job* rather than an adapter branch,
-for a reason the note under 5.2a measures. What remains in Stage 5 is a spend cap, secrets
-per tenant, and identities. The one thing no part of Stage 5
-addresses is the critical
-path: this is still validated on two corridors with synthetic crashes, and one real
-police extract is worth more than any of what follows.
+for a reason the note under 5.2a measures. **5.3d and 5.3e finished the website**: the
+hover layer that links the strip, the map and the ranked table, and then a landing flow
+where a real road goes from a click on a map to a downloaded Mode A report with no
+reference typed and no bounding box. What remains in Stage 5 is a spend cap, secrets per
+tenant, and identities.
+
+> ### 🟢 The critical path is closed
+>
+> **Every version of this paragraph until now ended by saying that the whole thing was
+> validated on two corridors with synthetic crashes, and that one real police extract was
+> worth more than everything that followed. That is no longer true.**
+>
+> Between 2026-08-28 and 2026-09-07, **seven real corridors** were assessed across Cyprus,
+> England, Scotland and France, four of them against real police crash tables — UK STATS19
+> and French BAAC, both open. The A6 through Derbyshire produced **the first fitted model
+> in the project's history** on 284 real collisions; the A3 through Paris was the first
+> corridor with enough crashes to reach **A-full**, at 1,403.
+>
+> **And the prediction that justified this ordering held.** Real roads found what no test
+> could: **fourteen defects in the engine and pipeline**, most of them in code that was
+> already tested, already reviewed, and already shipping confident numbers. A gate that
+> failed against a model that was never fitted. A diagnostic reporting the road's shape
+> rather than the factor's. A client hanging up on a query it had itself told the server
+> to spend three minutes on. A transform that was the identity function on the range it
+> was actually used over.
+>
+> Every one of them is recorded in [`TESTS.md`](TESTS.md) with the symptom that exposed
+> it, and the reasoning that turned out to be wrong is left in place beside what replaced
+> it. **Three things were built, measured and thrown away**; one lead was argued twice as
+> promising and then killed by a corridor that could test it properly.
+>
+> **What the critical path is now:** a third region outside Europe, hazard layers, and
+> the information-gap experiment — which is finally meaningful, because it was only ever
+> meaningful on real crashes. See *Requirements not covered by any stage*.
 
 **Development moved to WSL2 / Ubuntu on 2026-08-24**, because Windows enabled Smart App
 Control and it blocks unsigned native binaries — which is every compiled Python wheel this
@@ -123,14 +153,15 @@ being worked around — it is the shape of the product.
 | | Step | Deliverable | Done when |
 |---|---|---|---|
 | `[x]` | **2.2a** Corridor + linear reference | `Corridor.from_latlon`, UTM projection, chainage, structural gates | A corridor that cannot be linearly referenced is rejected, not silently used |
-| `[x]` | **2.2b** Resolve a corridor from OSM | Fetch by road `ref`, stitch, bridge gaps, detect divided roads, trim to start/end | Refuses a fragmented collection; never welds opposing carriageways |
+| `[x]` | **2.2b** Resolve a corridor from OSM | Fetch by road `ref` **or name**, stitch, bridge gaps, detect divided roads, trim to start/end. Hardened by real roads since — see 2.10 | Refuses a fragmented collection; never welds opposing carriageways |
 | `[x]` | **2.3** Segmentation | Fixed-length units, chainage continuous and exhaustive, trailing runt merged | No gaps, no overlaps, unit lengths sum to the corridor |
 | `[x]` | **2.4** Panel skeleton | `unit_id × period × time_slot`, `n_crashes` initialised to 0 | Zero rows exist by construction; skeleton passes the input contract |
-| `[x]` | **2.5** Crash snapping | Project to centreline within tolerance, chainage → unit, period → cell | Every drop counted with a reason; `SnapReport` activates gate check 6 |
-| `[x]` | **2.6** Tier A adapters | 12 factors behind one adapter contract, from three sources: centreline geometry, one OSM call, two COG rasters | Each returns value + source + tier + licence |
+| `[x]` | **2.5** Crash snapping | Project to centreline within tolerance, chainage → unit, period → cell. **A crash past 500 m is `not_on_this_corridor`, not a near miss** — the two are counted apart, and check 6 takes its rate over the crashes that were near the road at all | Every drop counted with a reason; `SnapReport` activates gate check 6 |
+| `[x]` | **2.6** Tier A adapters | **16 factor columns** behind one adapter contract, from three sources: centreline geometry, one OSM call, two COG rasters. `lane_width` added 2026-09-02, the attribute the European literature raises most | Each returns value + source + tier + licence |
 | `[x]` | **2.7** Fusion + agreement | Registry chain decides the winner; agreement scored where two sources overlap; client data enters as the first link | Confidence tier emitted per factor per unit |
 | `[x]` | **2.8** Tier B adapters | Both named deliverables done and validated live: graph-centrality traffic proxy with a window-artefact gate, Mapillary detections. `mapillary_vision` and `dem_viewshed` are further Tier B factors, listed below rather than in this step | Never labelled `aadt` — asserted by test |
 | `[x]` | **2.9** Persistence + geographic cache | Cache **done** and validated live — a second corridor in the same region costs 1.2 s against 55.5 s ✅. Geometry persisted at 5.1b and **findable** since 0003: a run's extent is lifted from its centreline and `GET /runs?bbox=` filters on it ✅. **PostGIS itself stays unbuilt, now for a measured reason** — see below | Second corridor in the same country hits cache ✅ · a run can be found by where it is ✅ |
+| `[x]` | **2.10** What seven real roads changed | Unplanned, and the most valuable work in this stage: a construction gate, national ref spellings, junction-gap bridging, a Mapillary imagery second opinion, and an Overpass client that waits as long as its own query asked for ✅ | Each fix carries the corridor that exposed it, in [`TESTS.md`](TESTS.md) ✅ |
 
 **Try it:**
 
@@ -142,11 +173,16 @@ Add `--osm` for the road's own tags and its conflict-point densities, and `--ras
 for gradient and roadside land use. Without either flag the pipeline never touches the
 network.
 
-**Validated on two real roads.** Cyprus B9 through the Troodos, 2026-08-10: 69 OSM
-fragments → one 25.01 km centreline → 50 units → 1,200 panel rows → 99.8% snap rate →
-Mode A. Dutch N201, 2026-08-17: 810 vertices → 33.50 km → 67 units → 1,608 rows → 84.3%
-snap → Mode A, 11 of 13 factors resolved. Flat country after a mountain road, and the
-pipeline needed no change for it. Details, and the defects each exposed, in
+**Validated on two synthetic-crash roads, then on seven real ones.** Cyprus B9 through the
+Troodos, 2026-08-10: 69 OSM fragments → one 25.01 km centreline → 50 units → 1,200 panel
+rows → 99.8% snap rate → Mode A. Dutch N201, 2026-08-17: 810 vertices → 33.50 km → 67
+units → 1,608 rows → 84.3% snap → Mode A, 11 of 13 factors resolved. Flat country after a
+mountain road, and the pipeline needed no change for it.
+
+**Then the real ones, and they needed a great deal of change.** Seven corridors between
+2026-08-28 and 2026-09-07 — Ελαιώνων, the A10 and F929 in Cyprus, the A6 and A82 in
+Britain, the A3 and A50 in France — produced fourteen fixes between them. Every run,
+every measurement and every defect is in [`TESTS.md`](TESTS.md); the build log is in
 [`IMPLEMENTED.md`](IMPLEMENTED.md).
 
 ```bash
@@ -407,6 +443,23 @@ Validated live against two real Cyprus roads:
 
 The network layer is injectable, so all 34 tests run without touching it.
 
+### 2.10 — what seven real roads changed *(done, unplanned)*
+
+None of this was in the plan, and it is the most valuable work in this stage. Each item
+names the corridor that exposed it.
+
+| Fix | Exposed by | What was wrong |
+|---|---|---|
+| **A road that is not built is refused at the fetch** | Cyprus A10 | `highway=construction` on all 22 ways, and the pipeline assessed it end to end: 8.53 km, 17 segments, a blackspot list for a motorway nobody has driven on. Four symptoms reported correctly and separately; the sentence explaining all four never said |
+| **`FacilityType.MOTORWAY`** | Cyprus A10 | The A10 was declared `rural_two_lane` because nothing else was offered — which quietly admits HSM weights whose premise (*"rural two-lane two-way segments"*, driveways) is false on a motorway rather than approximate |
+| **A national ref spelling is one road** | French A6 | OSM writes `A 6` in France; a sample of 5,035 referenced ways in southern Paris carried the space on 100% of them. Every French road came back as *"OSM returned no ways tagged ref='A6'"* — a true sentence that reads as *this road does not exist*. Now an anchored `^A[ -]?6$`, which still cannot reach `A66` |
+| **A roundabout is not a break in the road** | English A6 | 25 m bridging was tuned on Cyprus B-roads. A British A-road restarts across an unreffed roundabout tens of metres later, so two thirds of the A6 — 75 pieces, 26.9 km — was discarded as *not connected*. At 60 m the A82 goes from refused at 50% to 94.1 km |
+| **A crash elsewhere is not a failure of the crash table** | English A6 | Check 6 failed at 52.8% saying the panel was *"not a faithful record"* of a corridor it recorded faithfully. Distances were bimodal — p50 9 m, p75 9.2 km — because a national extract is mostly elsewhere by construction |
+| **The imagery second opinion** | Cyprus A10 | The construction gate reads a tag, and a tag is a label somebody typed. Mapillary answers an independent question — has a vehicle driven here, and when — with the evidence asymmetry stated: a photograph is a finding, no photograph is an absence of information |
+| **`lane_width`** | The European evidence sweep | PRACT raises lane or carriageway width on 41 of 238 pages, more than any other attribute, and the registry had no column for it. Uncited deliberately, because neither reachable figure traces to a named study |
+| **An Overpass client waits as long as its query asked for** | French A50 | The query declares `[timeout:180]`; the default client's socket timeout was 90 s. A 41 km corridor silently lost nine factors to the gap between two numbers in two files |
+| **A source outage is a material limitation** | French A50 | Two runs minutes apart on the same road and the same 773 crashes fitted `grade_pct` at +0.469 and +0.392. Both reported `succeeded`. Degrading silently does not produce an error a reader notices — it produces a different answer |
+
 ---
 
 ## Stage 3 — Model depth
@@ -415,12 +468,19 @@ The network layer is injectable, so all 34 tests run without touching it.
 random-intercept GLMM, the registry's weights as priors, the spatial field, and
 out-of-sample validation.
 
+**And then hardened by a road, which is a different thing from being finished.** The A3
+through Paris was the first corridor with enough crashes to exercise all of it at once,
+and it reported five things about itself that were not true. Step 3.5 below records what
+that cost and what it bought — it is not new capability, it is the existing capability
+being made to mean what it says.
+
 | | Step | Deliverable | Done when |
 |---|---|---|---|
 | `[~]` | **3.1** NB GLMM | Panel-clustered standard errors **done** — up to 3.9x wider, two factors lose significance. The random-intercept GLMM itself is deferred to 3.3, see below | Standard errors widen versus plain NB2 ✅ |
 | `[x]` | **3.2** GAM diagnostic | Spline on geometry, hunts the U-shape | Produces the diagnostic plot, never ships a number ✅ |
 | `[x]` | **3.3** Bayesian hierarchical + spatial | Random-intercept GLMM **done** — credible intervals replace p-values, σ_u estimated at last. `expected_sign` encoded as a prior **done** — the registry's cited weights are the prior means, with the share of each answer they account for reported per factor. CAR/BYM **done** — a Leroux field over the corridor chain, fitted by joint Laplace, reporting rho with a credible interval and saying plainly when the corridor cannot tell | Credible intervals replace p-values in the report ✅ · `expected_sign` encoded as prior ✅ · CAR/BYM ✅ |
 | `[x]` | **3.4** Out-of-sample validation | Spatial CV over contiguous stretches, CURE plots with a measured design effect, calibration on held-out units | Reported by default, including when bad ✅ |
+| `[x]` | **3.5** What one real motorway did to the diagnostics | Unplanned. CURE under ties, the collinearity check on the design that shipped, a low-variation screen before the rung slices, sign findings graded three ways, and a transform on the wrong scale — see below ✅ | Every one of them found by the A3 contradicting itself, never by a test ✅ |
 
 ### 3.3 — credible intervals, and the two halves still outstanding
 
@@ -749,6 +809,68 @@ rung 2 a *"cheap upgrade"*, and MCMC is not cheap — it would add PyMC, converg
 diagnostics and minutes per run. That dependency is already required by **3.3**, so the
 GLMM belongs there, where it is paid for once and reported properly.
 
+### 3.5 — what one real motorway did to the diagnostics *(done, unplanned)*
+
+Five defects, all of them in code that was written, tested and shipping. Not one was
+reachable from a synthetic panel, because a synthetic panel has no ties, no motorway and
+no factor concentrated on one value across four fifths of a road.
+
+**A check reported the design that was considered, not the one that shipped.** The
+collinearity gate runs before the ladder across all 12 available factors; A-full fits at
+most 7. The A3 shipped a design with a max VIF of **1.8** while the report announced a
+failure at **5.4** — a client reads that and throws out results that are fine. The ladder
+now re-runs the check on the subset it is about to fit, and that result supersedes the
+candidate one. Mode B keeps the candidate check, because it scores every available factor
+and there is no other design to describe.
+
+**CURE was reporting the road's shape, not the factor's.** A stable sort leaves units tied
+at one factor value in *corridor order*, so across a tied block the cumulative residual is
+the residual summed along the road — which on a corridor with a design effect of 4.2
+drifts on its own, with the plotted factor contributing nothing. Three unrelated factors
+drifted at 40.5%, 37.8% and 40.5% off one shared block of zeros. Permuting within ties over
+2,000 draws, fewer than 3% of equally valid orderings would have reported a drift at all,
+and corridor order sat at the **100th percentile** — the worst available ordering, which is
+what the mechanism predicts. The statistic under ties is now a distribution: the median over
+`CURE_TIE_RESAMPLES` seeded orderings, its 5th and 95th percentiles, and a `tie_sensitive`
+flag when that interval straddles the threshold.
+
+> **The wrong fix was built first, and that is how the right one was found.** The reading
+> was zero-inflation, so both factors were entered as presence flags — about as large a
+> change of functional form as exists. It moved `share_outside` 2.7 points *in the wrong
+> direction* and cost AIC 21. Measured and reverted, and it was that failure which showed
+> the drift was never about the factors at all.
+
+**A rung's seats went to factors flat on this road.** A-full chose its seven terms by
+registry priority alone — an ordering decided in advance, for roads in general — and on the
+A3 that spent one on `poi_density`, which holds a single value across 84% of the corridor
+and fits at p = 0.64. Factors above `MAX_MODAL_SHARE` (0.8) now move to the back of the keep
+order: *demoted, not dropped*, because a rung fits up to N terms. The bar is 0.8 rather than
+0.7 because `access_density` is concentrated across 76% of that same road and is its
+strongest term at p = 5e-9.
+
+**`ln1p` on a share of order 1e-3 is the identity function.** `traffic_proxy` runs 0.00069
+to 0.066 on this corridor, where `ln1p` has a span of 0.0637 against a raw span of 0.0658 —
+so the term was linear in x and extrapolated linearly. Contiguous-stretch calibration failed
+at 0.674 on one fold predicting 1,022 crashes against 311 observed. Under `ln`, with zeros
+floored at half the estimator's resolution, the corridor calibrates at 1.143 and optimism
+falls 0.2262 → 0.0139. **The in-sample cost was accepted deliberately** — AIC 4626.9 → 4656.8,
+and the term stops being significant. On the correct scale the strong version was the
+extrapolation talking.
+
+**A wrong sign was one finding where it is three.** Suppression by a named partner
+(`sign_suppressed`, context), an estimate that cannot be told apart from zero
+(`sign_contradiction_uncertain`, caveat), and a genuine specification problem
+(`sign_contradiction`, material). The A3 fitted `speed_limit` at +0.032 and, one factor
+later, at −0.037 — p = 0.95 both times — and only the second raised the corridor's most
+serious heading. A corridor's worst warning turned on which side of zero a coin landed.
+
+> **The suppression test shipped wrong and was corrected two commits later**, which is
+> recorded rather than tidied away. It refitted the suspect factor beside one correlated
+> partner and called that partner the suppressor when the pair behaved — but in a two-term
+> fit the other five terms are absent and so is their confounding, so a bystander passes as
+> easily as an absorber. `_without_each` drops one term at a time from the full
+> specification instead, which answers the question directly.
+
 ---
 
 ## Stage 4 — Report
@@ -778,6 +900,7 @@ without a refit, and the same payload feeds **5.1** and **5.3** unchanged.
 | `[x]` | **4.5** PDF export | `@media print` and `@page` over the same route — banner on every page, page counters, no orphaned tables | The exported PDF and the screen are the same document, and every number in it is traceable to a source ✅ |
 | `[x]` | **4.6** Limitations page | Generated from the run, not written into the layout: dropped terms, failed checks, missing factors, Tier B caveats, the `speed_limit` and HSM caveats, Mode B's ranking-only status, corridor count, crash-mix defaults, cache age | Cannot be disabled by config — no flag removes it, and a test that tries every way to suppress it still finds it ✅ |
 | `[x]` | **4.7** CLI seam | `roadrisk corridor --report`, and `--bayes` / `--priors` / `--spatial` wired through `corridor` | `roadrisk corridor --demo --bayes --report out/` goes from coordinates to a readable report in one command ✅ |
+| `[x]` | **4.8** A verdict at the end | Unplanned. Ten sections stating the crash count three times and finishing on a licensing table become seven finishing on a judgement — what the assessment is worth, what it found, and where to send somebody ✅ | Every number read off the sections above rather than recomputed, so the verdict cannot drift from the table a reader just looked at ✅ |
 
 ### 4.3 — one renderer, built early rather than twice
 
@@ -837,6 +960,41 @@ and come from [`docs/WEIGHTS.md`](docs/WEIGHTS.md).
 Written as prose in the layout it becomes a thing that can be quietly edited out. Written
 as data, removing it is a code change with a failing test attached.
 
+**Since then the page has grown five kinds of statement it did not have**, all of them
+produced by real corridors and all of them about *how a factor left the model or how much a
+run can be trusted*: `not_applicable_here` (a feature the road does not have),
+`superseded` (a better-evidenced measure of the same property),
+`factors_low_variation` (a column that barely moves), `source_unavailable` (**material** —
+a fetch failed, so this run is not repeatable and must not be compared with another), and
+`sign_contradiction_uncertain` (the estimate cannot be told apart from zero, so its sign is
+not information). Together with `missing`, that is four distinct answers to *why is this
+factor not in the model* — and "it is not in the model" was never a finding a reader could
+act on.
+
+### 4.8 — a verdict, and why it grades the assessment rather than the road *(done, unplanned)*
+
+A reader who stopped before the end stopped on a **licensing table**. Four merges removed
+repetition rather than content — headline tiles, panel facts, snapping and a check roll-up
+into one summary block above the fold; provenance and licensing into one section, because
+the licence a factor arrived under belongs in the row that names the factor; ten rows of
+gate prose into a strip of named ticks, with only failures and skips keeping their
+sentence. Measured on the same A3 run: **8 sections → 7 with a new one added, 7 tables →
+4, 11,915 px → 10,395 px.**
+
+**It grades the assessment, not the road, and the module says why.** A safety letter over a
+corridor would need corridors scored against each other on a common scale, and this engine
+fits one road at a time from that road's own crashes. Two runs are not comparable
+quantities, so a grade over them would be invented — and it would be the most quotable
+number in the document. Mode B gets its own standing rather than a poor grade of Mode A,
+because calling it *provisional* would imply that more of the same evidence promotes it.
+Only crashes do.
+
+**The finding it names is the most confident term that agrees with the literature, not the
+largest coefficient.** Built the wrong way first: each factor enters on its own transformed
+scale, so the estimates are not on a common ruler, and largest picked `lanes` at +1.21 over
+`access_density` at +0.36 — `lanes` being the term the model itself flags as standing in for
+traffic volume. A term the sign guard has flagged is excluded outright however confident.
+
 ---
 
 ## Stage 5 — Web layer
@@ -856,6 +1014,13 @@ other. **It buys reach, not credibility.** The numbers do not improve, and the s
 rule at the top of this file still holds — Stages 1 and 3 are the credibility path, and
 this is not. It is worth building when the bottleneck is *nobody else can use this*, not
 while the bottleneck is *two corridors and synthetic crashes*.
+
+> **Written before the fact, and it survived the fact.** That bottleneck was cleared in
+> nine days at the end of Stage 5, and it produced fourteen defects — several of them in
+> the credibility path this note says Stage 5 is not. The sequencing rule was still right:
+> reach was built on an engine that worked, and then real roads showed which parts of it
+> only *looked* like they worked. What would have been wrong is building the reach and
+> calling the credibility settled.
 
 **Two things were re-ordered against the original four steps.**
 
@@ -887,6 +1052,7 @@ executes it.
 | `[x]` | **5.3c** MapLibre map | Corridor geometry ✅, units coloured by rank ✅, factor provenance on click ✅ | Tiles never enter the report path ✅; the document keeps its own SVG map ✅ |
 | `[x]` | **5.3d** Interactive layer | The hover and detail layer 4.4 deferred as screen-only ✅ | Native `<title>` still works with JavaScript off ✅ |
 | `[x]` | **5.3e** One road, one page | A landing flow: pick a road on a map, upload its crashes, download the report — and the three backend gaps that made it impossible ✅ | A real road goes click → **Mode A** → downloaded report, with no reference typed and no bounding box ✅ |
+| `[x]` | **5.3f** The map is the page | Unplanned, and produced by running 5.3e on real roads. The extent verdict, the weight context, every working source reachable from the front page, and the sidebar-of-essays replaced by a full-width map with one row of controls under it ✅ | The page says in a number how much road is in the frame, and refuses in words a view too tight to assess ✅ |
 | `[ ]` | **5.4a** Auth + RLS | Supabase auth, row-level policies | The *database* refuses a cross-tenant read, proven by querying as tenant B |
 | `[ ]` | **5.4b** Projects + history | Saved runs, re-open, re-render | Yesterday's run opens without a refit |
 | `[ ]` | **5.4c** Corridor comparison | Two corridors side by side with mode, factor coverage and validation outcome | Every number shows the context it was valid in |
@@ -1496,6 +1662,48 @@ happily type is the one thing they usually do not know, because it is what this 
 finds. Both services are switchable off by environment variable, both are proxied rather
 than called from the browser, and a test lists them and fails when a third appears.
 
+### 5.3f — the map is the page *(done, unplanned)*
+
+Everything here came from *using* 5.3e on real roads, which is the argument for shipping a
+landing flow before it is finished rather than after.
+
+**The zoom decides the corridor, and nothing on screen said so.** The bounding box is the
+viewport. A real run took **1.83 km of a 2.95 km road**, produced four segments, and the
+collinearity check returned **infinity** — not *collinear*, undefined, because four
+observations cannot support ten factors. The blackspot rule then selected "the worst 20%"
+of four segments and the ranking spread across 1.8% of its own scale. All of it was settled
+before the button was pressed. The picked road is now measured off the basemap's own
+geometry and reported as *about N segments*, with a verdict: under ten refused in words,
+under twenty called thin, above that fine.
+
+> Measured on **`idle`, not `moveend`**. `moveend` is the camera stopping, and the tiles the
+> move revealed have not arrived yet — reading there reports a figure that is low in exactly
+> the direction that matters and never corrects itself.
+
+**The weight context was the expensive omission.** `assessAction` sent `adapters` and
+nothing else, so facility type, region and severity fell back to any/global/all — under
+which only weights declaring no scope at all are admissible. The same run measured eleven
+Tier A factors at full coverage and scored on exactly one of them, and no screen connected
+those two facts because no screen asked.
+
+**Three working sources were unreachable from the only screen anybody opens.** Rasters, the
+traffic proxy and Mapillary were implemented, tested, and switchable only from the Advanced
+form — so every front-page run reported `grade_pct` absent, one of the eight factors in the
+registry carrying a cited weight. With all four offered: **14 factors delivered against 8.**
+
+**And the sidebar was the wrong shape for what it held.** Five numbered steps in a 24rem
+column beside a squeezed map, each carrying several paragraphs of true and useful
+explanation — and a narrow column is the worst possible place to put an essay. The map goes
+from ~821 px to **1225 px**; five stacked sections become **one 107 px row**. The prose is
+folded, not deleted, and the distinction is load-bearing: the extent verdict caught the
+1.83 km run above, so the verdict stays on the map in colour at all times and only the
+paragraph explaining how it is estimated folds away.
+
+There is no JavaScript test runner in this repository, so the structural guards live in
+`tests/test_shell.py`: the three context fields must be sent, the measurement must run on
+idle, a pick that resolves nothing must clear the previous road's length, and each of the
+four source toggles must reach a client the runner builds.
+
 ---
 
 ## Stage 6 — Deploy
@@ -1531,8 +1739,10 @@ this cannot be exposed to a second person. Then 6.1 and 6.2 to make it reachable
 is wired up, and not before. 3.1 is a tick.
 
 **And none of the above is the most valuable thing available.** See *Requirements not
-covered by any stage*, at the end of this file: real crash data, a third region, and the
-flood/fire/storm/snow layers are all worth more than every row of this table.
+covered by any stage*, at the end of this file. **Real crash data is now done** — seven
+corridors, four with real police extracts, and fourteen defects found by them. What is left
+above it: a third region outside Europe, the flood/fire/storm/snow layers, and the
+information-gap experiment, which was only ever meaningful on real crashes and now is.
 
 ---
 
@@ -1569,6 +1779,16 @@ Things that need a human call, not a code change.
    directly, and it is one of the cheapest accuracy improvements available. Pass it as
    `RunContext(crash_mix=...)`; `uniform_mix()` is available for corridors where no
    defensible split exists.
+
+   **Narrowed 2026-09-04, not closed.** The A3 exposed two ways this was being reported
+   badly. The caveat was printed on a *Mode A* run, which never consults the split at
+   all — it is now emitted only when an index exists. And the fallback is a **rural
+   two-lane two-way** mix, two thirds run-off and head-on, being applied to a motorway
+   built with no oncoming traffic to run into. `CrashMix` now records the facility it was
+   measured on and the run names both road types when they disagree. **No number was
+   invented** — the engine says the split does not fit rather than substituting one that
+   does not exist, which is the same decision as before, said out loud. The human call is
+   unchanged: supply a local split.
 4. **Resolve `lanes`.** It is currently a volume proxy expecting `+` for total crashes,
    while iRAP prices lane count at `−` for head-on-overtaking crashes only. Two
    mechanisms in one column — the composite-masking trap the brief warns about. The
@@ -1598,9 +1818,25 @@ Things that need a human call, not a code change.
    enough crashes to buy the terms, and a specification that carries `ramp_density` at
    all — which today means fitting it deliberately.
 
-   **The critical path is now crash data, not geography.** Every corridor run so far
-   uses synthetic crashes, which validate the geometry and adapter path and nothing
-   about a road. A single real police extract is worth more than a third corridor.
+   ~~**The critical path is now crash data, not geography.**~~ **CLOSED, 2026-09-07.**
+   Seven real corridors, four against real police extracts (UK STATS19, French BAAC),
+   fourteen defects found. The A6 was the first fitted model; the A3 the first A-full run.
+   See [`TESTS.md`](TESTS.md) and the status block at the top of this file.
+5. **A third region, outside Europe.** All seven real corridors are Cypriot, British or
+   French, and the call topic asks for at least three regions with region-level
+   comparison. Free crash data with coordinates is the constraint, not geography — and
+   this is now the top of the critical path.
+6. **The registry holds zero weights estimated in Europe, and one sweep says why.**
+   Surveyed 2026-09-01 and written up in [`docs/EUROPEAN_EVIDENCE.md`](docs/EUROPEAN_EVIDENCE.md):
+   PRACT catalogued 889 CMFs and 273 accident prediction models on European
+   infrastructure, and the repository holding them returns 404 on both http and https.
+   The harvest was **one weight** — `curve_radius_min` from the Norwegian handbook — and
+   it is declared `global` rather than `europe`, because the figure is a literature study
+   pooling 47 international studies and `region` records where a weight was *estimated*.
+   **What would close it:** accident prediction models rather than CMFs, since an APM is
+   already crash frequency as a function of measured attributes while a CMF is a measure
+   effect that cannot become an attribute weight without inventing a before-and-after
+   state. Needs a human with library access, not a code change.
 4. **Rung 4 engine.** PyMC/NumPyro keeps one language; R + INLA is materially faster for
    CAR/BYM at panel scale. Defer until MCMC actually hurts.
 
@@ -1725,9 +1961,9 @@ has a stage, a step or a line of code today.
 | **Network criticality and detour analysis** — which segments, if lost, isolate a settlement | Expected outcome 4; required action 3 | The strategic-network graph is *already fetched* for the traffic proxy (2.8) | Free — NetworkX edge-removal over a graph we hold |
 | **Scenario runs** — "this network under a 100-year flood" | Required action 3 | — | Developer time |
 | **Authority-facing GIS application** | Expected outcome 4; TRL 6–7 | **Partly built.** 5.3b is a website and 5.3c is a map with per-segment provenance on click. What is missing is the *authority-facing* half: hazard layers to show, and accounts to show them to | 5.4a, 6.2, and the hazard row above |
-| **Real police crash data** | The whole crash-based half | Snapping (2.5) works; every run to date is synthetic | Free: French BAAC is open with coordinates and severity |
-| **≥3 regions, primary *and* secondary roads, region-level comparison** | Required actions preamble | Two corridors, both synthetic-crash | Region onboarding |
-| **Information-gap experiment** — rank displacement, predictive degradation, literature share per data condition | Required action 1 | The machinery exists: mode ladder descent (1.3) and literature share (3.3b). The *experiment* has never been run | Free, but only meaningful on real crashes |
+| ~~**Real police crash data**~~ ✅ **DONE** | The whole crash-based half | **Four corridors on real extracts** — UK STATS19 on the A6 and A82, French BAAC on the A3 and A50 — producing the first fitted model, the first A-full run, and fourteen defects no test had found. [`TESTS.md`](TESTS.md) | Spent. Both sources are free and open |
+| **≥3 regions, primary *and* secondary roads, region-level comparison** | Required actions preamble | Seven real corridors across Cyprus, England, Scotland and France — **but all of Europe**, and mostly primary roads | **Now the top of the critical path.** One region outside Europe with free coordinate-level crash data |
+| **Information-gap experiment** — rank displacement, predictive degradation, literature share per data condition | Required action 1 | The machinery exists: mode ladder descent (1.3) and literature share (3.3b). The *experiment* has never been run | Free, **and now meaningful** — it was only ever meaningful on real crashes, and there are four corridors' worth |
 | **Implementation guidelines and policy measures** per stakeholder group | Expected outcome 3 | Report (Stage 4) is the input, not the output | Writing |
 | **Prevention / countermeasure selection** linked to risk output | Expected outcome 3 | Registry knows factor direction; nothing maps a deficit to a treatment | Needs a countermeasure table with cited effect sizes |
 | **Road-user behaviour, enforcement, multi-offenders, impairment, nudging, incentives** | Expected outcome 2; required action 2 | Nothing, and nothing planned | **Not buildable here — needs a partner** with enforcement, penalty and clinical data |
@@ -1737,7 +1973,13 @@ has a stage, a step or a line of code today.
 | **TRL 6–7** | Maturity | Currently TRL 3–4 | The whole of the above |
 
 **Reading this honestly.** Four of these are free data behind an adapter contract that
-already exists, and the flood/fire/storm/snow set is the cheapest quarter of a call topic
-available anywhere — it is the highest-value unbuilt work in this repository after real
-crash data. One of them (the behavioural strand) is not a build task at all and never
-will be; it is a partner. The rest is engineering and writing.
+already exists, and with real crash data now spent, **the flood/fire/storm/snow set is the
+highest-value unbuilt work in this repository** — the cheapest quarter of a call topic
+available anywhere. A third region outside Europe is beside it. One of these rows (the
+behavioural strand) is not a build task at all and never will be; it is a partner. The
+rest is engineering and writing.
+
+**And one thing this table cannot show.** The row above that says *done* took nine days and
+cost fourteen defects, in code that was written, reviewed, tested and shipping confident
+numbers the whole time. Every remaining row that says *free* or *developer time* should be
+read with that in mind: the data was free, and the data was never the expensive part.
